@@ -283,6 +283,14 @@ async fn main() -> anyhow::Result<()> {
     assert_eq!(status("README.md"), Some(GitFileStatus::Untracked));
     assert_eq!(status("target/"), Some(GitFileStatus::Ignored));
     println!("ok   git status: root {}, branch {:?}, {} entries", st.root, st.branch, st.entries.len());
+    use chm_core::fs::git::HeadVersion;
+    let head = core.git_head(&host, &format!("{tmp}/src/a.rs")).await.map_err(anyhow::Error::msg)?;
+    assert!(matches!(head, HeadVersion::Text { ref text } if text.is_empty()), "committed (empty) version: {head:?}");
+    let untracked = core.git_head(&host, &format!("{tmp}/README.md")).await.map_err(anyhow::Error::msg)?;
+    assert_eq!(untracked, HeadVersion::Untracked);
+    let outside = core.git_head(&host, "/etc/hostname").await.map_err(anyhow::Error::msg)?;
+    assert_eq!(outside, HeadVersion::NotInRepo);
+    println!("ok   git HEAD versions: committed, untracked, outside a repo");
     // --- editing: byte-exact saves, truncation, conflicts, symlinks, modes
     let f = format!("{tmp}/crlf.txt");
     let prep = format!(r"printf '\357\273\277one\r\ntwo\r\n' > {f} && chmod 755 {f} && ln -s crlf.txt {tmp}/link.txt && md5sum {f} | cut -c1-32");
