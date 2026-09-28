@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #07090d;
+  --color-ink-900: #0b0d12;
+  --color-ink-850: #0e1119;
+  --color-ink-800: #121622;
+  --color-ink-750: #161b29;
+  --color-ink-700: #1b2130;
+  --color-ink-600: #262d40;
+  --color-ink-500: #363e56;
+  --color-mist-500: #5f6780;
+  --color-mist-400: #7c849b;
+  --color-mist-300: #a3abc2;
+  --color-mist-200: #c6cce0;
+  --color-mist-100: #e3e7f2;
+  --color-ember-500: #ec8a3e;
+  --color-ember-400: #f5a25d;
+  --color-ember-300: #ffc27f;
+  --color-iris-400: #a192ff;
+  --color-iris-300: #c0b6ff;
+  --color-jade-400: #4ade9a;
+  --color-sky-400: #6aa9ff;
+  --color-rose-400: #ff6b81;
+  --color-claude: #d97757;
+  --color-codex: #d7dbe6;
+  --color-omp: #a192ff;
+  --color-pi: #8fb3ff;
+  --color-opencode: #f2c14e;
+  --color-gemini: #5b8cff;
+
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", "Inter", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
+
+  --animate-breathe: breathe 2.4s ease-in-out infinite;
+  --animate-rise: rise 180ms ease-out both;
+
+  @keyframes breathe {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
+  }
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-900);
+  color: var(--color-mist-200);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+input,
+textarea {
+  user-select: text;
+}
+
+/* Soft ambient light behind everything. */
+.app-backdrop {
+  background:
+    radial-gradient(1200px 600px at 12% -10%, rgb(106 169 255 / 0.06), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgb(161 146 255 / 0.05), transparent 55%),
+    var(--color-ink-900);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-600) transparent;
+}
+
+.tile {
+  background: linear-gradient(180deg, var(--color-ink-800), var(--color-ink-850));
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.04) inset,
+    0 10px 30px -18px rgb(0 0 0 / 0.8);
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+
+.tile:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.07) inset,
+    0 16px 36px -18px rgb(0 0 0 / 0.9);
+}
+
+/* Attention: a slow, soft breathing glow until the user looks at the pane. */
+@keyframes tile-glow-ember {
+  0%, 100% { box-shadow: 0 0 0 1px rgb(245 162 93 / 0.55), 0 0 16px 1px rgb(245 162 93 / 0.18); }
+  50% { box-shadow: 0 0 0 1px rgb(245 162 93 / 0.95), 0 0 26px 4px rgb(245 162 93 / 0.38); }
+}
+@keyframes tile-glow-iris {
+  0%, 100% { box-shadow: 0 0 0 1px rgb(161 146 255 / 0.55), 0 0 16px 1px rgb(161 146 255 / 0.2); }
+  50% { box-shadow: 0 0 0 1px rgb(161 146 255 / 0.95), 0 0 26px 4px rgb(161 146 255 / 0.42); }
+}
+@keyframes tile-pulse {
+  0% { box-shadow: 0 0 0 1px rgb(106 169 255 / 0.9), 0 0 18px 3px rgb(106 169 255 / 0.35); }
+  100% { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.04) inset; }
+}
+.tile.glow-ember {
+  border-color: rgb(245 162 93 / 0.6);
+  animation: tile-glow-ember 2.4s ease-in-out infinite;
+}
+.tile.glow-iris {
+  border-color: rgb(161 146 255 / 0.65);
+  animation: tile-glow-iris 1.8s ease-in-out infinite;
+}
+.tile.pulse {
+  animation: tile-pulse 1.1s ease-out 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile.glow-ember, .tile.glow-iris, .tile.pulse { animation: none; }
+}
+
+.status-dot {
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 18%, transparent);
+}

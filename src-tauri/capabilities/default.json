@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window: core events only. URLs are opened via the validated open_external command, not the opener plugin.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

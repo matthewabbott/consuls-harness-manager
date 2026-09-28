@@ -1,0 +1,380 @@
+//! The public entry point: [`Core`] owns host actors, the tailnet poller and the
+//! resume detector, and pushes everything to a [`Sink`].
+
+pub mod attention;
+mod ctx;
+pub mod frames;
+mod host;
+mod tmux_mgr;
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
+
+use tokio::sync::oneshot;
+use tracing::{info, warn};
+
+pub use ctx::Sink;
+use ctx::Ctx;
+use host::{HostCmd, HostHandle, IntegrationAction};
+use tmux_mgr::PaneCmd;
+
+use crate::model::{AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, NewPaneSpec, TailnetStatus, TerminateOutcome};
+use crate::ssh::exec::ExecOutput;
+use crate::ssh::hostkeys::KnownHosts;
+
+pub struct Core {
+    ctx: Arc<Ctx>,
+    data_dir: PathBuf,
+    config: Mutex<AppConfig>,
+    hosts: Mutex<HashMap<HostId, HostHandle>>,
+    /// Captured in [`Core::start`] so the public API can be called from any thread (Tauri
+    /// runs synchronous commands on the main thread, outside the runtime).
+    rt: OnceLock<tokio::runtime::Handle>,
+}
+
+impl Core {
+    /// Loads config from `data_dir`. Call [`Core::start`] from within a tokio runtime.
+    pub fn new(data_dir: PathBuf, sink: Arc<dyn Sink>) -> Arc<Self> {
+        let _ = std::fs::create_dir_all(&data_dir);
+        let known_hosts = Arc::new(KnownHosts::load(data_dir.join("known_hosts.json")));
+        let config: AppConfig = std::fs::read(data_dir.join("config.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        Arc::new(Self {
+            ctx: Arc::new(Ctx::new(sink, known_hosts)),
+            data_dir,
+            config: Mutex::new(config),
+            hosts: Mutex::new(HashMap::new()),
+            rt: OnceLock::new(),
+        })
+    }
+
+    fn rt(&self) -> tokio::runtime::Handle {
+        self.rt
+            .get()
+            .cloned()
+            .or_else(|| tokio::runtime::Handle::try_current().ok())
+            .expect("Core::start must be called (inside a tokio runtime) before using Core")
+    }
+
+    /// Starts background work. Must be called from within a tokio runtime; afterwards every
+    /// method is safe to call from any thread.
+    pub fn start(self: &Arc<Self>) {
+        let rt = self.rt.get_or_init(tokio::runtime::Handle::current).clone();
+        // Tailnet first, so host actors can resolve addresses and pinned keys.
+        let core = self.clone();
+        rt.spawn(async move {
+            core.refresh_tailnet().await;
+            let hosts = core.config.lock().unwrap().hosts.clone();
+            for cfg in hosts {
+                core.spawn_host(cfg);
+            }
+            let mut interval = tokio::time::interval(Duration::from_secs(15));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                core.refresh_tailnet().await;
+            }
+        });
+
+        // Resume-from-sleep detection: a 5 s timer that observes a large wall-clock jump.
+        let core = self.clone();
+        rt.spawn(async move {
+            let mut last_wall = SystemTime::now();
+            let mut last_mono = Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let wall = SystemTime::now();
+                let mono = Instant::now();
+                let wall_delta = wall.duration_since(last_wall).unwrap_or_default();
+                let mono_delta = mono.duration_since(last_mono);
+                if wall_delta > mono_delta + Duration::from_secs(20) || wall_delta > Duration::from_secs(60) {
+                    info!("wall clock jumped {:?} (sleep/resume?)", wall_delta);
+                    core.notify_resumed();
+                }
+                last_wall = wall;
+                last_mono = mono;
+            }
+        });
+    }
+
+    fn spawn_host(&self, cfg: HostConfig) {
+        let id = cfg.id.clone();
+        let handle = host::spawn(cfg, self.ctx.clone(), &self.rt());
+        if let Some(old) = self.hosts.lock().unwrap().insert(id, handle) {
+            old.send(HostCmd::Shutdown);
+        }
+    }
+
+    fn save_config(&self) {
+        let config = self.config.lock().unwrap().clone();
+        let path = self.data_dir.join("config.json");
+        let tmp = path.with_extension("json.tmp");
+        match serde_json::to_vec_pretty(&config) {
+            Ok(bytes) => {
+                if std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+                    warn!("failed to save {}", path.display());
+                }
+            }
+            Err(e) => warn!("failed to serialise config: {e}"),
+        }
+        self.ctx.emit(CoreEvent::Config { config });
+    }
+
+    pub fn snapshot(&self) -> CoreSnapshot {
+        CoreSnapshot {
+            tailnet: self.ctx.tailnet.read().unwrap().clone(),
+            config: self.config.lock().unwrap().clone(),
+            hosts: self.ctx.host_states.lock().unwrap().values().cloned().collect(),
+            panes: self.ctx.panes.lock().unwrap().values().flatten().cloned().collect(),
+            attention: self.ctx.attention.lock().unwrap().all(),
+        }
+    }
+
+    pub async fn refresh_tailnet(&self) -> TailnetStatus {
+        let status = crate::tailscale::fetch_status().await;
+        let changed = {
+            let mut current = self.ctx.tailnet.write().unwrap();
+            let changed = *current != status;
+            *current = status.clone();
+            changed
+        };
+        if changed {
+            self.ctx.emit(CoreEvent::Tailnet { status: status.clone() });
+        }
+        status
+    }
+
+    /// Adds or updates a host. New hosts with `auto_connect` start connecting immediately.
+    pub fn upsert_host(&self, cfg: HostConfig) {
+        let existed = {
+            let mut config = self.config.lock().unwrap();
+            match config.hosts.iter_mut().find(|h| h.id == cfg.id) {
+                Some(h) => {
+                    *h = cfg.clone();
+                    true
+                }
+                None => {
+                    config.hosts.push(cfg.clone());
+                    false
+                }
+            }
+        };
+        self.save_config();
+        let hosts = self.hosts.lock().unwrap();
+        match hosts.get(&cfg.id) {
+            Some(h) if existed => h.send(HostCmd::Reconfigure(cfg)),
+            _ => {
+                drop(hosts);
+                self.spawn_host(cfg);
+            }
+        }
+    }
+
+    pub fn remove_host(&self, id: &str) {
+        self.config.lock().unwrap().hosts.retain(|h| h.id != id);
+        self.save_config();
+        if let Some(h) = self.hosts.lock().unwrap().remove(id) {
+            h.send(HostCmd::Shutdown);
+        }
+        self.ctx.remove_host(id);
+    }
+
+    fn send(&self, id: &str, cmd: HostCmd) {
+        if let Some(h) = self.hosts.lock().unwrap().get(id) {
+            h.send(cmd);
+        }
+    }
+
+    pub fn connect(&self, id: &str) {
+        self.send(id, HostCmd::Connect);
+    }
+
+    pub fn disconnect(&self, id: &str) {
+        self.send(id, HostCmd::Disconnect);
+    }
+
+    /// Drops the connection and reconnects immediately (e.g. after a network change).
+    pub fn reconnect(&self, id: &str) {
+        self.send(id, HostCmd::Reconnect);
+    }
+
+    /// Forget a TOFU host key (after the user confirms a legitimate key change).
+    pub fn forget_host_key(&self, id: &str) {
+        self.ctx.known_hosts.forget(id);
+    }
+
+    /// Resume from sleep or network change: refresh the tailnet and probe every host.
+    pub fn notify_resumed(self: &Arc<Self>) {
+        let core = self.clone();
+        self.rt().spawn(async move {
+            // Give Tailscale a moment to re-establish paths.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            core.refresh_tailnet().await;
+            for h in core.hosts.lock().unwrap().values() {
+                h.send(HostCmd::Probe);
+            }
+        });
+    }
+
+    /// Which pane tiles the UI is showing (`None` = all). Hidden panes stop getting frames.
+    pub fn set_visible_panes(&self, keys: Option<Vec<u32>>) {
+        *self.ctx.visible.write().unwrap() = keys.map(|k| k.into_iter().collect());
+        for h in self.hosts.lock().unwrap().values() {
+            h.send(HostCmd::ResendTiles);
+        }
+    }
+
+    /// Re-send every tile (the UI reloaded or re-subscribed).
+    pub fn resend_tiles(&self) {
+        for h in self.hosts.lock().unwrap().values() {
+            h.send(HostCmd::ResendTiles);
+        }
+    }
+
+    fn host_of_pane(&self, key: u32) -> Option<HostId> {
+        let panes = self.ctx.panes.lock().unwrap();
+        panes.iter().find(|(_, list)| list.iter().any(|p| p.key == key)).map(|(h, _)| h.clone())
+    }
+
+    fn pane(&self, key: u32, cmd: PaneCmd) {
+        if let Some(host) = self.host_of_pane(key) {
+            self.send(&host, HostCmd::Pane(cmd));
+        }
+    }
+
+    /// Expanded view: stream raw output (after a full-history RESET frame), or stop.
+    pub fn stream_pane(&self, key: u32, on: bool) {
+        self.pane(key, PaneCmd::Stream { key, on });
+    }
+
+    /// Sends tmux key names (`Enter`, `C-c`, `Up`, …) to a pane.
+    pub fn send_keys(&self, key: u32, keys: Vec<String>) {
+        self.pane(key, PaneCmd::Keys { key, keys });
+    }
+
+    /// Types literal text into a pane.
+    pub fn send_text(&self, key: u32, text: String) {
+        self.pane(key, PaneCmd::Text { key, text });
+    }
+
+    /// Sends a composer prompt: bracketed paste, a short pause, then Enter.
+    pub fn submit_prompt(&self, key: u32, text: String) {
+        self.pane(key, PaneCmd::Submit { key, text });
+    }
+
+    /// Pastes text into a pane (bracketed paste when the app supports it).
+    pub fn paste_text(&self, key: u32, text: String) {
+        self.pane(key, PaneCmd::Paste { key, text });
+    }
+
+    /// What the user is looking at (drives ping/toast/ack rules).
+    pub fn set_focus(&self, focus: FocusState) {
+        self.ctx.set_focus(focus);
+    }
+
+    /// The user interacted with a pane's tile: stop glowing.
+    pub fn ack_pane(&self, key: u32) {
+        self.ctx.ack(key);
+    }
+
+    pub fn set_pane_muted(&self, key: u32, muted: bool) {
+        self.ctx.attention.lock().unwrap().set_muted(key, muted);
+    }
+
+    /// Creates a pane running `spec.harness` and returns its key.
+    pub async fn create_pane(&self, spec: NewPaneSpec) -> Result<u32, String> {
+        let (tx, rx) = oneshot::channel();
+        let host = spec.host.clone();
+        if !self.hosts.lock().unwrap().contains_key(&host) {
+            return Err(format!("unknown host {host}"));
+        }
+        self.send(&host, HostCmd::CreatePane { spec, reply: tx });
+        rx.await.map_err(|_| "host went away".to_string())?
+    }
+
+    pub fn set_pane_hidden(&self, key: u32, hidden: bool) {
+        self.pane(key, PaneCmd::Hide { key, hidden });
+    }
+
+    /// Gracefully quits the pane's harness and closes it (or kills it with `force`).
+    pub async fn terminate_pane(&self, key: u32, force: bool) -> Result<TerminateOutcome, String> {
+        let (tx, rx) = oneshot::channel();
+        let Some(host) = self.host_of_pane(key) else { return Ok(TerminateOutcome::Closed) };
+        self.send(&host, HostCmd::Pane(PaneCmd::Terminate { key, force, reply: tx }));
+        rx.await.map_err(|_| "host went away".to_string())?
+    }
+
+    async fn integration(&self, host: &str, action: IntegrationAction) -> Result<crate::integration::install::IntegrationStatus, String> {
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::Integration { action, reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// Whether hand-started sessions on `host` report to Consuls (global hooks).
+    pub async fn integration_status(&self, host: &str) -> Result<crate::integration::install::IntegrationStatus, String> {
+        self.integration(host, IntegrationAction::Status).await
+    }
+
+    pub async fn install_integration(&self, host: &str) -> Result<crate::integration::install::IntegrationStatus, String> {
+        self.integration(host, IntegrationAction::Install).await
+    }
+
+    pub async fn uninstall_integration(&self, host: &str) -> Result<crate::integration::install::IntegrationStatus, String> {
+        self.integration(host, IntegrationAction::Uninstall).await
+    }
+
+    pub async fn list_dir(&self, host: &str, path: &str) -> Result<DirListing, String> {
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::ListDir { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    pub async fn exec(&self, id: &str, script: &str) -> Result<ExecOutput, String> {
+        let (tx, rx) = oneshot::channel();
+        self.send(id, HostCmd::Exec { script: script.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Collect(Mutex<Vec<CoreEvent>>);
+    impl Sink for Collect {
+        fn event(&self, event: CoreEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+        fn frame(&self, _frame: Vec<u8>) {}
+    }
+
+    /// Tauri runs synchronous commands on the main thread, outside the tokio runtime; the
+    /// public API must work from there (regression: adding a machine used to panic).
+    #[test]
+    fn api_is_callable_outside_the_runtime() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("chm-core-test-{}", std::process::id()));
+        let sink = Arc::new(Collect(Mutex::new(Vec::new())));
+        let core = Core::new(dir.clone(), sink.clone());
+        rt.block_on(async { core.start() });
+
+        // This thread is not a runtime thread.
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let mut cfg = HostConfig::new("nonexistent-host.invalid", "nobody");
+        cfg.auto_connect = false;
+        core.upsert_host(cfg);
+        core.connect("nonexistent-host.invalid");
+        core.notify_resumed();
+        core.disconnect("nonexistent-host.invalid");
+        core.remove_host("nonexistent-host.invalid");
+
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(sink.0.lock().unwrap().iter().any(|e| matches!(e, CoreEvent::Config { .. })));
+        drop(rt);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

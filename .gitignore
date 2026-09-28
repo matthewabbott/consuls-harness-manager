@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+src-tauri/gen/schemas/
+*.log
+.DS_Store
+.vite/
+# local-only e2e recordings may contain real terminal content
+crates/chm-core/tests/fixtures/live/

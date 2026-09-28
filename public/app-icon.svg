@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a2036"/>
+      <stop offset="1" stop-color="#0b0e18"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3150"/>
+      <stop offset="1" stop-color="#1c2238"/>
+    </linearGradient>
+    <linearGradient id="hot" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffcf7a"/>
+      <stop offset="1" stop-color="#f08a4b"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="28"/>
+    </filter>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bg)"/>
+  <rect x="32.5" y="32.5" width="959" height="959" rx="219.5" fill="none" stroke="#3a4266" stroke-opacity="0.6" stroke-width="3"/>
+  <!-- glow behind the waiting pane -->
+  <rect x="540" y="200" width="290" height="290" rx="64" fill="#f5a25d" opacity="0.55" filter="url(#glow)"/>
+  <rect x="194" y="200" width="290" height="290" rx="64" fill="url(#tile)"/>
+  <rect x="540" y="200" width="290" height="290" rx="64" fill="url(#hot)"/>
+  <rect x="194" y="534" width="290" height="290" rx="64" fill="url(#tile)"/>
+  <rect x="540" y="534" width="290" height="290" rx="64" fill="url(#tile)"/>
+  <!-- terminal lines -->
+  <g stroke-linecap="round" stroke-width="26">
+    <line x1="246" y1="282" x2="398" y2="282" stroke="#8fa0d8" stroke-opacity="0.8"/>
+    <line x1="246" y1="342" x2="350" y2="342" stroke="#8fa0d8" stroke-opacity="0.5"/>
+    <line x1="246" y1="402" x2="420" y2="402" stroke="#8fa0d8" stroke-opacity="0.35"/>
+    <line x1="246" y1="616" x2="380" y2="616" stroke="#8fa0d8" stroke-opacity="0.8"/>
+    <line x1="246" y1="676" x2="430" y2="676" stroke="#8fa0d8" stroke-opacity="0.5"/>
+    <line x1="592" y1="616" x2="700" y2="616" stroke="#8fa0d8" stroke-opacity="0.8"/>
+    <line x1="592" y1="676" x2="760" y2="676" stroke="#8fa0d8" stroke-opacity="0.5"/>
+    <line x1="592" y1="736" x2="660" y2="736" stroke="#8fa0d8" stroke-opacity="0.35"/>
+  </g>
+  <!-- prompt chevron on the waiting pane -->
+  <path d="M612 292 L672 345 L612 398" fill="none" stroke="#2a1a10" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="700" y1="398" x2="768" y2="398" stroke="#2a1a10" stroke-width="30" stroke-linecap="round"/>
+</svg>

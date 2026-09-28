@@ -1,0 +1,37 @@
+[package]
+name = "chm-core"
+description = "Transport, tmux control-mode and agent-attention core for Consuls Harness Manager (no Tauri dependency)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+ts-rs.workspace = true
+russh = { version = "0.63", default-features = false, features = ["ring", "rsa", "flate2"] }
+russh-sftp = "3"
+alacritty_terminal = "0.26"
+memchr = "2"
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+dirs = "7"
+base64 = "0.23"
+bytes = "1"
+futures = "0.3"
+toml_edit = "0.25"
+
+[dev-dependencies]
+proptest = "1"
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+
+[[example]]
+name = "cli"
+
+[[example]]
+name = "selftest"

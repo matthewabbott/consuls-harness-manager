@@ -1,0 +1,85 @@
+# Consuls
+
+A desktop dashboard for the coding agents you run in tmux across your Tailscale tailnet —
+Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
+
+- **Live grid** of every tmux pane on every connected machine, each a small live view of the terminal.
+- **Expanded view** with a full terminal (type straight into it), Ctrl+F search through the
+  scrollback, and *smart copy* that undoes the CLI's line wrapping and gutters.
+- **Composer**: a mouse-friendly prompt box — click to place the cursor, select, cut/paste,
+  undo/redo, Shift+Enter for new lines, ↑ for prompt history, drafts kept per pane.
+- **Attention**: when an agent finishes its turn or needs permission, you get a ping (and a
+  toast if Consuls isn't focused); its tile glows until you look, then shows "Waiting on you".
+  Ctrl+Shift+Space jumps to the next waiting pane.
+- **Lifecycle**: start a new agent in any directory (remote folder browser), hide a pane
+  without stopping it, or quit an agent gracefully and close its tmux pane.
+- **Resilient**: one SSH connection per machine, keepalives, automatic reconnect with backoff,
+  resume-from-sleep detection, Tailscale login / SSH-check URLs surfaced as one-click buttons.
+  tmux stays the source of truth, so closing Consuls never touches your sessions.
+
+## How it works
+
+```
+Tauri app (Windows/macOS)
+  React UI ── binary frames + JSON events ── src-tauri (thin shell: IPC, toasts, sound, tray)
+                                                   │
+                                        crates/chm-core (pure Rust, no Tauri)
+                                          ├─ tailscale status  → machines, host-key pinning
+                                          ├─ russh: one SSH connection per host
+                                          │    ├─ tmux -C (control mode), one client per session group
+                                          │    ├─ SFTP (folder browser, hook assets)
+                                          │    └─ tail of ~/.local/state/consuls/events.jsonl
+                                          ├─ alacritty_terminal per pane → tile snapshots
+                                          └─ attention state machine → alerts
+remote host: tmux ≥ 3.2, and (uploaded on demand) ~/.local/share/consuls/{chm-hook.sh, …}
+```
+
+- **Attaching never resizes your other tmux clients** (`ignore-size`), and panes Consuls didn't
+  create are never resized — Claude Code redraws its whole transcript on a width change.
+- **Turn detection** comes from the harnesses' own hooks. Agents started from Consuls get them
+  injected at launch (`claude --settings`, `codex -c notify=…`, `omp --hook`). For agents you
+  start by hand, the bell icon on a machine installs the same hooks globally (opt-in,
+  reversible, backed up). Without hooks, Consuls falls back to guessing from output activity.
+- **Seeding** a pane (on attach, expand, or when tmux pauses a slow client) turns the pane's
+  output off, captures it, reads its modes and turns output back on — atomically, so the
+  local terminal matches tmux exactly (see `crates/chm-core/tests/live.rs`).
+
+## Requirements
+
+- Windows 11 (macOS should work but is untested), Tailscale installed.
+- Remote machines: tmux ≥ 3.2 and either Tailscale SSH (no keys needed) or regular sshd with a
+  key in your ssh-agent / `~/.ssh`.
+- To build: Node 22+, Rust (pinned in `rust-toolchain.toml`), MSVC Build Tools + WebView2 on Windows.
+
+## Develop
+
+```bash
+npm install
+npm run tauri dev          # the app
+npm run dev                # UI only, in a browser, with mock data (src/ipc/mock.ts)
+npm test                   # vitest (frames, keymap, smart copy)
+cargo test -p chm-core     # parser, quoting, seeding, attention, installer, …
+```
+
+Live tests against a real host always use a **private tmux socket**, never your sessions:
+
+```bash
+CHM_E2E_HOST=spark2 cargo test -p chm-core --test live -- --ignored
+cargo run -p chm-core --example selftest -- spark2 <user>             # full pipeline
+cargo run -p chm-core --example selftest -- spark-d683 <user> claude /path/to/trusted/dir
+```
+
+Build an installer: `npm run tauri build` (NSIS; the installed app also gets proper toast identity).
+
+## Keyboard
+
+| Where | Keys |
+|---|---|
+| Anywhere | **Ctrl+Shift+Space** next waiting pane · **Ctrl+Shift+G** back to grid |
+| Terminal | keys go straight to the pane · **Ctrl+F** search · **Ctrl+C** smart copy (with a selection) · **Ctrl+Shift+C** copy as shown · **Ctrl+V** paste · **Ctrl+Enter** jump to composer |
+| Composer | **Enter** send · **Shift+Enter** new line · **↑/↓** prompt history · **Esc** (empty) interrupts the agent |
+
+## Not yet
+
+Transcript-backed conversation view, file manager/editor, image paste, sub-agent panes,
+per-harness expandable regions, the iPhone app and push notifications. See the plan for the roadmap.
