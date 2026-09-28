@@ -74,7 +74,7 @@ fn take_status(stdout: &mut Vec<u8>) -> Option<u32> {
 
 /// The command line for `script`: the login shell (for the user's PATH) execs `sh`, so scripts
 /// are POSIX whatever the user's shell is, and `sh` reports the script's own exit status.
-fn command_for(script: &str) -> String {
+pub(crate) fn command_for(script: &str) -> String {
     let inner = format!("printf '%s\\n' {MARKER}; (\n{script}\n); s=$?; printf '\\n{STATUS}%s\\n' \"$s\"; exit $s");
     login_shell(&format!("exec sh -c {}", sh_quote(&inner)))
 }
@@ -109,14 +109,20 @@ pub async fn run_with_stdin(
         }
         out
     };
-    let mut out = tokio::time::timeout(timeout, collect)
+    let out = tokio::time::timeout(timeout, collect)
         .await
         .map_err(|_| SshError::Timeout(format!("remote command: {script}")))?;
-    out.stdout = strip_before_marker(&out.stdout);
-    if let Some(status) = take_status(&mut out.stdout) {
-        out.status = Some(status);
-    }
-    Ok(out)
+    let mut done = finish(out.stdout, out.stderr);
+    done.status = done.status.or(out.status);
+    Ok(done)
+}
+
+/// The output of a [`command_for`] command: login-shell noise dropped, and the script's own
+/// exit status (when it got to report it) split off.
+pub(crate) fn finish(stdout: Vec<u8>, stderr: Vec<u8>) -> ExecOutput {
+    let mut stdout = strip_before_marker(&stdout);
+    let status = take_status(&mut stdout);
+    ExecOutput { status, stdout, stderr }
 }
 
 #[cfg(test)]

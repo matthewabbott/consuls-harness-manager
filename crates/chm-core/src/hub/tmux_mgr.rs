@@ -15,7 +15,8 @@ use super::frames;
 use crate::harness::Harness;
 use crate::integration::assets::{self, Assets};
 use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc};
-use crate::ssh::SshConnection;
+use crate::cygwin::PathMap;
+use crate::link::Link;
 use crate::ssh::exec;
 use crate::term::{Collector, TileTerm};
 use crate::tmux::formats::{PANE_FORMAT, PaneRow, SESSION_FORMAT, SessionRow, parse_pane_row, parse_session_row};
@@ -89,7 +90,11 @@ struct Pane {
 
 pub(crate) struct TmuxManager {
     host: HostId,
-    conn: Arc<SshConnection>,
+    link: Link,
+    /// Turns the server's own paths into the UI's (Cygwin → Windows); `None` elsewhere.
+    path_map: Option<PathMap>,
+    /// Environment for panes we create (`new-window -e`).
+    pane_env: Vec<(String, String)>,
     ctx: Arc<Ctx>,
     server: TmuxServer,
     clients: HashMap<ClientKey, Client>,
@@ -115,16 +120,13 @@ pub(crate) struct TmuxManager {
 }
 
 impl TmuxManager {
-    pub fn new(
-        host: HostId,
-        conn: Arc<SshConnection>,
-        ctx: Arc<Ctx>,
-        server: TmuxServer,
-    ) -> (Self, mpsc::UnboundedReceiver<(ClientKey, ClientEvent)>) {
+    pub fn new(host: HostId, link: Link, ctx: Arc<Ctx>, server: TmuxServer) -> (Self, mpsc::UnboundedReceiver<(ClientKey, ClientEvent)>) {
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let mgr = Self {
             host,
-            conn,
+            link,
+            path_map: None,
+            pane_env: Vec::new(),
             ctx,
             server,
             clients: HashMap::new(),
@@ -160,7 +162,7 @@ impl TmuxManager {
                 .text()
         } else {
             let script = format!("{} list-sessions -F {} 2>&1", self.server.prefix(), exec::sh_quote(SESSION_FORMAT));
-            let out = exec::run(&self.conn, &script, Duration::from_secs(20)).await.map_err(|e| e.to_string())?;
+            let out = self.link.exec(&script, Duration::from_secs(20)).await.map_err(|e| e.to_string())?;
             let text = out.stdout_str();
             debug!(host = %self.host, "list-sessions via exec: status={:?} out={text:?}", out.status);
             if !out.success() {
@@ -213,7 +215,7 @@ impl TmuxManager {
             let key = self.next_client;
             self.next_client += 1;
             let target = format!("${}", session.session);
-            match ControlClient::attach(&self.conn, &self.server, &target, key, self.events_tx.clone()).await {
+            match ControlClient::attach(&self.link, &self.server, &target, key, self.events_tx.clone()).await {
                 Ok(client) => {
                     debug!(host = %self.host, "attached control client {key} to {} ({group_key})", session.name);
                     let sub = format!("refresh-client -B {}", quote(&format!("{SUB_NAME}:%*:{SUB_FORMAT}")));
@@ -347,7 +349,7 @@ impl TmuxManager {
             width: r.width,
             height: r.height,
             current_command: r.current_command.clone(),
-            current_path: r.current_path.clone(),
+            current_path: self.path_map.as_ref().map_or_else(|| r.current_path.clone(), |m| m.to_windows(&r.current_path)),
             title: r.title.clone(),
             harness: Harness::detect(&r.current_command, r.chm_harness.as_deref()),
             alternate_on: r.alternate_on,
@@ -533,7 +535,7 @@ impl TmuxManager {
                 matches!(tokio::time::timeout(Duration::from_secs(4), client.command("display-message -p ok")).await, Ok(Ok(_)))
             }
             None => matches!(
-                tokio::time::timeout(Duration::from_secs(6), exec::run(&self.conn, "true", Duration::from_secs(6))).await,
+                tokio::time::timeout(Duration::from_secs(6), self.link.exec("true", Duration::from_secs(6))).await,
                 Ok(Ok(_))
             ),
         }
@@ -638,12 +640,26 @@ impl TmuxManager {
         self.home = home;
     }
 
+    /// For a server that names paths its own way (Cygwin): how to turn them into the UI's.
+    pub fn set_path_map(&mut self, map: PathMap) {
+        self.path_map = Some(map);
+    }
+
+    pub fn set_pane_env(&mut self, env: Vec<(String, String)>) {
+        self.pane_env = env;
+    }
+
     /// Deploys the hook assets once per connection. `None` if that failed (launching without
     /// hooks still works; notifications fall back to heuristics).
     pub async fn ensure_assets(&mut self) -> Option<Assets> {
         let home = self.home.clone()?;
         if self.assets.is_none() {
-            match assets::ensure(&self.conn, &home, self.server.bin.as_deref()).await {
+            let deployed = match &self.link {
+                Link::Ssh(conn) => assets::ensure(conn, &home, self.server.bin.as_deref()).await,
+                // This machine's own assets (hooks run through Git's sh on Windows).
+                Link::Local(_) => crate::local::ensure_assets(),
+            };
+            match deployed {
                 Ok(a) => self.assets = Some(a),
                 Err(e) => self.ctx.notice(Some(&self.host), NoticeLevel::Warning, format!("Couldn't install hooks: {e}")),
             }
@@ -670,16 +686,19 @@ impl TmuxManager {
         let chm_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
         let t = self.server.prefix();
         let q = exec::sh_quote;
+        let env: String = self.pane_env.iter().map(|(k, v)| format!(" -e {}", q(&format!("{k}={v}")))).collect();
+        // The server's own name for the folder (Cygwin's tmux ignores a Windows path for -c).
+        let cwd = self.path_map.as_ref().map_or_else(|| spec.cwd.clone(), |m| m.to_posix(&spec.cwd));
 
         let mut script = String::from("set -e\n");
         // tmux silently falls back to $HOME for a missing -c directory; fail loudly instead.
-        script += &format!("[ -d {cwd} ] || {{ echo \"no such directory: \"{cwd} >&2; exit 3; }}\n", cwd = q(&spec.cwd));
+        script += &format!("[ -d {cwd} ] || {{ echo \"no such directory: \"{cwd} >&2; exit 3; }}\n", cwd = q(&cwd));
         match &spec.session {
             Some(session) => {
                 script += &format!(
-                    "p=$({t} new-window -d -t {} -c {} -n {} -P -F '#{{pane_id}}')\n",
+                    "p=$({t} new-window -d -t {} -c {} -n {}{env} -P -F '#{{pane_id}}')\n",
                     q(&format!("{session}:")),
-                    q(&spec.cwd),
+                    q(&cwd),
                     q(&window)
                 );
             }
@@ -696,9 +715,9 @@ impl TmuxManager {
                 script += &format!("{t} new-session -d -s {s} -x 160 -y 48 -n chm-init\n", s = q(&name));
                 script += &format!("{t} set-option -t {} history-limit 50000\n", q(&format!("{name}:")));
                 script += &format!(
-                    "p=$({t} new-window -d -t {} -c {} -n {} -P -F '#{{pane_id}}')\n",
+                    "p=$({t} new-window -d -t {} -c {} -n {}{env} -P -F '#{{pane_id}}')\n",
                     q(&format!("{name}:")),
-                    q(&spec.cwd),
+                    q(&cwd),
                     q(&window)
                 );
                 script += &format!("{t} kill-window -t {}\n", q(&format!("{name}:chm-init")));
@@ -711,7 +730,7 @@ impl TmuxManager {
         }
         script += "printf '%s\\n' \"$p\"\n";
 
-        let out = exec::run(&self.conn, &script, Duration::from_secs(30)).await.map_err(|e| e.to_string())?;
+        let out = self.link.exec(&script, Duration::from_secs(30)).await.map_err(|e| e.to_string())?;
         if !out.success() {
             return Err(format!("tmux failed: {}", out.stderr_str().trim()));
         }

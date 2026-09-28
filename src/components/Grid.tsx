@@ -141,7 +141,7 @@ export default function Grid() {
                 <span className="font-mono text-[11px] text-mist-500">
                   {r(
                     local
-                      ? `${m.state.facts.user} · ${m.state.facts.uname}`
+                      ? `${m.state.facts.user} · ${m.state.facts.uname}${m.state.facts.tmuxVersion ? ` · tmux ${m.state.facts.tmuxVersion}` : ""}`
                       : `${m.state.facts.user}@${m.label} · tmux ${m.state.facts.tmuxVersion ?? "missing"}`,
                   )}
                 </span>

@@ -284,9 +284,23 @@ pub fn facts() -> HostFacts {
             };
             if machine.is_empty() { os.to_string() } else { format!("{os} · {machine}") }
         },
-        tmux_version: None,
+        tmux_version: crate::cygwin::Cygwin::find().and_then(|c| tmux_version(&c.tmux())),
+        // tmux runs inside Cygwin's own shell, where plain `tmux` is on PATH.
         tmux_path: None,
     }
+}
+
+/// `3.7b` from `tmux -V`.
+fn tmux_version(tmux: &Path) -> Option<String> {
+    let mut cmd = std::process::Command::new(tmux);
+    cmd.arg("-V");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let out = cmd.output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().strip_prefix("tmux ").map(str::to_string).filter(|v| !v.is_empty())
 }
 
 /// Lists a local directory (dirs first). `~` is the home directory.
@@ -322,7 +336,7 @@ pub fn list_dir(path: &str) -> Result<DirListing, String> {
     Ok(DirListing { path: shown, home, entries })
 }
 
-pub(crate) fn state_dir() -> PathBuf {
+pub fn state_dir() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".local").join("state")));
     base.unwrap_or_else(|| PathBuf::from(".")).join("consuls")
 }

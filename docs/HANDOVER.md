@@ -67,7 +67,18 @@ Roughly in order. Each is small-to-medium and self-contained.
     Git Bash and cmd.
   - V3-7: global hooks on This PC. The installer's file access is behind `ConfigFiles` (SFTP or
     `std::fs`); the bell button sits on the This PC row. The user installs it themselves.
-- Next: local tmux (V3-8).
+  - V3-8: tmux on This PC through Cygwin (tmux 3.7b, installed by the user; WSL avoided on
+    purpose).
+    - The `Link` seam (SSH or a local shell) and the control client under script(1).
+    - Path mapping, the job object, and `hub/local_tmux.rs`.
+    - Verified by `localtmux`, a real-app E2E, a crash test (the server survives, the client
+      dies) and the SSH selftest.
+- Future (from the user, 2026-09-28):
+  - The Mac app watching its own tmux (a native `LocalSh`).
+  - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH
+    server lands in cmd/PowerShell, so `exec`'s `$SHELL -lc` wrapper would need a Cygwin-aware
+    variant.
+  - Renaming panes (and their tmux windows).
 - Roadmap (minor, added 2026-09-28): rename panes from the app.
   - For tmux panes, also run `rename-window` (or `select-pane -T` for a split pane's title) on the
     host, so it shows everywhere.

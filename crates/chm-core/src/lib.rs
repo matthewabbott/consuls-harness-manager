@@ -2,10 +2,12 @@
 //! control mode, harness adapters and the attention state machine. It deliberately has no
 //! Tauri dependency so it can later back an iOS app or an always-on notification daemon.
 
+pub mod cygwin;
 pub mod fs;
 pub mod harness;
 pub mod hub;
 pub mod integration;
+pub mod link;
 pub mod local;
 pub mod model;
 pub mod pty;

@@ -72,6 +72,26 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Local hooks run through Git for Windows' `sh.exe`; `CHM_STATE_DIR` tells `chm-hook.sh` where
   the events file is (the core polls it). Templates use `__RUN__`/`__SH__` placeholders.
 
+## tmux on This PC (Cygwin)
+
+- `TmuxManager` runs over a `link::Link`: `Ssh`, or `Local(LocalSh)` for this machine. On
+  Windows that's Cygwin's bash (`cygwin.rs`, found via its setup's registry key). Scripts reach
+  it base64-encoded (`BOOT`), so Windows command-line quoting and Cygwin's globbing never see
+  them. `hub/local_tmux.rs` drives it; its panes join `@local` next to the plain shells.
+- Cygwin's tmux can't use a pipe for a control client (its replies never arrive), so control
+  clients run under `script -qfec 'stty raw -echo; exec tmux -C …' /dev/null`. They're in a
+  kill-on-close job object (`end_with_this_app`), so they die with the app. Scripts aren't in
+  it: the tmux server they may start has to outlive us.
+- Paths:
+  - tmux reports Cygwin paths; `PathMap` (from `mount`) turns them into Windows ones.
+  - `-c` needs Cygwin paths (`to_posix`): tmux ignores `D:/a` there.
+  - Our panes get `-e CHERE_INVOKING=1` (Cygwin's profile `cd`s home otherwise) and
+    `CHM_STATE_DIR`, so hooks write to this PC's events file.
+  - A running server also gets `set-environment -g CHM_STATE_DIR`, for hand-made panes.
+- `tmux -vv` logs record the whole environment (tokens included): delete them after debugging.
+- Not yet: tmux on a local macOS/Linux (`local_tmux::find` is Windows-only). It would be a
+  `LocalSh` with `/bin/sh`, no pty, no path map.
+
 ## Files
 
 - `fs/` serves the explorer: `remote.rs` over one pooled SFTP session per connection (sshd caps
@@ -149,6 +169,9 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   socket; covers sizing, labels, direct shells, reconnect, hooks).
 - This PC shells: `cargo run -p chm-core --example localtest` (every local shell: typing,
   resize, hook routing, exit → ended, dismiss).
+- This PC tmux: `cargo run -p chm-core --example localtmux` (private socket, scratch state
+  dir). For the real app, start it with `CHM_TMUX_SOCKET=<private>` and run
+  `scripts/e2e/local-tmux.mjs`.
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,

@@ -1,4 +1,4 @@
-//! A tmux control-mode client running over an SSH exec channel.
+//! A tmux control-mode client, over an SSH exec channel or a local process (see `link`).
 //!
 //! Replies are matched to commands in FIFO order (tmux answers a client's commands in the
 //! order they were sent). Replies can be delivered either to the caller (oneshot) or
@@ -11,13 +11,13 @@ use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use russh::ChannelMsg;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tracing::{debug, warn};
 
 use super::parser::{Event, Parser, Reply};
-use crate::ssh::exec::{login_shell, sh_quote};
-use crate::ssh::{SshConnection, SshError};
+use crate::link::{Link, Stream, StreamInput, StreamMsg};
+use crate::ssh::SshError;
+use crate::ssh::exec::sh_quote;
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum TmuxError {
@@ -109,7 +109,7 @@ impl Shared {
 
 pub struct ControlClient {
     shared: Arc<Shared>,
-    writer: Mutex<russh::ChannelWriteHalf<russh::client::Msg>>,
+    writer: Mutex<StreamInput>,
     /// The session this client is attached to, e.g. `$3`.
     pub session_id: String,
 }
@@ -138,7 +138,7 @@ impl ControlClient {
     /// Attaches a control client to `session` (an id like `$3` or `=name`) without
     /// affecting the size of the user's other clients.
     pub async fn attach(
-        conn: &SshConnection,
+        link: &Link,
         server: &TmuxServer,
         session: &str,
         key: ClientKey,
@@ -149,18 +149,17 @@ impl ControlClient {
             server.prefix(),
             sh_quote(session)
         );
-        Self::start(conn, &login_shell(&script), key, events).await
+        Self::start(link, &link.control_command(&script), key, events).await
     }
 
-    /// Starts `command` (which must run `tmux -C …`) on a new exec channel.
+    /// Starts `command` (which must run `tmux -C …`) over `link`.
     pub async fn start(
-        conn: &SshConnection,
+        link: &Link,
         command: &str,
         key: ClientKey,
         events: mpsc::UnboundedSender<(ClientKey, ClientEvent)>,
     ) -> Result<Self, TmuxError> {
-        let channel = conn.open_exec(command).await?;
-        let (mut read, write) = channel.split();
+        let Stream { output: mut read, input: write } = link.open(command).await?;
         let shared = Arc::new(Shared {
             key,
             pending: StdMutex::new(VecDeque::new()),
@@ -173,10 +172,9 @@ impl ControlClient {
             let shared = reader_shared;
             let mut parser = Parser::new();
             let mut stderr = Vec::new();
-            // Drain promptly: a stalled channel would block the whole SSH connection.
-            while let Some(msg) = read.wait().await {
+            while let Some(msg) = read.recv().await {
                 match msg {
-                    ChannelMsg::Data { data } => {
+                    StreamMsg::Stdout(data) => {
                         for ev in parser.feed(&data) {
                             match ev {
                                 Event::Reply(reply) => shared.on_reply(reply),
@@ -187,9 +185,7 @@ impl ControlClient {
                             }
                         }
                     }
-                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
-                    ChannelMsg::Eof | ChannelMsg::Close => break,
-                    _ => {}
+                    StreamMsg::Stderr(data) => stderr.extend_from_slice(&data),
                 }
             }
             let reason = Some(String::from_utf8_lossy(&stderr).trim().to_string()).filter(|s| !s.is_empty());
@@ -223,10 +219,7 @@ impl ControlClient {
         let mut bytes = Vec::with_capacity(line.len() + 1);
         bytes.extend_from_slice(line.as_bytes());
         bytes.push(b'\n');
-        writer
-            .data_bytes(bytes::Bytes::from(bytes))
-            .await
-            .map_err(|e| TmuxError::Ssh(e.to_string()))
+        writer.write(bytes).await.map_err(|e| TmuxError::Ssh(e.to_string()))
     }
 
     /// Sends a line containing `count` commands separated by ` ; ` and waits for all replies.

@@ -349,7 +349,7 @@ async fn connected_phase(
         socket_name: std::env::var("CHM_TMUX_SOCKET").ok().filter(|s| !s.is_empty()),
         bin: facts.as_ref().and_then(|f| f.tmux_path.clone()),
     };
-    let (mut mgr, mut events) = TmuxManager::new(id.clone(), conn.clone(), ctx.clone(), server);
+    let (mut mgr, mut events) = TmuxManager::new(id.clone(), crate::link::Link::Ssh(conn.clone()), ctx.clone(), server);
     mgr.set_home(facts.as_ref().map(|f| f.home.clone()).filter(|h| !h.is_empty()));
     if tmux_ok {
         mgr.discover().await;

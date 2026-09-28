@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chm_core::link::Link;
 use chm_core::model::AuthMode;
 use chm_core::ssh::hostkeys::KnownHosts;
 use chm_core::ssh::{ConnectParams, SshConnection, exec};
@@ -14,7 +15,7 @@ use chm_core::tmux::quote::{cmd, quote};
 use chm_core::tmux::seed::{parse_seed, seed_command};
 use chm_core::tmux::{ClientEvent, ControlClient, Event, TmuxServer};
 
-async fn connect() -> SshConnection {
+async fn connect() -> Arc<SshConnection> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "chm_core=debug,russh=info".into()))
         .with_test_writer()
@@ -32,7 +33,7 @@ async fn connect() -> SshConnection {
         pinned_keys: peer.ssh_host_keys.clone(),
     };
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    SshConnection::connect(&params, Arc::new(KnownHosts::in_memory()), tx).await.expect("connect")
+    Arc::new(SshConnection::connect(&params, Arc::new(KnownHosts::in_memory()), tx).await.expect("connect"))
 }
 
 struct Scratch {
@@ -67,7 +68,7 @@ async fn seed_is_exact_under_load() {
     let conn = connect().await;
     let scratch = Scratch::new(&conn, 60, 12).await;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = ControlClient::attach(&conn, &scratch.server, "t", 0, tx).await.expect("attach");
+    let client = ControlClient::attach(&Link::Ssh(conn.clone()), &scratch.server, "t", 0, tx).await.expect("attach");
     eprintln!("[test] attached {}", client.session_id);
     let panes = client.command("list-panes -F '#{pane_id}'").await.unwrap().text();
     let pane: u32 = panes.trim().trim_start_matches('%').parse().unwrap();
@@ -140,7 +141,7 @@ async fn set_buffer_roundtrip() {
     let conn = connect().await;
     let scratch = Scratch::new(&conn, 80, 24).await;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    let client = ControlClient::attach(&conn, &scratch.server, "t", 0, tx).await.unwrap();
+    let client = ControlClient::attach(&Link::Ssh(conn.clone()), &scratch.server, "t", 0, tx).await.unwrap();
     let samples = [
         "plain",
         "quotes ' and \" and `backticks`",

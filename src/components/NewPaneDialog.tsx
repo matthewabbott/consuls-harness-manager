@@ -69,9 +69,9 @@ export default function NewPaneDialog() {
   }, [hostPanes, home]);
   const sessions = useMemo(() => [...new Set(hostPanes.flatMap((p) => (p.tmux ? [p.tmux.sessionName] : [])))], [hostPanes]);
   const local = isLocal(host);
-  // Machines without tmux can still run plain shells.
-  const noTmux = !local && !!hosts[host]?.facts && !hosts[host]?.facts?.tmuxVersion;
-  const direct = local || noTmux || session === DIRECT;
+  // Machines without tmux can still run plain shells (This PC gets tmux through Cygwin).
+  const noTmux = !!hosts[host]?.facts && !hosts[host]?.facts?.tmuxVersion;
+  const direct = noTmux || session === DIRECT;
   const [shells, setShells] = useState<LocalShell[]>([]);
   const [shell, setShell] = useState<string>(() => {
     try {
@@ -139,7 +139,7 @@ export default function NewPaneDialog() {
         session: direct ? null : session || null,
         args: args.trim() || null,
         direct: direct || undefined,
-        shell: local ? shellId || undefined : undefined,
+        shell: local && direct ? shellId || undefined : undefined,
       });
       close();
       useApp.getState().setExpanded(key);
@@ -198,7 +198,7 @@ export default function NewPaneDialog() {
             </div>
           </Field>
 
-          {local && shells.length > 0 && (
+          {local && direct && shells.length > 0 && (
             <Field label="Shell">
               <div className="flex flex-wrap gap-1.5">
                 {shells.map((s) => (
@@ -278,7 +278,7 @@ export default function NewPaneDialog() {
             </label>
           </Field>
 
-          <div className={`grid grid-cols-2 gap-3 ${local ? "hidden" : ""}`}>
+          <div className={`grid grid-cols-2 gap-3 ${local && noTmux ? "hidden" : ""}`}>
             <Field label="Name (optional)">
               <input
                 value={name}
@@ -292,7 +292,7 @@ export default function NewPaneDialog() {
               <select
                 value={noTmux ? DIRECT : session}
                 disabled={noTmux}
-                title={noTmux ? `tmux isn't installed on ${red(host)}` : undefined}
+                title={noTmux ? `tmux isn't installed on ${red(hostLabel(host))}` : undefined}
                 onChange={(e) => setSession(e.target.value)}
                 className="w-full rounded-lg bg-ink-900 px-2 py-1.5 text-[12.5px] text-mist-100 ring-1 ring-ink-600 outline-none disabled:opacity-60"
               >

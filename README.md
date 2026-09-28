@@ -31,7 +31,10 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
 - **This PC**: the machine Harness Manager runs on is always listed first. Start PowerShell,
   Git Bash, cmd (or WSL) there, optionally with Claude Code / Codex / omp launched in it, with the
   same tiles, notifications and composer as remote panes. Local shells end when the app quits
-  (it asks first); closing the window keeps them running in the tray.
+  (it asks first); closing the window keeps them running in the tray. With
+  [Cygwin](https://cygwin.com)'s `tmux` package installed, This PC gets tmux sessions too —
+  they keep running when Consuls quits, like on any other machine, and their Windows programs
+  (Claude Code, Codex) get a real console.
 - **Files**: a VS Code–style explorer in the left sidebar, following the open pane's folder (or
   pinned anywhere on any machine). One-click places (your default folder for that machine, home,
   each drive on This PC or `/`), back / forward (also Alt+←/→ and the mouse's side buttons), the
@@ -135,7 +138,8 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 Next up (small):
 - Rename panes from the app (tile menu / pane header); for tmux panes this renames the tmux
   window too (`rename-window`), so other clients see the new name.
-- Local tmux on This PC (macOS/Linux, or WSL/MSYS2 on Windows).
+- tmux on This PC when that's a Mac or Linux box (Windows has it through Cygwin already).
+- Reaching this PC from another Consuls (e.g. the Mac) over SSH.
 
 Bigger: the iPhone app and push notifications, a transcript-backed conversation view, image
 paste, sub-agent panes, per-harness expandable regions.

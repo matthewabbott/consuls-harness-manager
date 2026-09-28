@@ -6,6 +6,7 @@ mod ctx;
 mod direct;
 pub mod frames;
 mod host;
+mod local_tmux;
 mod tmux_mgr;
 
 use std::collections::HashMap;
@@ -19,6 +20,7 @@ use tracing::{info, warn};
 pub use ctx::Sink;
 use ctx::Ctx;
 use host::{HostCmd, HostHandle, IntegrationAction};
+use local_tmux::{LocalTmux, LocalTmuxCmd};
 use tmux_mgr::PaneCmd;
 
 use crate::harness::Harness;
@@ -59,6 +61,8 @@ pub struct Core {
     /// Captured in [`Core::start`] so the public API can be called from any thread (Tauri
     /// runs synchronous commands on the main thread, outside the runtime).
     rt: OnceLock<tokio::runtime::Handle>,
+    /// tmux on This PC (Cygwin), when there is one.
+    local_tmux: OnceLock<LocalTmux>,
 }
 
 impl Core {
@@ -74,6 +78,7 @@ impl Core {
             config: Mutex::new(config),
             hosts: Mutex::new(HashMap::new()),
             rt: OnceLock::new(),
+            local_tmux: OnceLock::new(),
         })
     }
 
@@ -97,10 +102,17 @@ impl Core {
             let facts = tokio::task::spawn_blocking(local::facts).await.ok();
             ctx.set_facts(LOCAL_HOST, facts);
         });
+        if let Some(cygwin) = local_tmux::find() {
+            let _ = self.local_tmux.set(local_tmux::spawn(self.ctx.clone(), &rt, cygwin));
+        }
         let ctx = self.ctx.clone();
+        let tmux = self.local_tmux.get().cloned();
         rt.spawn(local::tail_events(Arc::new(move |line: &str| {
-            if let Ok(event) = serde_json::from_str::<crate::integration::events::HookEvent>(line) {
-                direct::route_hook(&ctx, &event, false);
+            if let Ok(event) = serde_json::from_str::<crate::integration::events::HookEvent>(line)
+                && !direct::route_hook(&ctx, &event, false)
+                && let Some(tmux) = &tmux
+            {
+                tmux.send(LocalTmuxCmd::Hook(event));
             }
         })));
 
@@ -260,6 +272,9 @@ impl Core {
             for h in core.hosts.lock().unwrap().values() {
                 h.send(HostCmd::Probe);
             }
+            if let Some(tmux) = core.local_tmux.get() {
+                tmux.send(LocalTmuxCmd::Probe);
+            }
         });
     }
 
@@ -273,6 +288,9 @@ impl Core {
     pub fn resend_tiles(&self) {
         for h in self.hosts.lock().unwrap().values() {
             h.send(HostCmd::ResendTiles);
+        }
+        if let Some(tmux) = self.local_tmux.get() {
+            tmux.send(LocalTmuxCmd::ResendTiles);
         }
         for d in self.ctx.direct.lock().unwrap().values() {
             let _ = d.tx.send(direct::DirectMsg::Resend);
@@ -291,6 +309,7 @@ impl Core {
             return d.tx.send(direct::DirectMsg::Pane(cmd)).is_ok();
         }
         match self.host_of_pane(key) {
+            Some(host) if host == LOCAL_HOST => self.local_tmux.get().is_some_and(|t| t.send(LocalTmuxCmd::Pane(cmd))),
             Some(host) => {
                 self.send(&host, HostCmd::Pane(cmd));
                 true
@@ -487,7 +506,15 @@ impl Core {
     /// Creates a pane running `spec.harness` and returns its key.
     pub async fn create_pane(&self, spec: NewPaneSpec) -> Result<u32, String> {
         if spec.host == LOCAL_HOST {
-            return self.create_local(spec);
+            return match self.local_tmux.get() {
+                // A tmux pane, when tmux is there and a plain shell wasn't asked for.
+                Some(tmux) if spec.direct != Some(true) => {
+                    let (tx, rx) = oneshot::channel();
+                    tmux.send(LocalTmuxCmd::CreatePane { spec, reply: tx });
+                    rx.await.map_err(|_| "tmux on this PC stopped".to_string())?
+                }
+                _ => self.create_local(spec),
+            };
         }
         let (tx, rx) = oneshot::channel();
         let host = spec.host.clone();
