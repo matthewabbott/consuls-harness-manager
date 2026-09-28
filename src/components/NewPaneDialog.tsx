@@ -64,7 +64,9 @@ export default function NewPaneDialog() {
   }, [hostPanes, home]);
   const sessions = useMemo(() => [...new Set(hostPanes.flatMap((p) => (p.tmux ? [p.tmux.sessionName] : [])))], [hostPanes]);
   const local = isLocal(host);
-  const direct = local || session === DIRECT;
+  // Machines without tmux can still run plain shells.
+  const noTmux = !local && !!hosts[host]?.facts && !hosts[host]?.facts?.tmuxVersion;
+  const direct = local || noTmux || session === DIRECT;
   const [shells, setShells] = useState<LocalShell[]>([]);
   const [shell, setShell] = useState<string>(() => {
     try {
@@ -271,9 +273,11 @@ export default function NewPaneDialog() {
             </Field>
             <Field label="tmux session">
               <select
-                value={session}
+                value={noTmux ? DIRECT : session}
+                disabled={noTmux}
+                title={noTmux ? `tmux isn't installed on ${host}` : undefined}
                 onChange={(e) => setSession(e.target.value)}
-                className="w-full rounded-lg bg-ink-900 px-2 py-1.5 text-[12.5px] text-mist-100 ring-1 ring-ink-600 outline-none"
+                className="w-full rounded-lg bg-ink-900 px-2 py-1.5 text-[12.5px] text-mist-100 ring-1 ring-ink-600 outline-none disabled:opacity-60"
               >
                 <option value="">New session</option>
                 {sessions.map((s) => (
@@ -287,8 +291,8 @@ export default function NewPaneDialog() {
           </div>
           {direct && !local && (
             <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] leading-snug text-rose-200/90 ring-1 ring-rose-500/25">
-              A plain shell runs on this connection only: it's lost if the connection drops or Harness Manager quits, and it's never
-              revived. Handy for <span className="font-mono">tmux attach</span> / <span className="font-mono">Ctrl+b d</span> or a
+              {noTmux && <>tmux isn't installed on {host}, so this opens a plain shell. </>}A plain shell runs on this connection only:
+              it's lost if the connection drops or Harness Manager quits, and it's never revived. Handy for <span className="font-mono">tmux attach</span> / <span className="font-mono">Ctrl+b d</span> or a
               quick look around.
             </p>
           )}

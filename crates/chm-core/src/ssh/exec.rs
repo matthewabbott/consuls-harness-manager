@@ -30,6 +30,10 @@ pub fn login_shell(script: &str) -> String {
 
 /// Marker printed before the real output so login-shell noise (motd, conda, …) is dropped.
 const MARKER: &str = "__CHM_OUTPUT_BEGINS__";
+/// Marker before the script's exit status, printed after its output. SSH's own exit status
+/// can't be trusted: Tailscale SSH on macOS runs commands through `/usr/bin/login`, which
+/// always exits 0.
+const STATUS: &str = "__CHM_EXIT_STATUS__";
 
 #[derive(Debug, Clone, Default)]
 pub struct ExecOutput {
@@ -58,6 +62,23 @@ fn strip_before_marker(stdout: &[u8]) -> Vec<u8> {
     }
 }
 
+/// Splits the script's reported exit status off the end of its output (the output itself is
+/// returned byte-exact).
+fn take_status(stdout: &mut Vec<u8>) -> Option<u32> {
+    let needle = format!("\n{STATUS}");
+    let pos = memchr::memmem::rfind(stdout, needle.as_bytes())?;
+    let status = std::str::from_utf8(&stdout[pos + needle.len()..]).ok()?.trim().parse().ok()?;
+    stdout.truncate(pos);
+    Some(status)
+}
+
+/// The command line for `script`: the login shell (for the user's PATH) execs `sh`, so scripts
+/// are POSIX whatever the user's shell is, and `sh` reports the script's own exit status.
+fn command_for(script: &str) -> String {
+    let inner = format!("printf '%s\\n' {MARKER}; (\n{script}\n); s=$?; printf '\\n{STATUS}%s\\n' \"$s\"; exit $s");
+    login_shell(&format!("exec sh -c {}", sh_quote(&inner)))
+}
+
 /// Runs `script` in a login shell and collects its output.
 pub async fn run(conn: &SshConnection, script: &str, timeout: Duration) -> Result<ExecOutput, SshError> {
     run_with_stdin(conn, script, None, timeout).await
@@ -70,8 +91,7 @@ pub async fn run_with_stdin(
     stdin: Option<&[u8]>,
     timeout: Duration,
 ) -> Result<ExecOutput, SshError> {
-    let full = format!("printf '%s\\n' {MARKER}; {script}");
-    let mut channel = conn.open_exec(&login_shell(&full)).await?;
+    let mut channel = conn.open_exec(&command_for(script)).await?;
     if let Some(data) = stdin {
         channel.data_bytes(bytes::Bytes::copy_from_slice(data)).await?;
     }
@@ -93,6 +113,9 @@ pub async fn run_with_stdin(
         .await
         .map_err(|_| SshError::Timeout(format!("remote command: {script}")))?;
     out.stdout = strip_before_marker(&out.stdout);
+    if let Some(status) = take_status(&mut out.stdout) {
+        out.status = Some(status);
+    }
     Ok(out)
 }
 
@@ -105,6 +128,40 @@ mod tests {
         assert_eq!(sh_quote("abc"), "'abc'");
         assert_eq!(sh_quote("it's"), "'it'\\''s'");
         assert_eq!(login_shell("echo 'hi'"), "exec $SHELL -lc 'echo '\\''hi'\\'''");
+    }
+
+    #[test]
+    fn exit_status_comes_from_the_script() {
+        let mut out = b"content without newline\n__CHM_EXIT_STATUS__5\n".to_vec();
+        assert_eq!(take_status(&mut out), Some(5));
+        assert_eq!(out, b"content without newline");
+        let mut out = b"line\n\n__CHM_EXIT_STATUS__0\n".to_vec();
+        assert_eq!(take_status(&mut out), Some(0));
+        assert_eq!(out, b"line\n", "the script's own trailing newline is kept");
+        let mut out = b"killed before the end".to_vec();
+        assert_eq!(take_status(&mut out), None);
+    }
+
+    /// The generated command really works in a POSIX shell (where one is available).
+    #[test]
+    fn command_reports_status_and_exact_output() {
+        let Ok(sh) = which_sh() else { return };
+        let cmd = command_for("printf 'a\\nb'\nexit 7");
+        // Stand in for the login shell: run what it would exec.
+        let inner = cmd.strip_prefix("exec $SHELL -lc ").expect("login shell wrapper");
+        let out = std::process::Command::new(&sh).arg("-c").arg(format!("SHELL={sh}; export SHELL; exec $SHELL -c {inner}")).output().unwrap();
+        let mut stdout = strip_before_marker(&out.stdout);
+        assert_eq!(take_status(&mut stdout), Some(7));
+        assert_eq!(stdout, b"a\nb");
+    }
+
+    fn which_sh() -> Result<String, ()> {
+        for c in ["/bin/sh", "D:/Program Files/Git/usr/bin/sh.exe", "C:/Program Files/Git/usr/bin/sh.exe"] {
+            if std::path::Path::new(c).exists() {
+                return Ok(c.to_string());
+            }
+        }
+        Err(())
     }
 
     #[test]

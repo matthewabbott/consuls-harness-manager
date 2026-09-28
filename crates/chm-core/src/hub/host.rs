@@ -256,11 +256,38 @@ async fn connect_phase(
     }
 }
 
-async fn gather_facts(conn: &SshConnection) -> Result<HostFacts, String> {
-    let script = r#"printf 'user=%s\nhome=%s\nshell=%s\nuname=%s\ntmux=%s\n' "$(id -un)" "$HOME" "$SHELL" "$(uname -sr)" "$(tmux -V 2>/dev/null)""#;
-    let out = exec::run(conn, script, Duration::from_secs(20)).await.map_err(|e| e.to_string())?;
+/// Host details, and where tmux is. Commands run in a login shell, which doesn't read
+/// `~/.zshrc`/`~/.bashrc`; tmux installed somewhere only those add to PATH (a Homebrew in the
+/// home folder, say) is looked for in the usual places, then asked of an interactive shell
+/// (given 5 s, in case its startup files wait for something).
+const FACTS_SCRIPT: &str = r#"t=$(command -v tmux 2>/dev/null); p=
+case "$t" in /*) ;; *) t= ;; esac
+if [ -z "$t" ]; then
+  for c in "$HOME/.homebrew/bin/tmux" /opt/homebrew/bin/tmux /usr/local/bin/tmux /home/linuxbrew/.linuxbrew/bin/tmux \
+      "$HOME/.linuxbrew/bin/tmux" "$HOME/.nix-profile/bin/tmux" /run/current-system/sw/bin/tmux /opt/local/bin/tmux \
+      "$HOME/.local/bin/tmux" "$HOME/bin/tmux" /snap/bin/tmux; do
+    if [ -x "$c" ]; then t=$c; p=$c; break; fi
+  done
+fi
+if [ -z "$t" ] && f=$(mktemp 2>/dev/null); then
+  ("$SHELL" -ic 'command -v tmux' </dev/null 2>/dev/null | tail -n 1 > "$f") & w=$!
+  i=0; while kill -0 $w 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  kill $w 2>/dev/null
+  c=$(cat "$f"); rm -f "$f"
+  case "$c" in /*) [ -x "$c" ] && { t=$c; p=$c; } ;; esac
+fi
+printf 'user=%s
+home=%s
+shell=%s
+uname=%s
+tmux=%s
+tmuxpath=%s
+' "$(id -un)" "$HOME" "$SHELL" "$(uname -sr)" \
+  "$([ -n "$t" ] && "$t" -V 2>/dev/null)" "$p""#;
+
+fn parse_facts(out: &str) -> HostFacts {
     let mut facts = HostFacts::default();
-    for line in out.stdout_str().lines() {
+    for line in out.lines() {
         let Some((k, v)) = line.split_once('=') else { continue };
         match k {
             "user" => facts.user = v.to_string(),
@@ -268,10 +295,16 @@ async fn gather_facts(conn: &SshConnection) -> Result<HostFacts, String> {
             "shell" => facts.shell = v.to_string(),
             "uname" => facts.uname = v.to_string(),
             "tmux" => facts.tmux_version = v.strip_prefix("tmux ").map(str::to_string).filter(|s| !s.is_empty()),
+            "tmuxpath" => facts.tmux_path = Some(v.to_string()).filter(|p| p.starts_with('/')),
             _ => {}
         }
     }
-    Ok(facts)
+    facts
+}
+
+async fn gather_facts(conn: &SshConnection) -> Result<HostFacts, String> {
+    let out = exec::run(conn, FACTS_SCRIPT, Duration::from_secs(25)).await.map_err(|e| e.to_string())?;
+    Ok(parse_facts(&out.stdout_str()))
 }
 
 /// tmux ≥ 3.2 is needed for `refresh-client -f/-A/-B` and `%extended-output`.
@@ -312,7 +345,10 @@ async fn connected_phase(
 
     // CHM_TMUX_SOCKET points everything at a private tmux server (`tmux -L …`); tests use it
     // so they never touch the user's real sessions.
-    let server = TmuxServer { socket_name: std::env::var("CHM_TMUX_SOCKET").ok().filter(|s| !s.is_empty()) };
+    let server = TmuxServer {
+        socket_name: std::env::var("CHM_TMUX_SOCKET").ok().filter(|s| !s.is_empty()),
+        bin: facts.as_ref().and_then(|f| f.tmux_path.clone()),
+    };
     let (mut mgr, mut events) = TmuxManager::new(id.clone(), conn.clone(), ctx.clone(), server);
     mgr.set_home(facts.as_ref().map(|f| f.home.clone()).filter(|h| !h.is_empty()));
     if tmux_ok {
@@ -370,13 +406,14 @@ async fn connected_phase(
                 Some(HostCmd::Integration { action, reply }) => {
                     let conn = conn.clone();
                     let home = facts.as_ref().map(|f| f.home.clone()).unwrap_or_default();
+                    let tmux = facts.as_ref().and_then(|f| f.tmux_path.clone());
                     tokio::spawn(async move {
                         let res = if home.is_empty() {
                             Err("host details unknown".to_string())
                         } else {
                             match action {
                                 IntegrationAction::Status => install::status(&conn, &home).await,
-                                IntegrationAction::Install => install::install(&conn, &home).await,
+                                IntegrationAction::Install => install::install(&conn, &home, tmux.as_deref()).await,
                                 IntegrationAction::Uninstall => install::uninstall(&conn, &home).await,
                             }
                         };
@@ -541,6 +578,15 @@ async fn create_direct(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn facts_parse_tmux_outside_path() {
+        let f = parse_facts("user=m\nhome=/Users/m\nshell=/bin/zsh\nuname=Darwin 25\ntmux=tmux 3.7c\ntmuxpath=/Users/m/.homebrew/bin/tmux\n");
+        assert_eq!(f.tmux_version.as_deref(), Some("3.7c"));
+        assert_eq!(f.tmux_path.as_deref(), Some("/Users/m/.homebrew/bin/tmux"));
+        let f = parse_facts("user=m\ntmux=\ntmuxpath=\n");
+        assert_eq!((f.tmux_version, f.tmux_path), (None, None));
+    }
 
     #[test]
     fn version_gate() {

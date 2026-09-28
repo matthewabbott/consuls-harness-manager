@@ -119,13 +119,17 @@ pub struct ControlClient {
 pub struct TmuxServer {
     /// `-L <name>` socket; `None` for the default server.
     pub socket_name: Option<String>,
+    /// Absolute path of the tmux binary when it isn't on the login shell's PATH (e.g. a
+    /// Homebrew in the home folder that only `~/.zshrc` adds); `None` runs plain `tmux`.
+    pub bin: Option<String>,
 }
 
 impl TmuxServer {
     pub fn prefix(&self) -> String {
+        let bin = self.bin.as_deref().map_or_else(|| "tmux".to_string(), sh_quote);
         match &self.socket_name {
-            Some(name) => format!("tmux -L {}", sh_quote(name)),
-            None => "tmux".to_string(),
+            Some(name) => format!("{bin} -L {}", sh_quote(name)),
+            None => bin,
         }
     }
 }

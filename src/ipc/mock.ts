@@ -195,9 +195,9 @@ export function mockBackend(): Backend {
     ],
   };
   const hosts: HostState[] = [
-    { id: "spark-d683", phase: { phase: "connected" }, facts: { user: "consulear", home: "/home/consulear", shell: "/bin/bash", uname: "Linux 6.11", tmuxVersion: "3.4" } },
+    { id: "spark-d683", phase: { phase: "connected" }, facts: { user: "consulear", home: "/home/consulear", shell: "/bin/bash", uname: "Linux 6.11", tmuxVersion: "3.4", tmuxPath: null } },
     { id: "spark2", phase: { phase: "awaitingTailscaleCheck", url: "https://login.tailscale.com/a/example" }, facts: null },
-    { id: "@local", phase: { phase: "connected" }, facts: { user: "consul", home: "C:/Users/consul", shell: "C:/Program Files/PowerShell/7/pwsh.exe", uname: "windows DESKTOP-CONSUL", tmuxVersion: null } },
+    { id: "@local", phase: { phase: "connected" }, facts: { user: "consul", home: "C:/Users/consul", shell: "C:/Program Files/PowerShell/7/pwsh.exe", uname: "windows DESKTOP-CONSUL", tmuxVersion: null, tmuxPath: null } },
   ];
   const panes: MockPane[] = [
     pane(1, "spark-d683", { tmux: { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp" }, currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),

@@ -628,7 +628,7 @@ impl TmuxManager {
     pub async fn ensure_assets(&mut self) -> Option<Assets> {
         let home = self.home.clone()?;
         if self.assets.is_none() {
-            match assets::ensure(&self.conn, &home).await {
+            match assets::ensure(&self.conn, &home, self.server.bin.as_deref()).await {
                 Ok(a) => self.assets = Some(a),
                 Err(e) => self.ctx.notice(Some(&self.host), NoticeLevel::Warning, format!("Couldn't install hooks: {e}")),
             }

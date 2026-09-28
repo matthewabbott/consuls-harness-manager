@@ -7,4 +7,8 @@ export type HostFacts = { user: string, home: string, shell: string, uname: stri
 /**
  * e.g. "3.4"; `None` if tmux isn't installed.
  */
-tmuxVersion: string | null, };
+tmuxVersion: string | null, 
+/**
+ * Where tmux is, when the login shell's PATH doesn't have it.
+ */
+tmuxPath: string | null, };

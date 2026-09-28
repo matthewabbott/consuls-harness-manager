@@ -204,8 +204,8 @@ pub async fn status(conn: &SshConnection, home: &str) -> Result<IntegrationStatu
     Ok(IntegrationStatus { claude, codex, omp, notes: Vec::new() })
 }
 
-pub async fn install(conn: &SshConnection, home: &str) -> Result<IntegrationStatus, String> {
-    let assets = assets::ensure(conn, home).await?;
+pub async fn install(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Result<IntegrationStatus, String> {
+    let assets = assets::ensure(conn, home, tmux).await?;
     let p = paths(home);
     let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
     let mut notes = Vec::new();

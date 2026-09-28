@@ -192,6 +192,7 @@ pub fn facts() -> HostFacts {
             if machine.is_empty() { os.to_string() } else { format!("{os} · {machine}") }
         },
         tmux_version: None,
+        tmux_path: None,
     }
 }
 

@@ -94,22 +94,27 @@ pub(crate) fn files(assets: &Assets, tmux: &str) -> Vec<(String, String, u32)> {
     ]
 }
 
-/// Makes sure the current assets exist on the host and returns their paths.
-pub async fn ensure(conn: &SshConnection, home: &str) -> Result<Assets, String> {
+/// Makes sure the current assets exist on the host and returns their paths. `tmux` is the tmux
+/// binary when it isn't on the login shell's PATH (see `HostFacts::tmux_path`).
+pub async fn ensure(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Result<Assets, String> {
     let assets = Assets::at(home);
+    let tmux = match tmux {
+        Some(t) => t.to_string(),
+        None => exec::run(conn, "command -v tmux", Duration::from_secs(15))
+            .await
+            .map(|o| o.stdout_str().trim().to_string())
+            .ok()
+            .filter(|p| p.starts_with('/'))
+            .unwrap_or_else(|| "tmux".into()),
+    };
     let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
     let version_path = format!("{}/VERSION", assets.dir);
-    if sftp.read(version_path.clone()).await.ok().is_some_and(|v| v == version().as_bytes()) {
+    // The hook embeds tmux's path, so a different tmux means a redeploy too.
+    let stamp = format!("{}\n{tmux}", version());
+    if sftp.read(version_path.clone()).await.ok().is_some_and(|v| v == stamp.as_bytes()) {
         let _ = sftp.close().await;
         return Ok(assets);
     }
-
-    let tmux = exec::run(conn, "command -v tmux", Duration::from_secs(15))
-        .await
-        .map(|o| o.stdout_str().trim().to_string())
-        .ok()
-        .filter(|p| p.starts_with('/'))
-        .unwrap_or_else(|| "tmux".into());
 
     let mut path = home.trim_end_matches('/').to_string();
     for part in [".local", "share", "consuls"] {
@@ -117,6 +122,7 @@ pub async fn ensure(conn: &SshConnection, home: &str) -> Result<Assets, String> 
         let _ = sftp.create_dir(path.clone()).await; // fine if it already exists
     }
     for (path, content, mode) in files(&assets, &tmux) {
+        let content = if path == version_path { stamp.clone() } else { content };
         let mut file = sftp.create(path.clone()).await.map_err(|e| format!("writing {path}: {e}"))?;
         file.write_all(content.as_bytes()).await.map_err(|e| format!("writing {path}: {e}"))?;
         file.shutdown().await.map_err(|e| format!("closing {path}: {e}"))?;

@@ -42,7 +42,7 @@ struct Scratch {
 impl Scratch {
     async fn new(conn: &SshConnection, cols: u16, rows: u16) -> Self {
         let name = format!("chm-test-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
-        let server = TmuxServer { socket_name: Some(name) };
+        let server = TmuxServer { socket_name: Some(name), bin: None };
         let out = exec::run(
             conn,
             &format!("{} new-session -d -s t -x {cols} -y {rows} 'bash --norc --noprofile'", server.prefix()),

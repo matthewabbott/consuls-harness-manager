@@ -87,10 +87,20 @@ pub fn head_script(path: &str) -> String {
 pub const STATUS_ARGS: [&str; 6] = ["--no-optional-locks", "status", "--porcelain=v2", "-z", "--ignored=matching", "--branch"];
 
 /// A POSIX script that prints `<root>\0<status output>` for the repository containing `dir`
-/// (exit 4 when `dir` isn't in one).
+/// (exit 4 when `dir` isn't in one). The root is given the way `dir` names it: git reports the
+/// real path, which differs under a symlink (macOS `/tmp` is `/private/tmp`), and the explorer
+/// matches statuses against the paths it shows.
 pub fn remote_script(dir: &str) -> String {
     format!(
-        "cd {} 2>/dev/null || exit 3\nroot=$(git rev-parse --show-toplevel 2>/dev/null) || exit 4\nprintf '%s\\0' \"$root\"\ncd \"$root\" && exec git {}",
+        r#"cd {} 2>/dev/null || exit 3
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 4
+pre=$(git rev-parse --show-prefix 2>/dev/null); here=$(pwd -L); root=$top
+case "$pre" in
+  "") root=$here ;;
+  *) p=${{pre%/}}; case "$here" in */"$p") root=${{here%/"$p"}} ;; esac ;;
+esac
+printf '%s\0' "$root"
+cd "$top" && exec git {}"#,
         crate::ssh::exec::sh_quote(dir),
         STATUS_ARGS.join(" ")
     )

@@ -173,7 +173,7 @@ export default function Grid() {
                     : "No panes match the current filter."
                   : connected
                   ? m.state?.facts && !m.state.facts.tmuxVersion
-                    ? `tmux isn't installed on ${m.label} (or isn't on your login shell's PATH). Install tmux 3.2+ — e.g. \`brew install tmux\` or \`apt install tmux\` — then reconnect.`
+                    ? `tmux isn't installed on ${m.label}. Use + for a plain shell, or install tmux 3.2+ (e.g. \`brew install tmux\` or \`apt install tmux\`) and reconnect for panes that survive disconnects.`
                     : total === 0
                       ? "No tmux sessions on this machine yet. Use + to start one."
                       : "No panes match the current filter."

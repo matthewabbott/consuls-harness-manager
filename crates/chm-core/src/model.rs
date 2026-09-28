@@ -146,6 +146,8 @@ pub struct HostFacts {
     pub uname: String,
     /// e.g. "3.4"; `None` if tmux isn't installed.
     pub tmux_version: Option<String>,
+    /// Where tmux is, when the login shell's PATH doesn't have it.
+    pub tmux_path: Option<String>,
 }
 
 /// Runtime state of a configured host.

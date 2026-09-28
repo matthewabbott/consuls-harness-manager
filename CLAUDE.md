@@ -104,6 +104,17 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 
+## Remote shell gotchas
+
+- Tailscale SSH on macOS runs commands through `/usr/bin/login`, which **always exits 0**.
+  `exec::run` therefore runs scripts under `sh` (inside the login shell, for PATH) and takes
+  the exit status from a marker the script prints last — never from SSH.
+- Login shells don't read `~/.zshrc`; tools only added to PATH there (e.g. a Homebrew in
+  `~/.homebrew`) are invisible to them. Host facts look for tmux in the usual places and then
+  ask an interactive shell; the result is `HostFacts::tmux_path` / `TmuxServer::bin`.
+- macOS `/tmp` is `/private/tmp`: git reports real paths, so `git status` roots are translated
+  back to the path the caller used.
+
 ## Windows dev gotchas
 
 - Git Bash rewrites `/tmp`-style args into Windows paths; prefix with `MSYS_NO_PATHCONV=1`.

@@ -21,6 +21,7 @@ use chm_core::{Core, Sink};
 #[derive(Default)]
 struct Recorder {
     panes: Mutex<Vec<PaneInfo>>,
+    facts: Mutex<Option<chm_core::model::HostFacts>>,
     raw: Mutex<HashMap<u32, Vec<u8>>>,
     resets: Mutex<HashMap<u32, usize>>,
     tiles: Mutex<HashMap<u32, usize>>,
@@ -32,6 +33,7 @@ impl Sink for Recorder {
     fn event(&self, event: CoreEvent) {
         match event {
             CoreEvent::Panes { panes, .. } => *self.panes.lock().unwrap() = panes,
+            CoreEvent::Host { state } if state.id != "@local" => *self.facts.lock().unwrap() = state.facts,
             CoreEvent::Notice { level, message, .. } => println!("  notice [{level:?}] {message}"),
             CoreEvent::Attention { state } => {
                 self.attention.lock().unwrap().insert(state.key, state);
@@ -84,11 +86,14 @@ async fn main() -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_millis(1500)).await;
     core.upsert_host(HostConfig::new(&host, &user));
 
-    // Wait for the connection, then create the scratch session on the private server.
+    // Wait for the connection, then create the scratch session on the private server, with the
+    // tmux the core found (it may not be on the login shell's PATH).
+    wait_for("host details", Duration::from_secs(30), || rec.facts.lock().unwrap().is_some()).await;
+    let tmux = rec.facts.lock().unwrap().as_ref().and_then(|f| f.tmux_path.clone()).map_or_else(|| "tmux".to_string(), |p| format!("'{p}'"));
     let mut created = false;
     for _ in 0..50 {
         if let Ok(out) = core
-            .exec(&host, &format!("tmux -L {socket} new-session -d -s scratch -x 90 -y 20 'bash --norc --noprofile'"))
+            .exec(&host, &format!("{tmux} -L {socket} new-session -d -s scratch -x 90 -y 20 'bash --norc --noprofile'"))
             .await
         {
             assert!(out.success(), "new-session failed: {}", out.stderr_str());
@@ -131,13 +136,13 @@ async fn main() -> anyhow::Result<()> {
         rec.resets.lock().unwrap().get(&key).copied().unwrap_or(0) > resets_before
     })
     .await;
-    let wsize = core.exec(&host, &format!("tmux -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
+    let wsize = core.exec(&host, &format!("{tmux} -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
     assert_eq!(wsize.stdout_str().trim(), "manual", "resize pins window-size");
     core.release_pane_size(key);
     wait_for("release un-pins", Duration::from_secs(5), || pane(key).is_some_and(|p| p.tmux.as_ref().is_some_and(|t| !t.sized))).await;
-    let wsize = core.exec(&host, &format!("tmux -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
+    let wsize = core.exec(&host, &format!("{tmux} -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
     assert_eq!(wsize.stdout_str().trim(), "", "release restores the window's own (unset) window-size");
-    core.exec(&host, &format!("tmux -L {socket} split-window -h -t scratch")).await.map_err(anyhow::Error::msg)?;
+    core.exec(&host, &format!("{tmux} -L {socket} split-window -h -t scratch")).await.map_err(anyhow::Error::msg)?;
     wait_for("split window seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.tmux.as_ref().is_some_and(|t| t.window_panes == 2))).await;
     core.resize_pane(key, 60, 20).await.map_err(anyhow::Error::msg)?;
     wait_for("split pane resized to ~60x20", Duration::from_secs(5), || {
@@ -154,9 +159,9 @@ async fn main() -> anyhow::Result<()> {
     let pane_id = pane(key).and_then(|p| p.tmux).expect("tmux pane").pane_id;
     core.set_pane_labels(key, vec!["alpha".into(), "beta".into(), "alpha".into()]);
     wait_for("labels applied (deduplicated)", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels == ["alpha", "beta"])).await;
-    let stored = core.exec(&host, &format!("tmux -L {socket} show-options -pqv -t '{pane_id}' @chm_labels")).await.map_err(anyhow::Error::msg)?;
+    let stored = core.exec(&host, &format!("{tmux} -L {socket} show-options -pqv -t '{pane_id}' @chm_labels")).await.map_err(anyhow::Error::msg)?;
     assert_eq!(stored.stdout_str().trim(), "alpha,beta", "labels stored in @chm_labels");
-    core.exec(&host, &format!("tmux -L {socket} set-option -p -t '{pane_id}' @chm_labels gamma")).await.map_err(anyhow::Error::msg)?;
+    core.exec(&host, &format!("{tmux} -L {socket} set-option -p -t '{pane_id}' @chm_labels gamma")).await.map_err(anyhow::Error::msg)?;
     wait_for("label change from another client seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels == ["gamma"])).await;
     core.set_pane_labels(key, vec![]);
     wait_for("labels cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels.is_empty())).await;
@@ -293,14 +298,15 @@ async fn main() -> anyhow::Result<()> {
     println!("ok   git HEAD versions: committed, untracked, outside a repo");
     // --- editing: byte-exact saves, truncation, conflicts, symlinks, modes
     let f = format!("{tmp}/crlf.txt");
-    let prep = format!(r"printf '\357\273\277one\r\ntwo\r\n' > {f} && chmod 755 {f} && ln -s crlf.txt {tmp}/link.txt && md5sum {f} | cut -c1-32");
+    let prep = format!(r"printf '\357\273\277one\r\ntwo\r\n' > {f} && chmod 755 {f} && ln -s crlf.txt {tmp}/link.txt && cksum < {f}");
     let before = core.exec(&host, &prep).await.map_err(anyhow::Error::msg)?.stdout_str().trim().to_string();
     let FileContent::Text { text, bom, stamp } = core.read_file(&host, &format!("{tmp}/link.txt")).await.map_err(anyhow::Error::msg)? else {
         panic!("expected text")
     };
     assert!(bom && text == "one\r\ntwo\r\n", "BOM stripped, CRLF kept: {text:?}");
     let stamp = core.write_file(&host, &format!("{tmp}/link.txt"), text.clone(), bom, Some(stamp)).await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
-    let check = format!("md5sum {f} | cut -c1-32; [ -L {tmp}/link.txt ] && echo link; stat -c %a {f}");
+    // POSIX cksum; stat differs between GNU (-c) and BSD/macOS (-f).
+    let check = format!("cksum < {f}; [ -L {tmp}/link.txt ] && echo link; stat -c %a {f} 2>/dev/null || stat -f %Lp {f}");
     let after = core.exec(&host, &check).await.map_err(anyhow::Error::msg)?.stdout_str();
     let mut lines = after.lines();
     assert_eq!(lines.next(), Some(before.as_str()), "unedited CRLF+BOM save is byte-identical");
@@ -369,7 +375,7 @@ async fn main() -> anyhow::Result<()> {
     wait_for("pane removed", Duration::from_secs(10), || find(new_key).is_none()).await;
     println!("all checks passed");
 
-    let _ = core.exec(&host, &format!("tmux -L {socket} kill-server")).await;
+    let _ = core.exec(&host, &format!("{tmux} -L {socket} kill-server")).await;
     core.disconnect(&host);
     tokio::time::sleep(Duration::from_millis(300)).await;
     let _ = std::fs::remove_dir_all(dir);
