@@ -68,17 +68,32 @@ pub enum AuthMode {
     KeyFile { path: String },
 }
 
+fn default_port() -> u16 {
+    22
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Every field has a default so config files written by older versions keep loading (a
+/// parse failure would otherwise reset the config and the next save would lose the hosts).
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct HostConfig {
     pub id: HostId,
     /// Address to dial. When absent, the tailnet IP from `tailscale status` is used.
+    #[serde(default)]
     pub address: Option<String>,
+    #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default)]
     pub user: String,
+    #[serde(default)]
     pub auth: AuthMode,
     /// Connect automatically on launch and keep reconnecting.
+    #[serde(default = "default_true")]
     pub auto_connect: bool,
 }
 
@@ -143,11 +158,73 @@ pub struct HostState {
     pub facts: Option<HostFacts>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
 #[ts(export)]
 pub struct AppConfig {
     pub hosts: Vec<HostConfig>,
+    pub sound: SoundPrefs,
+}
+
+/// Notification sound preferences.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct SoundPrefs {
+    /// Master switch for chimes.
+    pub enabled: bool,
+    /// 0.0 – 1.0.
+    pub volume: f32,
+    pub finished: bool,
+    pub needs_input: bool,
+    pub subtask: bool,
+    pub bell: bool,
+    /// Windows toasts when the app isn't focused.
+    pub toasts: bool,
+}
+
+impl Default for SoundPrefs {
+    fn default() -> Self {
+        Self { enabled: true, volume: 0.7, finished: true, needs_input: true, subtask: true, bell: true, toasts: true }
+    }
+}
+
+impl SoundPrefs {
+    /// Whether a chime of this kind should play.
+    pub fn allows(&self, kind: AlertKind) -> bool {
+        self.enabled
+            && match kind {
+                AlertKind::Finished | AlertKind::Summary => self.finished,
+                AlertKind::NeedsInput => self.needs_input,
+                AlertKind::Subtask => self.subtask,
+            }
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    /// The exact shape v1 wrote to config.json must keep loading with every host intact.
+    #[test]
+    fn v1_config_still_loads() {
+        let v1 = r#"{ "hosts": [
+            { "id": "spark-d683", "address": null, "port": 22, "user": "consulear", "auth": { "kind": "auto" }, "autoConnect": true },
+            { "id": "mbas-macbook-pro-1", "address": null, "port": 22, "user": "matthewabbott", "auth": { "kind": "auto" }, "autoConnect": true }
+        ] }"#;
+        let cfg: AppConfig = serde_json::from_str(v1).unwrap();
+        assert_eq!(cfg.hosts.len(), 2);
+        assert_eq!(cfg.hosts[1].user, "matthewabbott");
+        assert_eq!(cfg.sound, SoundPrefs::default());
+    }
+
+    #[test]
+    fn sparse_and_empty_configs_load() {
+        let cfg: AppConfig = serde_json::from_str(r#"{ "hosts": [ { "id": "x" } ], "futureField": 1 }"#).unwrap();
+        assert_eq!((cfg.hosts[0].port, cfg.hosts[0].auto_connect), (22, true));
+        let cfg: AppConfig = serde_json::from_str("{}").unwrap();
+        assert!(cfg.hosts.is_empty());
+    }
 }
 
 /// One tmux pane, as shown in the grid.

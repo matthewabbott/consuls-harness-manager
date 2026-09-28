@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::sync::mpsc::{Sender, channel};
 
-use chm_core::model::{Alert, AlertKind};
+use chm_core::model::{Alert, AlertKind, SoundPrefs};
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 use tracing::warn;
 
@@ -47,46 +47,65 @@ fn chime(kind: AlertKind) -> Vec<f32> {
     }
 }
 
-/// Starts the audio thread (the output stream isn't `Send`, so it lives there).
-fn start_audio() -> Sender<AlertKind> {
-    let (tx, rx) = channel::<AlertKind>();
+/// Starts the audio thread (output streams aren't `Send`, so they live there). The default
+/// device is opened per chime: chimes are rare, and this way switching headsets or docking
+/// never leaves us writing to a device that's gone.
+fn start_audio() -> Sender<(AlertKind, f32)> {
+    let (tx, rx) = channel::<(AlertKind, f32)>();
     std::thread::Builder::new()
         .name("consuls-audio".into())
         .spawn(move || {
-            let sink = match rodio::DeviceSinkBuilder::open_default_sink() {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("no audio output: {e}");
-                    // Drain requests so senders never block.
-                    while rx.recv().is_ok() {}
-                    return;
-                }
-            };
-            while let Ok(kind) = rx.recv() {
+            while let Ok((kind, volume)) = rx.recv() {
+                let sink = match rodio::DeviceSinkBuilder::open_default_sink() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("no audio output: {e}");
+                        continue;
+                    }
+                };
                 let player = rodio::Player::connect_new(sink.mixer());
-                let samples = chime(kind);
+                let samples: Vec<f32> = chime(kind).into_iter().map(|s| s * volume).collect();
                 let channels = std::num::NonZeroU16::new(1).unwrap();
                 let rate = std::num::NonZeroU32::new(RATE).unwrap();
                 player.append(rodio::buffer::SamplesBuffer::new(channels, rate, samples));
-                player.detach();
+                player.sleep_until_end();
             }
         })
         .expect("spawn audio thread");
     tx
 }
 
+/// Loudness curve: the slider is linear, perceived loudness isn't.
+fn gain(volume: f32) -> f32 {
+    let v = volume.clamp(0.0, 1.0);
+    // At full volume, chimes play at roughly twice v1's level (they peak well below clipping).
+    v * v * 2.0
+}
+
 pub struct Alerter {
-    audio: Mutex<Sender<AlertKind>>,
+    audio: Mutex<Sender<(AlertKind, f32)>>,
+    prefs: Mutex<SoundPrefs>,
 }
 
 impl Alerter {
     pub fn new() -> Self {
-        Self { audio: Mutex::new(start_audio()) }
+        Self { audio: Mutex::new(start_audio()), prefs: Mutex::new(SoundPrefs::default()) }
     }
 
-    pub fn alert(&self, app: &AppHandle, alert: Alert) {
-        if alert.sound {
-            let _ = self.audio.lock().unwrap().send(alert.kind);
+    pub fn set_prefs(&self, prefs: SoundPrefs) {
+        *self.prefs.lock().unwrap() = prefs;
+    }
+
+    /// Plays a chime regardless of the enabled switches (Settings' test buttons).
+    pub fn test(&self, kind: AlertKind, volume: f32) {
+        let _ = self.audio.lock().unwrap().send((kind, gain(volume)));
+    }
+
+    pub fn alert(&self, app: &AppHandle, mut alert: Alert) {
+        let prefs = self.prefs.lock().unwrap().clone();
+        alert.toast &= prefs.toasts;
+        if alert.sound && prefs.allows(alert.kind) {
+            let _ = self.audio.lock().unwrap().send((alert.kind, gain(prefs.volume)));
         }
         if alert.flash
             && let Some(w) = app.get_webview_window("main")
@@ -142,7 +161,8 @@ mod tests {
         for kind in [AlertKind::Finished, AlertKind::NeedsInput, AlertKind::Subtask, AlertKind::Summary] {
             let s = chime(kind);
             assert!(s.len() < RATE as usize, "{kind:?} under a second");
-            assert!(s.iter().all(|x| x.abs() <= 1.0), "{kind:?} doesn't clip");
+            assert!(s.iter().all(|x| (x * gain(1.0)).abs() <= 1.0), "{kind:?} doesn't clip at full volume");
         }
+        assert_eq!(gain(0.0), 0.0);
     }
 }

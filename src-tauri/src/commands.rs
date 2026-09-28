@@ -1,4 +1,4 @@
-use chm_core::model::{CoreSnapshot, DirListing, FocusState, HostConfig, NewPaneSpec, TailnetStatus, TerminateOutcome};
+use chm_core::model::{AlertKind, CoreSnapshot, DirListing, FocusState, HostConfig, NewPaneSpec, SoundPrefs, TailnetStatus, TerminateOutcome};
 use chm_core::integration::install::IntegrationStatus;
 use tauri::State;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -103,6 +103,16 @@ pub async fn install_integration(state: State<'_, AppState>, host: String) -> Cm
 #[tauri::command]
 pub async fn uninstall_integration(state: State<'_, AppState>, host: String) -> CmdResult<IntegrationStatus> {
     state.core.uninstall_integration(&host).await
+}
+
+#[tauri::command]
+pub fn set_sound_prefs(state: State<'_, AppState>, prefs: SoundPrefs) {
+    state.core.set_sound_prefs(prefs);
+}
+
+#[tauri::command]
+pub fn test_chime(state: State<'_, AppState>, kind: AlertKind, volume: f32) {
+    state.sink.alerter.test(kind, volume);
 }
 
 #[tauri::command]

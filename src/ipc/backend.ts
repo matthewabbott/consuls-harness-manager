@@ -2,6 +2,7 @@
 // or a mock when the frontend runs in a plain browser (for design iteration).
 
 import type { Alert } from "./bindings/Alert";
+import type { AlertKind } from "./bindings/AlertKind";
 import type { CoreEvent } from "./bindings/CoreEvent";
 import type { FocusState } from "./bindings/FocusState";
 import type { CoreSnapshot } from "./bindings/CoreSnapshot";
@@ -9,6 +10,7 @@ import type { DirListing } from "./bindings/DirListing";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
+import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
 import type { TailnetStatus } from "./bindings/TailnetStatus";
 
@@ -20,6 +22,9 @@ export interface Backend {
   onAlert(cb: (alert: Alert) => void): Promise<() => void>;
   onFocusPane(cb: (key: number) => void): Promise<() => void>;
   setFocus(focus: FocusState): Promise<void>;
+  setSoundPrefs(prefs: SoundPrefs): Promise<void>;
+  testChime(kind: AlertKind, volume: number): Promise<void>;
+  setWindowTitle(title: string): Promise<void>;
   ackPane(key: number): Promise<void>;
   setPaneMuted(key: number, muted: boolean): Promise<void>;
   subscribeFrames(cb: (bytes: Uint8Array) => void): Promise<void>;
@@ -65,6 +70,12 @@ async function tauriBackend(): Promise<Backend> {
     onAlert: async (cb) => listen<Alert>("alert", (e) => cb(e.payload)),
     onFocusPane: async (cb) => listen<number>("focus-pane", (e) => cb(e.payload)),
     setFocus: (focus) => invoke("set_focus", { focus }),
+    setSoundPrefs: (prefs) => invoke("set_sound_prefs", { prefs }),
+    testChime: (kind, volume) => invoke("test_chime", { kind, volume }),
+    setWindowTitle: async (title) => {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setTitle(title);
+    },
     ackPane: (key) => invoke("ack_pane", { key }),
     setPaneMuted: (key, muted) => invoke("set_pane_muted", { key, muted }),
     subscribeFrames: async (cb) => {

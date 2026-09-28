@@ -101,7 +101,8 @@ mod tests {
         let claude = render(CLAUDE_SETTINGS, &a, "tmux");
         let json: serde_json::Value = serde_json::from_str(&claude).unwrap();
         let cmd = json["hooks"]["Stop"][0]["hooks"][0]["command"].as_str().unwrap();
-        assert_eq!(cmd, "sh /home/u/.local/share/consuls/chm-hook.sh claude Stop");
+        // Quoted, so a home directory with spaces (e.g. on Windows) still works.
+        assert_eq!(cmd, "sh '/home/u/.local/share/consuls/chm-hook.sh' claude Stop");
         assert!(render(OMP_EXTENSION, &a, "tmux").contains("\"/home/u/.local/share/consuls/chm-hook.sh\""));
         assert_eq!(version().len(), 16);
     }

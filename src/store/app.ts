@@ -41,6 +41,7 @@ interface AppStore {
   muted: Record<number, boolean>;
   /** Host whose connection-settings dialog is open. */
   settingsFor: string | null;
+  settingsOpen: boolean;
 
   init(snapshot: CoreSnapshot): void;
   apply(ev: CoreEvent): void;
@@ -56,6 +57,7 @@ interface AppStore {
   setIntegrationFor(host: string | null): void;
   setMuted(key: number, muted: boolean): void;
   setSettingsFor(host: string | null): void;
+  setSettingsOpen(open: boolean): void;
 }
 
 let noticeId = 1;
@@ -63,7 +65,7 @@ let noticeId = 1;
 export const useApp = create<AppStore>((set) => ({
   ready: false,
   tailnet: null,
-  config: { hosts: [] },
+  config: { hosts: [], sound: { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true } },
   hosts: {},
   panes: {},
   attention: {},
@@ -77,6 +79,7 @@ export const useApp = create<AppStore>((set) => ({
   integrationFor: null,
   muted: {},
   settingsFor: null,
+  settingsOpen: false,
 
   init: (s) =>
     set(() => {
@@ -130,4 +133,5 @@ export const useApp = create<AppStore>((set) => ({
   setIntegrationFor: (integrationFor) => set({ integrationFor }),
   setMuted: (key, muted) => set((st) => ({ muted: { ...st.muted, [key]: muted } })),
   setSettingsFor: (settingsFor) => set({ settingsFor }),
+  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 }));

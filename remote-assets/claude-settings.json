@@ -1,13 +1,13 @@
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude SessionStart", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude UserPromptSubmit", "timeout": 10 }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude Stop", "timeout": 10 }] }],
-    "StopFailure": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude StopFailure", "timeout": 10 }] }],
-    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude SubagentStop", "timeout": 10 }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude PermissionRequest", "timeout": 10 }] }],
-    "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "sh __HOOK__ claude AskUserQuestion", "timeout": 10 }] }],
-    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "sh __HOOK__ claude Notification", "timeout": 10 }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "sh __HOOK__ claude SessionEnd", "timeout": 10 }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude SessionStart", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude UserPromptSubmit", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude Stop", "timeout": 10 }] }],
+    "StopFailure": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude StopFailure", "timeout": 10 }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude SubagentStop", "timeout": 10 }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude PermissionRequest", "timeout": 10 }] }],
+    "PreToolUse": [{ "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude AskUserQuestion", "timeout": 10 }] }],
+    "Notification": [{ "matcher": "", "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude Notification", "timeout": 10 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "sh '__HOOK__' claude SessionEnd", "timeout": 10 }] }]
   }
 }

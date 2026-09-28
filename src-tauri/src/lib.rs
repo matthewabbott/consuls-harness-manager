@@ -22,6 +22,9 @@ pub struct AppSink {
 
 impl Sink for AppSink {
     fn event(&self, event: CoreEvent) {
+        if let CoreEvent::Config { config } = &event {
+            self.alerter.set_prefs(config.sound.clone());
+        }
         let _ = self.app.emit("core-event", event);
     }
 
@@ -94,6 +97,7 @@ pub fn run() {
                 alerter: alerts::Alerter::new(),
             });
             let core = Core::new(data_dir, sink.clone());
+            sink.alerter.set_prefs(core.sound_prefs());
             app.manage(AppState { core: core.clone(), sink: sink.clone() });
 
             tauri::async_runtime::spawn(async move {
@@ -125,6 +129,8 @@ pub fn run() {
             commands::paste_text,
             commands::submit_prompt,
             commands::set_focus,
+            commands::set_sound_prefs,
+            commands::test_chime,
             commands::integration_status,
             commands::install_integration,
             commands::uninstall_integration,

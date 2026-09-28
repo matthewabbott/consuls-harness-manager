@@ -5,6 +5,7 @@ import ExpandedPane from "./components/ExpandedPane";
 import HostSettingsDialog from "./components/HostSettingsDialog";
 import IntegrationDialog from "./components/IntegrationDialog";
 import NewPaneDialog from "./components/NewPaneDialog";
+import SettingsDialog from "./components/SettingsDialog";
 import TerminateDialog from "./components/TerminateDialog";
 import Grid from "./components/Grid";
 import Notices from "./components/Notices";
@@ -14,6 +15,8 @@ import { backend } from "./ipc/backend";
 import { useApp } from "./store/app";
 import { applyFrames } from "./term/tiles";
 
+export const APP_TITLE = "Consul's Harness Manager";
+
 export default function App() {
   const ready = useApp((s) => s.ready);
   const expanded = useApp((s) => s.expanded);
@@ -22,6 +25,7 @@ export default function App() {
   const terminating = useApp((s) => s.terminating);
   const integrationFor = useApp((s) => s.integrationFor);
   const settingsFor = useApp((s) => s.settingsFor);
+  const settingsOpen = useApp((s) => s.settingsOpen);
   const expandedPane = useMemo(
     () => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)),
     [expanded, panes],
@@ -55,7 +59,10 @@ export default function App() {
   const attention = useApp((s) => s.attention);
   useEffect(() => {
     const n = Object.values(attention).filter((a) => a.attention === "unacked").length;
-    document.title = n > 0 ? `(${n}) Consuls` : "Consuls";
+    const title = n > 0 ? `(${n}) ${APP_TITLE}` : APP_TITLE;
+    document.title = title;
+    // The native window title doesn't follow document.title in Tauri.
+    backend().then((b) => b.setWindowTitle(title).catch(() => {}));
   }, [attention]);
 
   // Global shortcuts: Ctrl+Shift+G back to grid, Ctrl+Shift+Space jump to the next waiting pane.
@@ -100,7 +107,7 @@ export default function App() {
       if (cancelled) return;
       useApp.getState().init(snapshot);
       await b.subscribeFrames(applyFrames);
-      if (b.kind === "mock") useApp.getState().notify("info", "Running with mock data (not inside the Consuls app).");
+      if (b.kind === "mock") useApp.getState().notify("info", "Running with mock data (not inside the desktop app).");
     })().catch((e) => useApp.getState().notify("error", `Failed to start: ${e}`));
     return () => {
       cancelled = true;
@@ -121,6 +128,7 @@ export default function App() {
       {terminating !== null && <TerminateDialog paneKey={terminating} />}
       {integrationFor !== null && <IntegrationDialog host={integrationFor} />}
       {settingsFor !== null && <HostSettingsDialog host={settingsFor} />}
+      {settingsOpen && <SettingsDialog />}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import type { CoreEvent } from "./bindings/CoreEvent";
 import type { CoreSnapshot } from "./bindings/CoreSnapshot";
 import type { FocusState } from "./bindings/FocusState";
 import type { PaneAttention } from "./bindings/PaneAttention";
+import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
@@ -200,7 +201,7 @@ export function mockBackend(): Backend {
 
   const snapshot = (): CoreSnapshot => ({
     tailnet: { backendState: "Running", authUrl: null, selfNode: null, peers, tailnetName: "consulear@example.com", health: [], error: null },
-    config: { hosts: [...config.hosts] },
+    config: { hosts: [...config.hosts], sound: mockSound },
     hosts: [...hosts],
     panes: panes.filter((p) => hosts.find((h) => h.id === p.info.host)?.phase.phase === "connected").map((p) => p.info),
     attention: [...attention.values()],
@@ -209,6 +210,7 @@ export function mockBackend(): Backend {
   const emitPanes = (host: string) => emit({ type: "panes", host, panes: panes.filter((p) => p.info.host === host).map((p) => p.info) });
 
   let mockIntegration: Omit<IntegrationStatus, "notes"> = { claude: "notInstalled", codex: "absent", omp: "notInstalled" };
+  let mockSound: SoundPrefs = { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true };
   const attention = new Map<number, PaneAttention>();
   let mockFocus: FocusState = { expanded: null, windowFocused: true };
   const setAttention = (st: PaneAttention) => {
@@ -261,6 +263,14 @@ export function mockBackend(): Backend {
       if (st && st.attention === "unacked") setAttention({ ...st, attention: "acked" });
     },
     setPaneMuted: async () => {},
+    setSoundPrefs: async (prefs) => {
+      mockSound = prefs;
+      emit({ type: "config", config: { hosts: [...config.hosts], sound: mockSound } });
+    },
+    testChime: async () => {},
+    setWindowTitle: async (title) => {
+      document.title = title;
+    },
     subscribeFrames: async (cb) => {
       frameCb = cb;
       setTimeout(sendTiles, 50);
@@ -270,13 +280,13 @@ export function mockBackend(): Backend {
       if (i >= 0) config.hosts[i] = cfg;
       else config.hosts.push(cfg);
       if (!hosts.find((h) => h.id === cfg.id)) hosts.push({ id: cfg.id, phase: { phase: "connecting" }, facts: null });
-      emit({ type: "config", config: { hosts: [...config.hosts] } });
+      emit({ type: "config", config: { hosts: [...config.hosts], sound: mockSound } });
       emit({ type: "host", state: { ...hosts.find((h) => h.id === cfg.id)! } });
       setTimeout(() => setPhase(cfg.id, { phase: "connected" }), 1200);
     },
     removeHost: async (id) => {
       config.hosts = config.hosts.filter((h) => h.id !== id);
-      emit({ type: "config", config: { hosts: [...config.hosts] } });
+      emit({ type: "config", config: { hosts: [...config.hosts], sound: mockSound } });
       emit({ type: "hostRemoved", id });
     },
     connectHost: async (id) => {

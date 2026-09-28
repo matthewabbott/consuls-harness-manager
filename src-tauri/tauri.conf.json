@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Consuls",
+        "title": "Consul's Harness Manager",
         "width": 1440,
         "height": 920,
         "minWidth": 760,

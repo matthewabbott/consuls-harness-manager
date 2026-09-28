@@ -20,7 +20,26 @@ use ctx::Ctx;
 use host::{HostCmd, HostHandle, IntegrationAction};
 use tmux_mgr::PaneCmd;
 
-use crate::model::{AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, NewPaneSpec, TailnetStatus, TerminateOutcome};
+use crate::model::{
+    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, NewPaneSpec, SoundPrefs, TailnetStatus,
+    TerminateOutcome,
+};
+
+/// Loads config.json. A file that exists but can't be parsed is set aside (never silently
+/// overwritten), so a bad edit or a future format can't cost the user their machines.
+fn load_config(path: &std::path::Path) -> AppConfig {
+    let Ok(bytes) = std::fs::read(path) else { return AppConfig::default() };
+    match serde_json::from_slice(&bytes) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            let ts = SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let backup = path.with_extension(format!("json.unreadable-{ts}"));
+            warn!("{} is unreadable ({e}); moved it to {}", path.display(), backup.display());
+            let _ = std::fs::rename(path, &backup);
+            AppConfig::default()
+        }
+    }
+}
 use crate::ssh::exec::ExecOutput;
 use crate::ssh::hostkeys::KnownHosts;
 
@@ -39,10 +58,7 @@ impl Core {
     pub fn new(data_dir: PathBuf, sink: Arc<dyn Sink>) -> Arc<Self> {
         let _ = std::fs::create_dir_all(&data_dir);
         let known_hosts = Arc::new(KnownHosts::load(data_dir.join("known_hosts.json")));
-        let config: AppConfig = std::fs::read(data_dir.join("config.json"))
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let config = load_config(&data_dir.join("config.json"));
         Arc::new(Self {
             ctx: Arc::new(Ctx::new(sink, known_hosts)),
             data_dir,
@@ -271,6 +287,16 @@ impl Core {
         self.pane(key, PaneCmd::Paste { key, text });
     }
 
+    pub fn sound_prefs(&self) -> SoundPrefs {
+        self.config.lock().unwrap().sound.clone()
+    }
+
+    /// Updates notification sound preferences (persisted; emitted as a Config event).
+    pub fn set_sound_prefs(&self, prefs: SoundPrefs) {
+        self.config.lock().unwrap().sound = prefs;
+        self.save_config();
+    }
+
     /// What the user is looking at (drives ping/toast/ack rules).
     pub fn set_focus(&self, focus: FocusState) {
         self.ctx.set_focus(focus);
@@ -350,6 +376,20 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
         fn frame(&self, _frame: Vec<u8>) {}
+    }
+
+    #[test]
+    fn unreadable_config_is_set_aside_not_lost() {
+        let dir = std::env::temp_dir().join(format!("chm-cfg-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"{ this is not json").unwrap();
+        let cfg = load_config(&path);
+        assert!(cfg.hosts.is_empty());
+        assert!(!path.exists(), "bad file moved aside");
+        let kept = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().contains("unreadable"));
+        assert!(kept, "backup kept");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Tauri runs synchronous commands on the main thread, outside the tokio runtime; the

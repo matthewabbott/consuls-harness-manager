@@ -98,7 +98,7 @@ function EmptyState() {
       <img src="/app-icon.svg" alt="" className="mx-auto mb-5 h-16 w-16 opacity-90" />
       <h2 className="font-display text-xl font-semibold text-mist-100">Bring in a machine</h2>
       <p className="mt-2 text-[13.5px] leading-relaxed text-mist-400">
-        Pick a machine under <span className="text-mist-200">On your tailnet</span> in the sidebar. Consuls attaches to its tmux
+        Pick a machine under <span className="text-mist-200">On your tailnet</span> in the sidebar. Harness Manager attaches to its tmux
         sessions without resizing or disturbing them, and shows every pane here.
       </p>
     </div>

@@ -13,11 +13,11 @@ pub fn show_main(app: &AppHandle) {
 }
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "Open Consuls", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Consuls", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Harness Manager", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Harness Manager", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("Consuls — watching your agents")
+        .tooltip("Consul's Harness Manager — watching your agents")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
