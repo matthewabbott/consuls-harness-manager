@@ -20,7 +20,8 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - **Never type into, resize, or kill the user's real tmux sessions when testing.** Use a
   private socket: `CHM_TMUX_SOCKET=<name>` for the whole core, `tmux -L chm-test-…` in tests,
   or `cargo run -p chm-core --example selftest`. Attaching read-only to real sessions is fine.
-- Don't install the global integration (edits the user's Claude/Codex/omp configs) yourself.
+- Don't install the global integration (edits the user's Claude/Codex/omp configs) yourself —
+  on This PC either (`install::local_install`); tests use a scratch home.
 - Ask before committing. The branch is `master`.
 
 ## tmux gotchas (all verified on tmux 3.4)

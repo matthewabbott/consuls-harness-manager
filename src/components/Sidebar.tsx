@@ -57,9 +57,14 @@ function HostRow({ m }: { m: Machine }) {
       )}
       <div className="hidden items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
         {local ? (
-          <IconButton title="New shell on this PC" onClick={() => useApp.getState().openNewPane(m.id)}>
-            <Plus className="h-3.5 w-3.5" />
-          </IconButton>
+          <>
+            <IconButton title="New shell on this PC" onClick={() => useApp.getState().openNewPane(m.id)}>
+              <Plus className="h-3.5 w-3.5" />
+            </IconButton>
+            <IconButton title="Notifications for hand-started agents…" onClick={() => useApp.getState().setIntegrationFor(m.id)}>
+              <BellRing className="h-3.5 w-3.5" />
+            </IconButton>
+          </>
         ) : (
           <HostActions m={m} idle={idle} connected={connected} />
         )}

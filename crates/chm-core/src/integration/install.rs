@@ -135,7 +135,7 @@ pub fn codex_status(toml: &str) -> ToolStatus {
     }
 }
 
-// ---------------------------------------------------------------------------- remote side
+// ---------------------------------------------------------------------------- files
 
 struct Paths {
     claude_dir: String,
@@ -158,81 +158,118 @@ fn paths(home: &str) -> Paths {
     }
 }
 
-async fn read_text(sftp: &russh_sftp::client::SftpSession, path: &str) -> Option<String> {
-    sftp.read(path.to_string()).await.ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+/// The few file operations the installer needs: over SFTP on a remote host, `std::fs` on
+/// this PC.
+trait ConfigFiles {
+    async fn read_text(&self, path: &str) -> Option<String>;
+    async fn write_text(&self, path: &str, text: &str) -> Result<(), String>;
+    async fn exists(&self, path: &str) -> bool;
+    /// Creates a folder (fine if it's already there).
+    async fn mkdir(&self, path: &str);
+    async fn remove(&self, path: &str) -> Result<(), String>;
 }
 
-async fn write_text(sftp: &russh_sftp::client::SftpSession, path: &str, text: &str) -> Result<(), String> {
-    let mut f = sftp.create(path.to_string()).await.map_err(|e| format!("{path}: {e}"))?;
-    f.write_all(text.as_bytes()).await.map_err(|e| format!("{path}: {e}"))?;
-    f.shutdown().await.map_err(|e| format!("{path}: {e}"))
+struct Sftp<'a>(&'a russh_sftp::client::SftpSession);
+
+impl ConfigFiles for Sftp<'_> {
+    async fn read_text(&self, path: &str) -> Option<String> {
+        self.0.read(path.to_string()).await.ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+    async fn write_text(&self, path: &str, text: &str) -> Result<(), String> {
+        let mut f = self.0.create(path.to_string()).await.map_err(|e| format!("{path}: {e}"))?;
+        f.write_all(text.as_bytes()).await.map_err(|e| format!("{path}: {e}"))?;
+        f.shutdown().await.map_err(|e| format!("{path}: {e}"))
+    }
+    async fn exists(&self, path: &str) -> bool {
+        self.0.try_exists(path.to_string()).await.unwrap_or(false)
+    }
+    async fn mkdir(&self, path: &str) {
+        let _ = self.0.create_dir(path.to_string()).await;
+    }
+    async fn remove(&self, path: &str) -> Result<(), String> {
+        self.0.remove_file(path.to_string()).await.map_err(|e| format!("{path}: {e}"))
+    }
 }
 
-async fn backup(sftp: &russh_sftp::client::SftpSession, path: &str, text: &str) -> Result<String, String> {
+/// This PC's files (paths with forward slashes, which Windows accepts too).
+struct LocalFiles;
+
+impl ConfigFiles for LocalFiles {
+    async fn read_text(&self, path: &str) -> Option<String> {
+        std::fs::read(path).ok().map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+    async fn write_text(&self, path: &str, text: &str) -> Result<(), String> {
+        std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))
+    }
+    async fn exists(&self, path: &str) -> bool {
+        std::path::Path::new(path).exists()
+    }
+    async fn mkdir(&self, path: &str) {
+        let _ = std::fs::create_dir(path);
+    }
+    async fn remove(&self, path: &str) -> Result<(), String> {
+        std::fs::remove_file(path).map_err(|e| format!("{path}: {e}"))
+    }
+}
+
+async fn backup(f: &impl ConfigFiles, path: &str, text: &str) -> Result<String, String> {
     let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let bak = format!("{path}.chm-bak-{ts}");
-    write_text(sftp, &bak, text).await?;
+    f.write_text(&bak, text).await?;
     Ok(bak)
 }
 
-async fn exists(sftp: &russh_sftp::client::SftpSession, path: &str) -> bool {
-    sftp.try_exists(path.to_string()).await.unwrap_or(false)
-}
-
-pub async fn status(conn: &SshConnection, home: &str) -> Result<IntegrationStatus, String> {
+async fn status_in(f: &impl ConfigFiles, home: &str) -> IntegrationStatus {
     let p = paths(home);
-    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
-    let claude = if !exists(&sftp, &p.claude_dir).await {
+    let claude = if !f.exists(&p.claude_dir).await {
         ToolStatus::Absent
     } else {
-        let settings: Value = read_text(&sftp, &p.claude_settings).await.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
+        let settings: Value = f.read_text(&p.claude_settings).await.and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
         if claude_installed(&settings) { ToolStatus::Installed } else { ToolStatus::NotInstalled }
     };
-    let codex = if !exists(&sftp, &p.codex_dir).await {
+    let codex = if !f.exists(&p.codex_dir).await {
         ToolStatus::Absent
     } else {
-        codex_status(&read_text(&sftp, &p.codex_config).await.unwrap_or_default())
+        codex_status(&f.read_text(&p.codex_config).await.unwrap_or_default())
     };
-    let omp = if !exists(&sftp, &p.omp_dir).await {
+    let omp = if !f.exists(&p.omp_dir).await {
         ToolStatus::Absent
-    } else if exists(&sftp, &p.omp_hook).await {
+    } else if f.exists(&p.omp_hook).await {
         ToolStatus::Installed
     } else {
         ToolStatus::NotInstalled
     };
-    let _ = sftp.close().await;
-    Ok(IntegrationStatus { claude, codex, omp, notes: Vec::new() })
+    IntegrationStatus { claude, codex, omp, notes: Vec::new() }
 }
 
-pub async fn install(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Result<IntegrationStatus, String> {
-    let assets = assets::ensure(conn, home, tmux).await?;
+/// Adds our hooks wherever a harness is set up; returns notes on what changed.
+async fn install_in(f: &impl ConfigFiles, home: &str, assets: &Assets) -> Result<Vec<String>, String> {
     let p = paths(home);
-    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
     let mut notes = Vec::new();
 
-    if exists(&sftp, &p.claude_dir).await {
-        let original = read_text(&sftp, &p.claude_settings).await;
+    if f.exists(&p.claude_dir).await {
+        let original = f.read_text(&p.claude_settings).await;
         let mut settings: Value = match &original {
             Some(t) => serde_json::from_str(t).map_err(|e| format!("~/.claude/settings.json isn't valid JSON ({e}); not touching it"))?,
             None => Value::Object(Map::new()),
         };
-        if claude_install(&mut settings, &assets) {
+        if claude_install(&mut settings, assets) {
             if let Some(t) = &original {
-                notes.push(format!("Backed up Claude settings to {}", backup(&sftp, &p.claude_settings, t).await?));
+                notes.push(format!("Backed up Claude settings to {}", backup(f, &p.claude_settings, t).await?));
             }
-            write_text(&sftp, &p.claude_settings, &(serde_json::to_string_pretty(&settings).unwrap() + "\n")).await?;
+            f.write_text(&p.claude_settings, &(serde_json::to_string_pretty(&settings).unwrap() + "\n")).await?;
             notes.push("Claude Code: hooks added. Sessions already running pick them up after a restart.".into());
         }
     }
 
-    if exists(&sftp, &p.codex_dir).await {
-        let original = read_text(&sftp, &p.codex_config).await.unwrap_or_default();
-        match codex_install(&original, &assets)? {
+    if f.exists(&p.codex_dir).await {
+        let original = f.read_text(&p.codex_config).await.unwrap_or_default();
+        match codex_install(&original, assets)? {
             CodexEdit::Changed(new) => {
                 if !original.is_empty() {
-                    notes.push(format!("Backed up Codex config to {}", backup(&sftp, &p.codex_config, &original).await?));
+                    notes.push(format!("Backed up Codex config to {}", backup(f, &p.codex_config, &original).await?));
                 }
-                write_text(&sftp, &p.codex_config, &new).await?;
+                f.write_text(&p.codex_config, &new).await?;
                 notes.push("Codex: turn-complete notifications enabled.".into());
             }
             CodexEdit::Conflict => notes.push(
@@ -242,47 +279,82 @@ pub async fn install(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Re
         }
     }
 
-    if exists(&sftp, &p.omp_dir).await && !exists(&sftp, &p.omp_hook).await {
-        let _ = sftp.create_dir(format!("{}/hooks", p.omp_dir)).await;
-        let _ = sftp.create_dir(format!("{}/hooks/post", p.omp_dir)).await;
-        let ext = super::assets::omp_extension(&assets);
-        write_text(&sftp, &p.omp_hook, &ext).await?;
+    if f.exists(&p.omp_dir).await && !f.exists(&p.omp_hook).await {
+        f.mkdir(&format!("{}/hooks", p.omp_dir)).await;
+        f.mkdir(&format!("{}/hooks/post", p.omp_dir)).await;
+        f.write_text(&p.omp_hook, &super::assets::omp_extension(assets)).await?;
         notes.push("omp: extension installed (new omp sessions load it automatically).".into());
     }
-    let _ = sftp.close().await;
-
-    let mut st = status(conn, home).await?;
-    st.notes = notes;
-    Ok(st)
+    Ok(notes)
 }
 
-pub async fn uninstall(conn: &SshConnection, home: &str) -> Result<IntegrationStatus, String> {
+/// Removes everything `install_in` added (backing up edited files); returns notes.
+async fn uninstall_in(f: &impl ConfigFiles, home: &str) -> Result<Vec<String>, String> {
     let p = paths(home);
-    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
     let mut notes = Vec::new();
-    if let Some(original) = read_text(&sftp, &p.claude_settings).await
+    if let Some(original) = f.read_text(&p.claude_settings).await
         && let Ok(mut settings) = serde_json::from_str::<Value>(&original)
         && claude_uninstall(&mut settings)
     {
-        backup(&sftp, &p.claude_settings, &original).await?;
-        write_text(&sftp, &p.claude_settings, &(serde_json::to_string_pretty(&settings).unwrap() + "\n")).await?;
+        backup(f, &p.claude_settings, &original).await?;
+        f.write_text(&p.claude_settings, &(serde_json::to_string_pretty(&settings).unwrap() + "\n")).await?;
         notes.push("Claude Code: hooks removed.".into());
     }
-    if let Some(original) = read_text(&sftp, &p.codex_config).await
+    if let Some(original) = f.read_text(&p.codex_config).await
         && let Some(new) = codex_uninstall(&original)?
     {
-        backup(&sftp, &p.codex_config, &original).await?;
-        write_text(&sftp, &p.codex_config, &new).await?;
+        backup(f, &p.codex_config, &original).await?;
+        f.write_text(&p.codex_config, &new).await?;
         notes.push("Codex: notify removed.".into());
     }
-    if exists(&sftp, &p.omp_hook).await {
-        sftp.remove_file(p.omp_hook.clone()).await.map_err(|e| e.to_string())?;
+    if f.exists(&p.omp_hook).await {
+        f.remove(&p.omp_hook).await?;
         notes.push("omp: extension removed.".into());
     }
+    Ok(notes)
+}
+
+// ---------------------------------------------------------------------------- remote hosts
+
+pub async fn status(conn: &SshConnection, home: &str) -> Result<IntegrationStatus, String> {
+    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
+    let st = status_in(&Sftp(&sftp), home).await;
     let _ = sftp.close().await;
-    let mut st = status(conn, home).await?;
-    st.notes = notes;
     Ok(st)
+}
+
+pub async fn install(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Result<IntegrationStatus, String> {
+    let assets = assets::ensure(conn, home, tmux).await?;
+    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
+    let result = install_in(&Sftp(&sftp), home, &assets).await;
+    let st = status_in(&Sftp(&sftp), home).await;
+    let _ = sftp.close().await;
+    Ok(IntegrationStatus { notes: result?, ..st })
+}
+
+pub async fn uninstall(conn: &SshConnection, home: &str) -> Result<IntegrationStatus, String> {
+    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
+    let result = uninstall_in(&Sftp(&sftp), home).await;
+    let st = status_in(&Sftp(&sftp), home).await;
+    let _ = sftp.close().await;
+    Ok(IntegrationStatus { notes: result?, ..st })
+}
+
+// ---------------------------------------------------------------------------- this PC
+
+pub async fn local_status(home: &str) -> IntegrationStatus {
+    status_in(&LocalFiles, home).await
+}
+
+/// `assets` are this PC's hook assets (`local::ensure_assets`), with Git's `sh.exe` on Windows.
+pub async fn local_install(home: &str, assets: &Assets) -> Result<IntegrationStatus, String> {
+    let notes = install_in(&LocalFiles, home, assets).await?;
+    Ok(IntegrationStatus { notes, ..status_in(&LocalFiles, home).await })
+}
+
+pub async fn local_uninstall(home: &str) -> Result<IntegrationStatus, String> {
+    let notes = uninstall_in(&LocalFiles, home).await?;
+    Ok(IntegrationStatus { notes, ..status_in(&LocalFiles, home).await })
 }
 
 #[cfg(test)]
@@ -317,6 +389,45 @@ mod tests {
         assert!(claude_install(&mut s, &assets()));
         assert!(claude_uninstall(&mut s));
         assert_eq!(s, serde_json::json!({ "theme": "dark" }));
+    }
+
+    /// This PC's install, on a scratch home (never the real `~/.claude` etc.).
+    #[tokio::test]
+    async fn local_install_round_trip() {
+        use ToolStatus::*;
+        let home = std::env::temp_dir().join(format!("chm-install-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        for d in [".claude", ".codex", ".omp/agent"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        let settings = "{ \"theme\": \"dark\" }";
+        let codex = "model = \"gpt-5.6-sol\"\n";
+        std::fs::write(home.join(".claude/settings.json"), settings).unwrap();
+        std::fs::write(home.join(".codex/config.toml"), codex).unwrap();
+        let h = crate::local::to_slash(&home);
+        let assets = Assets::with_sh(&h, "D:/Program Files/Git/usr/bin/sh.exe");
+        let tools = |st: &IntegrationStatus| (st.claude, st.codex, st.omp);
+
+        assert_eq!(tools(&local_status(&h).await), (NotInstalled, NotInstalled, NotInstalled));
+        let st = local_install(&h, &assets).await.unwrap();
+        assert_eq!(tools(&st), (Installed, Installed, Installed));
+        assert_eq!(st.notes.iter().filter(|n| n.starts_with("Backed up")).count(), 2, "{:?}", st.notes);
+        let written = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
+        assert!(written.contains("\\\"D:/Program Files/Git/usr/bin/sh.exe\\\""), "hooks run through Git's sh: {written}");
+        assert!(std::fs::read_to_string(home.join(".omp/agent/hooks/post/consuls.ts")).unwrap().contains("chm-hook.sh"));
+        assert!(local_install(&h, &assets).await.unwrap().notes.is_empty(), "installing again changes nothing");
+
+        let st = local_uninstall(&h).await.unwrap();
+        assert_eq!(tools(&st), (NotInstalled, NotInstalled, NotInstalled));
+        let back: Value = serde_json::from_str(&std::fs::read_to_string(home.join(".claude/settings.json")).unwrap()).unwrap();
+        assert_eq!(back, serde_json::from_str::<Value>(settings).unwrap());
+        assert_eq!(std::fs::read_to_string(home.join(".codex/config.toml")).unwrap(), codex);
+
+        // A harness that isn't set up is left alone.
+        std::fs::remove_dir_all(home.join(".omp")).unwrap();
+        assert_eq!(local_install(&h, &assets).await.unwrap().omp, Absent);
+        assert!(!home.join(".omp").exists());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

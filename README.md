@@ -85,7 +85,8 @@ remote host: tmux ≥ 3.2, and (uploaded on demand) ~/.local/share/consuls/{chm-
 - **Turn detection** comes from the harnesses' own hooks. Agents started from Consuls get them
   injected at launch (`claude --settings`, `codex -c notify=…`, `omp --hook`). For agents you
   start by hand, the bell icon on a machine installs the same hooks globally (opt-in,
-  reversible, backed up). Without hooks, Consuls falls back to guessing from output activity.
+  reversible, backed up) — on This PC too, where they cover agents you type into Consuls' own
+  shells. Without hooks, Consuls falls back to guessing from output activity.
 - **Plain shells** run on an SSH `pty` channel. Consuls keeps their terminal state itself (10k
   lines of scrollback) and answers terminal queries (cursor position, device attributes,
   colours) even while the pane isn't open, so programs behave the same either way. Hooks inside

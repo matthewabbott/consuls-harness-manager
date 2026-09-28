@@ -527,7 +527,13 @@ impl Core {
 
     async fn integration(&self, host: &str, action: IntegrationAction) -> Result<crate::integration::install::IntegrationStatus, String> {
         if host == LOCAL_HOST {
-            return Err("Agents started from This PC get hooks at launch; global install isn't available here yet".into());
+            use crate::integration::install;
+            let home = local::home();
+            return match action {
+                IntegrationAction::Status => Ok(install::local_status(&home).await),
+                IntegrationAction::Install => install::local_install(&home, &local::ensure_assets()?).await,
+                IntegrationAction::Uninstall => install::local_uninstall(&home).await,
+            };
         }
         let (tx, rx) = oneshot::channel();
         self.send(host, HostCmd::Integration { action, reply: tx });

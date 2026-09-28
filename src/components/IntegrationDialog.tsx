@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { backend } from "../ipc/backend";
 import type { IntegrationStatus } from "../ipc/bindings/IntegrationStatus";
 import type { ToolStatus } from "../ipc/bindings/ToolStatus";
+import { hostLabel, isLocal } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { useRedact } from "../store/recording";
 import HarnessBadge from "./HarnessBadge";
@@ -58,7 +59,7 @@ export default function IntegrationDialog({ host }: { host: string }) {
 
   return (
     <Modal
-      title={`Notifications for agents started outside Consuls · ${r(host)}`}
+      title={`Notifications for agents started outside Consuls · ${r(hostLabel(host))}`}
       onClose={close}
       width={560}
       footer={
@@ -75,11 +76,22 @@ export default function IntegrationDialog({ host }: { host: string }) {
         </>
       }
     >
-      <p className="text-[13px] leading-relaxed text-mist-300">
-        Agents you launch from Consuls always report when they finish or need you. To get the same for sessions you start by hand in
-        tmux, Consuls can add a tiny hook to each harness's config on <span className="font-mono text-mist-100">{r(host)}</span>. The hook
-        only records an event when it runs inside tmux, never prints anything, and can be removed here at any time.
-      </p>
+      {isLocal(host) ? (
+        <p className="text-[13px] leading-relaxed text-mist-300">
+          Agents you launch from Consuls always report when they finish or need you. To get the same when you type{" "}
+          <span className="font-mono text-mist-100">claude</span>, <span className="font-mono text-mist-100">codex</span> or{" "}
+          <span className="font-mono text-mist-100">omp</span> yourself in one of Consuls' shells on this PC, Consuls can add a tiny hook
+          to each harness's config here (in your user folder, backed up first). The hook only records an event inside a Consuls shell —
+          agents started in Windows Terminal or VS Code are unaffected — never prints anything, and can be removed here at any time.
+        </p>
+      ) : (
+        <p className="text-[13px] leading-relaxed text-mist-300">
+          Agents you launch from Consuls always report when they finish or need you. To get the same for sessions you start by hand in
+          tmux (or in a Consuls plain shell), Consuls can add a tiny hook to each harness's config on{" "}
+          <span className="font-mono text-mist-100">{r(host)}</span>. The hook only records an event when it runs inside tmux or a Consuls
+          shell, never prints anything, and can be removed here at any time.
+        </p>
+      )}
       <div className="mt-4 space-y-2">
         {TOOLS.map((t) => (
           <div key={t.id} className="flex items-center gap-3 rounded-xl bg-ink-850 px-3.5 py-3 ring-1 ring-ink-700">

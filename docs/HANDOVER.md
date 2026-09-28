@@ -65,7 +65,9 @@ Roughly in order. Each is small-to-medium and self-contained.
   - V3-6: plain shells report their folder via shell integration, and OSC 52 copies reach the
     clipboard. Verified on spark-d683 (bash), the Mac (zsh), and here in pwsh, powershell,
     Git Bash and cmd.
-- Next: local hooks, local tmux (V3-7, V3-8).
+  - V3-7: global hooks on This PC. The installer's file access is behind `ConfigFiles` (SFTP or
+    `std::fs`); the bell button sits on the This PC row. The user installs it themselves.
+- Next: local tmux (V3-8).
 - Roadmap (minor, added 2026-09-28): rename panes from the app.
   - For tmux panes, also run `rename-window` (or `select-pane -T` for a split pane's title) on the
     host, so it shows everywhere.
