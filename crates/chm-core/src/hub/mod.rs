@@ -447,24 +447,27 @@ impl Core {
             None => defs.first().cloned().ok_or("no shell found on this machine")?,
         };
         let chm_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
-        let launch = if spec.harness == Harness::Shell {
-            None
+        let agent = spec.harness != Harness::Shell;
+        let assets = if agent || local::integration_uses_assets(&def) {
+            local::ensure_assets()
+                .map_err(|e| {
+                    if agent {
+                        self.ctx.notice(Some(LOCAL_HOST), NoticeLevel::Warning, format!("Hooks unavailable ({e}); notifications will be guessed from output"))
+                    }
+                })
+                .ok()
         } else {
-            let assets = local::ensure_assets()
-                .map_err(|e| self.ctx.notice(Some(LOCAL_HOST), NoticeLevel::Warning, format!("Hooks unavailable ({e}); notifications will be guessed from output")))
-                .ok();
-            spec.harness.launch_command_for(assets.as_ref(), spec.args.as_deref().unwrap_or(""), def.quoting)
+            None
         };
+        let launch = if agent { spec.harness.launch_command_for(assets.as_ref(), spec.args.as_deref().unwrap_or(""), def.quoting) } else { None };
         let cwd = match spec.cwd.as_str() {
             "" | "~" => local::home(),
             c => c.to_string(),
         };
-        let cmd = crate::pty::LocalCommand {
-            program: def.shell.path.clone(),
-            args: def.args.clone(),
-            cwd: Some(cwd.clone()),
-            env: local::pane_env(&def, &chm_id),
-        };
+        let (args, extra_env) = local::integrate(&def, assets.as_ref());
+        let mut env = local::pane_env(&def, &chm_id);
+        env.extend(extra_env);
+        let cmd = crate::pty::LocalCommand { program: def.shell.path.clone(), args, cwd: Some(cwd.clone()), env };
         let pty = crate::pty::local(&cmd, host::DIRECT_COLS, host::DIRECT_ROWS)?;
         if let Some(launch) = launch {
             let _ = pty.input.send(crate::pty::PtyInput::Data(format!("{launch}\r").into_bytes()));

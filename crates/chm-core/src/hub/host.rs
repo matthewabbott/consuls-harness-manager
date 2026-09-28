@@ -554,9 +554,23 @@ async fn create_direct(
     let assets = mgr.ensure_assets().await;
     let launch = spec.harness.launch_command(assets.as_ref(), spec.args.as_deref().unwrap_or(""));
     // Run through sh so the user's own shell (bash, zsh, fish, …) only has to parse a plain
-    // command line; then exec their login shell interactively.
-    let script = r#"cd "$1" 2>/dev/null; CHM_PANE="$2"; COLORTERM=truecolor; export CHM_PANE COLORTERM; exec "${SHELL:-/bin/sh}" -l"#;
-    let command = format!("exec sh -c {} chm {} {}", exec::sh_quote(script), exec::sh_quote(&spec.cwd), exec::sh_quote(&format!("direct:{chm_id}")));
+    // command line; then exec their login shell interactively. bash and zsh start with the
+    // shell integration ($3), which reports the folder at each prompt.
+    let script = r#"cd "$1" 2>/dev/null; CHM_PANE="$2"; COLORTERM=truecolor; export CHM_PANE COLORTERM
+s="${SHELL:-/bin/sh}"
+case "$3:${s##*/}" in
+  ?*:bash) [ -f "$3/bash-init.sh" ] && exec "$s" --init-file "$3/bash-init.sh" -i ;;
+  ?*:zsh) if [ -f "$3/zsh/.zshrc" ]; then USER_ZDOTDIR="${ZDOTDIR:-$HOME}"; ZDOTDIR="$3/zsh"; export USER_ZDOTDIR ZDOTDIR; exec "$s" -l; fi ;;
+esac
+exec "$s" -l"#;
+    let shell_dir = assets.as_ref().map(|a| a.shell.clone()).unwrap_or_default();
+    let command = format!(
+        "exec sh -c {} chm {} {} {}",
+        exec::sh_quote(script),
+        exec::sh_quote(&spec.cwd),
+        exec::sh_quote(&format!("direct:{chm_id}")),
+        exec::sh_quote(&shell_dir)
+    );
     let pty = crate::pty::ssh(conn, &command, DIRECT_COLS, DIRECT_ROWS).await.map_err(|e| e.to_string())?;
     let shell = facts.map(|f| f.shell.rsplit('/').next().unwrap_or("shell").to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "shell".into());
     if let Some(cmd) = &launch {

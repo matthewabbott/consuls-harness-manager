@@ -376,7 +376,14 @@ impl TmuxManager {
                 Some(p) if p.seeding.is_none() => {
                     p.term.feed(&data);
                     p.dirty = true;
-                    let rang = p.events.drain().iter().any(|e| matches!(e, alacritty_terminal::event::Event::Bell));
+                    let events = p.events.drain();
+                    // OSC 52 (tmux passes the pane's raw output on).
+                    for e in &events {
+                        if let alacritty_terminal::event::Event::ClipboardStore(alacritty_terminal::term::ClipboardType::Clipboard, text) = e {
+                            self.ctx.clipboard(p.key, text.clone());
+                        }
+                    }
+                    let rang = events.iter().any(|e| matches!(e, alacritty_terminal::event::Event::Bell));
                     if rang && crate::harness::bell_pings(p.row.bell, &p.row.current_command) {
                         let sig = Signal { event: "Bell".into(), detail: String::new(), ts: 0, heuristic: false };
                         let (key, label) = (p.key, self.label(&self.panes[&pane]));

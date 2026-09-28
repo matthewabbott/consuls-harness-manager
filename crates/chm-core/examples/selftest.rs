@@ -27,6 +27,7 @@ struct Recorder {
     tiles: Mutex<HashMap<u32, usize>>,
     attention: Mutex<HashMap<u32, PaneAttention>>,
     alerts: Mutex<Vec<Alert>>,
+    clipboard: Mutex<Vec<(u32, String)>>,
 }
 
 impl Sink for Recorder {
@@ -38,6 +39,7 @@ impl Sink for Recorder {
             CoreEvent::Attention { state } => {
                 self.attention.lock().unwrap().insert(state.key, state);
             }
+            CoreEvent::Clipboard { key, text } => self.clipboard.lock().unwrap().push((key, text)),
             _ => {}
         }
     }
@@ -226,6 +228,25 @@ async fn main() -> anyhow::Result<()> {
     core.send_text(dkey, "[ -n \"$SSH_AGENT_PID\" ] && kill $SSH_AGENT_PID; stty size".into());
     core.send_keys(dkey, vec!["Enter".into()]);
     wait_for("the shell sees the new size", Duration::from_secs(5), || draw(dkey).contains("30 100")).await;
+    // Shell integration: the folder follows `cd`; OSC 52 copies reach the UI while focused.
+    core.send_text(dkey, "cd /usr/share".into());
+    core.send_keys(dkey, vec!["Enter".into()]);
+    wait_for("cd reported as the direct pane's folder", Duration::from_secs(5), || pane(dkey).is_some_and(|p| p.current_path == "/usr/share")).await;
+    // …and the user's own rc files still ran: a tmux only their interactive rc puts on PATH
+    // (e.g. ~/.homebrew on the Mac) is found.
+    let tmux_path = rec.facts.lock().unwrap().as_ref().and_then(|f| f.tmux_path.clone());
+    if let Some(tmux_path) = tmux_path {
+        core.send_text(dkey, "echo \"rc-tmux:$(command -v tmux)\"".into());
+        core.send_keys(dkey, vec!["Enter".into()]);
+        wait_for("the user's rc files ran (PATH has their tmux)", Duration::from_secs(5), || draw(dkey).contains(&format!("rc-tmux:{tmux_path}"))).await;
+    }
+    core.set_focus(FocusState { expanded: Some(dkey), window_focused: true });
+    core.send_text(dkey, "printf '\\033]52;c;ZGlyZWN0LWNvcHk=\\a'".into());
+    core.send_keys(dkey, vec!["Enter".into()]);
+    wait_for("OSC 52 copy reaches the UI", Duration::from_secs(5), || {
+        rec.clipboard.lock().unwrap().iter().any(|(k, t)| *k == dkey && t == "direct-copy")
+    })
+    .await;
     core.set_focus(FocusState { expanded: None, window_focused: false });
     core.send_text(dkey, "sh ~/.local/share/consuls/chm-hook.sh claude Stop </dev/null".into());
     core.send_keys(dkey, vec!["Enter".into()]);

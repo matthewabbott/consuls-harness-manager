@@ -8,7 +8,7 @@ import type { NoticeLevel } from "../ipc/bindings/NoticeLevel";
 import type { PaneAttention } from "../ipc/bindings/PaneAttention";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import type { TailnetStatus } from "../ipc/bindings/TailnetStatus";
-import { paneIdentity } from "../lib/panes";
+import { paneIdentity, paneName } from "../lib/panes";
 import { renameIdentity } from "./composer";
 import { useViewPrefs } from "./viewPrefs";
 import type { TileMenuState } from "../components/TileMenu";
@@ -150,6 +150,17 @@ export const useApp = create<AppStore>((set) => ({
           return { attention: { ...st.attention, [ev.state.key]: ev.state } };
         case "notice":
           return { notices: [...st.notices, { id: noticeId++, host: ev.host, level: ev.level, message: ev.message }].slice(-6) };
+        case "clipboard": {
+          // A program in a pane copied something (OSC 52); the core only sends this while the
+          // app is focused.
+          const pane = Object.values(st.panes).flat().find((p) => p.key === ev.key);
+          const text = ev.text;
+          void navigator.clipboard
+            .writeText(text)
+            .then(() => useApp.getState().notify("info", `Copied ${text.length} character${text.length === 1 ? "" : "s"} from ${pane ? paneName(pane) : "a pane"}.`))
+            .catch((e) => useApp.getState().notify("warning", `A pane tried to copy to the clipboard: ${e}`));
+          return {};
+        }
       }
     }),
 

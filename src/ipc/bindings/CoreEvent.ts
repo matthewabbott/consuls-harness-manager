@@ -9,4 +9,4 @@ import type { TailnetStatus } from "./TailnetStatus";
 /**
  * Everything pushed to the UI (JSON). High-volume pane content goes through binary frames.
  */
-export type CoreEvent = { "type": "tailnet", status: TailnetStatus, } | { "type": "config", config: AppConfig, } | { "type": "host", state: HostState, } | { "type": "hostRemoved", id: string, } | { "type": "panes", host: string, panes: Array<PaneInfo>, } | { "type": "attention", state: PaneAttention, } | { "type": "notice", host: string | null, level: NoticeLevel, message: string, };
+export type CoreEvent = { "type": "tailnet", status: TailnetStatus, } | { "type": "config", config: AppConfig, } | { "type": "host", state: HostState, } | { "type": "hostRemoved", id: string, } | { "type": "panes", host: string, panes: Array<PaneInfo>, } | { "type": "attention", state: PaneAttention, } | { "type": "notice", host: string | null, level: NoticeLevel, message: string, } | { "type": "clipboard", key: number, text: string, };

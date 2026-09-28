@@ -19,7 +19,9 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
 - **Plain shells**: pick *No tmux* in the new-pane dialog for a shell on its own connection —
   handy for `tmux attach` / `Ctrl+b d` hopping or a quick look around. They have a red border,
   are lost if the connection drops (the pane then shows why, stays readable, and is never
-  revived), and keep their own scrollback.
+  revived), and keep their own scrollback. They report their folder as you `cd` (bash, zsh,
+  PowerShell, cmd; the Files explorer follows along), and programs in them can copy to your
+  clipboard (OSC 52, e.g. vim's or tmux's copy) while Consuls is focused.
 - **Bells**: a pane can ping when its program rings the terminal bell (e.g. an IRC highlight) —
   on by default for irssi and weechat, off for shells (they beep on failed tab completion), and
   toggled per pane with the ringing-bell button or the tile's right-click menu. irssi rings for

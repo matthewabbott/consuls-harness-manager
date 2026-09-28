@@ -59,6 +59,16 @@ impl Ctx {
         self.sink.event(event);
     }
 
+    /// A program in pane `key` copied text (OSC 52). Passed on only while the app is focused,
+    /// so nothing running in the background can overwrite the clipboard behind your back.
+    pub fn clipboard(&self, key: u32, text: String) {
+        const MAX: usize = 1 << 20;
+        if text.is_empty() || text.len() > MAX || !self.attention.lock().unwrap().focus.window_focused {
+            return;
+        }
+        self.emit(CoreEvent::Clipboard { key, text });
+    }
+
     pub fn notice(&self, host: Option<&str>, level: NoticeLevel, message: impl Into<String>) {
         self.emit(CoreEvent::Notice { host: host.map(str::to_string), level, message: message.into() });
     }

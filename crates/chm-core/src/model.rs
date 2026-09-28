@@ -450,6 +450,9 @@ pub enum CoreEvent {
     Panes { host: HostId, panes: Vec<PaneInfo> },
     Attention { state: PaneAttention },
     Notice { host: Option<HostId>, level: NoticeLevel, message: String },
+    /// A program in pane `key` copied `text` to the clipboard (OSC 52); only sent while the
+    /// app is focused.
+    Clipboard { key: u32, text: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]

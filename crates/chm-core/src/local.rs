@@ -128,6 +128,15 @@ pub fn to_slash(p: &Path) -> String {
     s.strip_prefix("//?/").map(str::to_string).unwrap_or(s)
 }
 
+/// Git Bash reports MSYS paths (`/c/Users/x`); this PC's panes use `C:/Users/x`.
+pub(crate) fn from_msys(path: &str) -> String {
+    let b = path.as_bytes();
+    if cfg!(windows) && b.len() >= 2 && b[0] == b'/' && b[1].is_ascii_alphabetic() && (b.len() == 2 || b[2] == b'/') {
+        return format!("{}:/{}", (b[1] as char).to_ascii_uppercase(), path.get(3..).unwrap_or(""));
+    }
+    path.to_string()
+}
+
 pub fn home() -> String {
     dirs::home_dir().map(|h| to_slash(&h)).unwrap_or_else(|| "/".into())
 }
@@ -326,7 +335,9 @@ pub fn ensure_assets() -> Result<Assets, String> {
     if std::fs::read_to_string(&version_path).is_ok_and(|v| v == assets::version()) {
         return Ok(assets);
     }
-    std::fs::create_dir_all(&assets.dir).map_err(|e| format!("{}: {e}", assets.dir))?;
+    for dir in assets::dirs(&assets) {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{dir}: {e}"))?;
+    }
     for (path, content, _mode) in assets::files(&assets, "tmux") {
         std::fs::write(&path, content).map_err(|e| format!("writing {path}: {e}"))?;
         #[cfg(unix)]
@@ -336,6 +347,70 @@ pub fn ensure_assets() -> Result<Assets, String> {
         }
     }
     Ok(assets)
+}
+
+/// PowerShell: wraps the prompt (after the profile set it up) to report the folder with OSC 9;9,
+/// like Windows Terminal's shell integration.
+const PS_PROMPT: &str = r#"$global:__consulsPrompt = $function:prompt
+function global:prompt {
+  $l = $executionContext.SessionState.Path.CurrentLocation
+  if ($l.Provider.Name -eq 'FileSystem') { [Console]::Write("$([char]27)]9;9;`"$($l.ProviderPath)`"$([char]27)\") }
+  & $global:__consulsPrompt
+}"#;
+
+/// Whether `integrate` needs the shell-integration files for this shell.
+pub(crate) fn integration_uses_assets(def: &ShellDef) -> bool {
+    matches!(shell_family(def), Family::Bash | Family::Zsh)
+}
+
+#[derive(PartialEq, Eq)]
+enum Family {
+    PowerShell,
+    Cmd,
+    Bash,
+    Zsh,
+    Other,
+}
+
+fn shell_family(def: &ShellDef) -> Family {
+    let exe = def.shell.path.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
+    match exe.trim_end_matches(".exe") {
+        "pwsh" | "powershell" => Family::PowerShell,
+        "cmd" => Family::Cmd,
+        "bash" => Family::Bash,
+        "zsh" => Family::Zsh,
+        _ => Family::Other,
+    }
+}
+
+/// Arguments and extra environment that make a local shell report its folder at each prompt
+/// (see `term::CwdScanner`), so the explorer can follow `cd`. Unchanged when that isn't possible.
+pub(crate) fn integrate(def: &ShellDef, assets: Option<&Assets>) -> (Vec<String>, Vec<(String, String)>) {
+    let mut args = def.args.clone();
+    let mut env = Vec::new();
+    match (shell_family(def), assets) {
+        (Family::PowerShell, _) => {
+            use base64::Engine;
+            let utf16: Vec<u8> = PS_PROMPT.encode_utf16().flat_map(u16::to_le_bytes).collect();
+            args.extend(["-NoExit".into(), "-EncodedCommand".into(), base64::engine::general_purpose::STANDARD.encode(utf16)]);
+        }
+        (Family::Cmd, _) => {
+            let prompt = std::env::var("PROMPT").unwrap_or_else(|_| "$P$G".into());
+            env.push(("PROMPT".into(), format!("$E]9;9;$P$E\\{prompt}")));
+        }
+        (Family::Bash, Some(a)) => {
+            // Replaces --login: the init file starts up like a login shell itself.
+            args.retain(|a| a != "--login" && a != "-l" && a != "-i");
+            args.extend(["--init-file".into(), format!("{}/bash-init.sh", a.shell), "-i".into()]);
+        }
+        (Family::Zsh, Some(a)) => {
+            let user = std::env::var("ZDOTDIR").unwrap_or_else(|_| home());
+            env.push(("USER_ZDOTDIR".into(), user));
+            env.push(("ZDOTDIR".into(), format!("{}/zsh", a.shell)));
+        }
+        _ => {}
+    }
+    (args, env)
 }
 
 /// Environment for a local shell of pane `chm_id`.
@@ -391,6 +466,16 @@ pub(crate) async fn tail_events(on_line: Arc<dyn Fn(&str) + Send + Sync>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn msys_paths() {
+        if cfg!(windows) {
+            assert_eq!(from_msys("/c/Users/A B"), "C:/Users/A B");
+            assert_eq!(from_msys("/d"), "D:/");
+        }
+        assert_eq!(from_msys("/usr/bin"), "/usr/bin");
+        assert_eq!(from_msys("C:/x"), "C:/x");
+    }
 
     #[test]
     fn slashes() {

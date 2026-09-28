@@ -52,6 +52,17 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Hooks route by `CHM_PANE=direct:<chm_id>` (set when the shell starts); `chm-hook.sh` prefers
   `$TMUX_PANE`, so tmux started inside a direct shell still routes to the tmux pane.
 - Direct panes outlive their connection: they sit in `Ctx::direct`, not in a host actor.
+- Their folder comes from what the shell prints at its prompt (`term::CwdScanner`: OSC 7,
+  9;9, 633;P;Cwd). Shells don't do that by themselves, so plain shells start with shell
+  integration (`remote-assets/shell/`, deployed with the hook assets):
+  - bash: `--init-file bash-init.sh -i`, which starts up like a login shell. On MSYS it reports
+    `pwd -W`, since `/tmp` etc. are MSYS mounts.
+  - zsh: `ZDOTDIR` = our folder, `USER_ZDOTDIR` = yours; each of our files runs yours first.
+  - PowerShell: `-NoExit -EncodedCommand` wraps `prompt` (OSC 9;9).
+  - cmd: a `PROMPT` starting with `$E]9;9;$P$E\`.
+  ConPTY passes OSC 7 and 9;9 through.
+- OSC 52 copies (direct and tmux panes) become `CoreEvent::Clipboard`, only while the window is
+  focused; clipboard reads are never answered.
 - This PC is host `@local` (`local.rs`): not in `config.hosts`, always connected. Paths shown to
   the UI use forward slashes (`C:/Users/…`), but programs/cwds go to CreateProcess with native
   backslashes — cmd.exe parses `C:/WINDOWS/…` in its own command line as `/W` switches.
@@ -140,7 +151,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `cwd.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

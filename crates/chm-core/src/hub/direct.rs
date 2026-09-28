@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alacritty_terminal::event::{Event, WindowSize};
+use alacritty_terminal::term::ClipboardType;
 use alacritty_terminal::term::TermMode;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
@@ -22,7 +23,7 @@ use crate::harness::Harness;
 use crate::integration::events::HookEvent;
 use crate::model::{HostId, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome};
 use crate::pty::{Pty, PtyInput, PtyOutput};
-use crate::term::{Collector, TileTerm, palette_rgb};
+use crate::term::{Collector, CwdScanner, TileTerm, palette_rgb};
 
 /// Scrollback kept for a direct pane (it's the only copy).
 const HISTORY: usize = 10_000;
@@ -84,6 +85,7 @@ pub(crate) fn spawn(ctx: &Arc<Ctx>, rt: &tokio::runtime::Handle, spec: DirectSpe
         key,
         term: TileTerm::with_listener(spec.cols, spec.rows, HISTORY, events.clone()),
         events,
+        cwd: CwdScanner::default(),
         info,
         input: pty.input,
         streaming: false,
@@ -115,6 +117,7 @@ struct Direct {
     info: PaneInfo,
     term: TileTerm<Collector>,
     events: Collector,
+    cwd: CwdScanner,
     input: mpsc::UnboundedSender<PtyInput>,
     streaming: bool,
     dirty: bool,
@@ -173,6 +176,16 @@ impl Direct {
     }
 
     fn on_output(&mut self, bytes: &[u8]) {
+        // Shells report their folder at each prompt (our shell integration, or their own).
+        if let Some(mut cwd) = self.cwd.feed(bytes) {
+            if self.info.host == crate::local::LOCAL_HOST {
+                cwd = crate::local::from_msys(&cwd);
+            }
+            if cwd != self.info.current_path {
+                self.info.current_path = cwd;
+                self.publish_due = true;
+            }
+        }
         self.term.feed(bytes);
         self.dirty = true;
         let now = Instant::now();
@@ -211,8 +224,9 @@ impl Direct {
                     let sig = Signal { event: "Bell".into(), detail: String::new(), ts: 0, heuristic: false };
                     self.ctx.signal(self.key, &sig, &self.label(), false);
                 }
-                // OSC 52 clipboard writes are handled later; clipboard reads are never answered
-                // (a remote program shouldn't read the clipboard).
+                // OSC 52: a program copied something. Clipboard reads are never answered (a
+                // remote program shouldn't read your clipboard).
+                Event::ClipboardStore(ClipboardType::Clipboard, text) => self.ctx.clipboard(self.key, text),
                 _ => {}
             }
         }

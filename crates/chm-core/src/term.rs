@@ -433,6 +433,141 @@ fn attrs(f: Flags) -> u16 {
     a
 }
 
+/// Picks out the working-directory reports shells print at their prompt, which alacritty
+/// ignores: OSC 7 (`file://host/path`), OSC 9;9 (`"C:\path"`, Windows Terminal's) and
+/// OSC 633;P;Cwd=path (VS Code's). Sequences may be split across chunks.
+#[derive(Default)]
+pub struct CwdScanner {
+    state: ScanState,
+    buf: Vec<u8>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum ScanState {
+    #[default]
+    Ground,
+    Esc,
+    Osc,
+    /// An ESC inside an OSC: `\` ends it.
+    OscEsc,
+}
+
+impl CwdScanner {
+    /// The last folder reported in `bytes`, if any.
+    pub fn feed(&mut self, bytes: &[u8]) -> Option<String> {
+        let mut found = None;
+        let mut i = 0;
+        while i < bytes.len() {
+            if self.state == ScanState::Ground {
+                match memchr::memchr(0x1b, &bytes[i..]) {
+                    Some(at) => {
+                        i += at + 1;
+                        self.state = ScanState::Esc;
+                    }
+                    None => break,
+                }
+                continue;
+            }
+            let b = bytes[i];
+            i += 1;
+            self.state = match (self.state, b) {
+                (ScanState::Esc, b']') => {
+                    self.buf.clear();
+                    ScanState::Osc
+                }
+                (ScanState::Esc, 0x1b) => ScanState::Esc,
+                (ScanState::Esc, _) => ScanState::Ground,
+                (ScanState::Osc, 0x07) | (ScanState::OscEsc, b'\\') => {
+                    if let Some(cwd) = parse_cwd(&self.buf) {
+                        found = Some(cwd);
+                    }
+                    ScanState::Ground
+                }
+                (ScanState::Osc, 0x1b) => ScanState::OscEsc,
+                (ScanState::Osc, _) if self.buf.len() < 4096 => {
+                    self.buf.push(b);
+                    ScanState::Osc
+                }
+                (ScanState::Osc, _) => ScanState::Ground, // too long to be a folder
+                (ScanState::OscEsc, _) => ScanState::Ground,
+                (ScanState::Ground, _) => unreachable!(),
+            };
+        }
+        found
+    }
+}
+
+/// The folder in an OSC payload (`7;file://…`, `9;9;…`, `633;P;Cwd=…`), with forward slashes.
+fn parse_cwd(payload: &[u8]) -> Option<String> {
+    let s = std::str::from_utf8(payload).ok()?;
+    let path = if let Some(url) = s.strip_prefix("7;") {
+        let rest = url.strip_prefix("file://")?;
+        let path = percent_decode(&rest[rest.find('/')?..]);
+        // file://host/C:/Users → C:/Users
+        let b = path.as_bytes();
+        if b.len() >= 3 && b[2] == b':' && b[1].is_ascii_alphabetic() { path[1..].to_string() } else { path }
+    } else if let Some(p) = s.strip_prefix("9;9;") {
+        p.trim_matches('"').replace('\\', "/")
+    } else {
+        unescape_633(s.strip_prefix("633;P;Cwd=")?).replace('\\', "/")
+    };
+    if path.is_empty() {
+        return None;
+    }
+    // No trailing slash, except on a root (`/`, `D:/`).
+    let trimmed = path.trim_end_matches('/');
+    let root = trimmed.is_empty() || (trimmed.len() == 2 && trimmed.ends_with(':'));
+    Some(if root { format!("{trimmed}/") } else { trimmed.to_string() })
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2]))
+        {
+            out.push((h * 16 + l) as u8);
+            i += 3;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// VS Code's escaping in OSC 633 values: `\\` and `\xHH`.
+fn unescape_633(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('\\') => {
+                chars.next();
+                out.push('\\');
+            }
+            Some('x') => {
+                chars.next();
+                let hex: String = chars.by_ref().take(2).collect();
+                match u8::from_str_radix(&hex, 16) {
+                    Ok(b) => out.push(b as char),
+                    Err(_) => out.push_str(&format!("\\x{hex}")),
+                }
+            }
+            _ => out.push('\\'),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,5 +645,23 @@ mod tests {
         assert_eq!(t.text(), "$ ls\na  b\n$\n");
         t.feed(b"echo");
         assert_eq!(t.text(), "$ ls\na  b\n$ echo\n");
+    }
+
+    #[test]
+    fn cwd_reports() {
+        let mut s = CwdScanner::default();
+        assert_eq!(s.feed(b"\x1b]7;file://box/home/u/my%20proj\x07$ "), Some("/home/u/my proj".into()));
+        assert_eq!(s.feed(b"\x1b]7;file://pc/C:/Users/A%20B\x1b\\"), Some("C:/Users/A B".into()));
+        assert_eq!(s.feed(b"\x1b]9;9;\"D:\\a\\programming\"\x1b\\PS D:\\a\\programming> "), Some("D:/a/programming".into()));
+        assert_eq!(s.feed(b"\x1b]9;9;D:\\\x1b\\D:\\>"), Some("D:/".into()));
+        assert_eq!(s.feed(b"\x1b]633;P;Cwd=/srv/a\\x3bb\x07"), Some("/srv/a;b".into()));
+        assert_eq!(s.feed(b"\x1b]7;file://box/\x07"), Some("/".into()));
+        // Not folders: titles, hyperlinks, colours.
+        assert_eq!(s.feed(b"\x1b]0;user@box: ~\x07\x1b]8;;https://x\x1b\\x\x1b]8;;\x1b\\\x1b]11;?\x07"), None);
+        // Split across chunks, the last report wins.
+        assert_eq!(s.feed(b"out\x1b]7;file://b/tmp/a\x07more\x1b]7;fi"), Some("/tmp/a".into()));
+        assert_eq!(s.feed(b"le://b/tmp/"), None);
+        assert_eq!(s.feed(b"b\x1b"), None);
+        assert_eq!(s.feed(b"\\"), Some("/tmp/b".into()));
     }
 }

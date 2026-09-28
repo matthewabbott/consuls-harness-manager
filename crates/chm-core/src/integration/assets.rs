@@ -10,6 +10,13 @@ use crate::ssh::{SshConnection, exec};
 const HOOK: &str = include_str!("../../../../remote-assets/chm-hook.sh");
 const CLAUDE_SETTINGS: &str = include_str!("../../../../remote-assets/claude-settings.json");
 const OMP_EXTENSION: &str = include_str!("../../../../remote-assets/omp-extension.ts");
+/// Shell integration for plain shells (reports the working directory at each prompt).
+const SHELL_FILES: [(&str, &str); 4] = [
+    ("bash-init.sh", include_str!("../../../../remote-assets/shell/bash-init.sh")),
+    ("zsh/.zshenv", include_str!("../../../../remote-assets/shell/zsh/.zshenv")),
+    ("zsh/.zprofile", include_str!("../../../../remote-assets/shell/zsh/.zprofile")),
+    ("zsh/.zshrc", include_str!("../../../../remote-assets/shell/zsh/.zshrc")),
+];
 
 /// Absolute paths of the deployed assets (forward slashes, also on Windows).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +25,8 @@ pub struct Assets {
     pub hook: String,
     pub claude_settings: String,
     pub omp_extension: String,
+    /// Shell integration: `bash-init.sh` and a `zsh/` ZDOTDIR.
+    pub shell: String,
     /// The POSIX shell that runs the hook: `sh` on Unix hosts, Git's `sh.exe` on Windows.
     pub sh: String,
 }
@@ -33,6 +42,7 @@ impl Assets {
             hook: format!("{dir}/chm-hook.sh"),
             claude_settings: format!("{dir}/claude-settings.json"),
             omp_extension: format!("{dir}/omp-extension.ts"),
+            shell: format!("{dir}/shell"),
             dir,
             sh: sh.to_string(),
         }
@@ -71,7 +81,7 @@ pub fn omp_extension(assets: &Assets) -> String {
 /// FNV-1a over every asset, so any change triggers a redeploy.
 pub fn version() -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for part in [HOOK, CLAUDE_SETTINGS, OMP_EXTENSION] {
+    for part in [HOOK, CLAUDE_SETTINGS, OMP_EXTENSION].into_iter().chain(SHELL_FILES.map(|(_, f)| f)) {
         for b in part.bytes().chain([0u8]) {
             h ^= b as u64;
             h = h.wrapping_mul(0x0100_0000_01b3);
@@ -86,12 +96,20 @@ fn render(template: &str, assets: &Assets, tmux: &str) -> String {
 
 /// Files to deploy for these assets: (path, content, mode).
 pub(crate) fn files(assets: &Assets, tmux: &str) -> Vec<(String, String, u32)> {
-    vec![
+    let mut files = vec![
         (assets.hook.clone(), render(HOOK, assets, tmux), 0o755),
         (assets.claude_settings.clone(), claude_settings(assets), 0o644),
         (assets.omp_extension.clone(), omp_extension(assets), 0o644),
-        (format!("{}/VERSION", assets.dir), version(), 0o644),
-    ]
+    ];
+    files.extend(SHELL_FILES.map(|(name, content)| (format!("{}/{name}", assets.shell), content.to_string(), 0o644)));
+    // Last: its presence says the rest is complete.
+    files.push((format!("{}/VERSION", assets.dir), version(), 0o644));
+    files
+}
+
+/// Folders `files` needs, parents first.
+pub(crate) fn dirs(assets: &Assets) -> Vec<String> {
+    vec![assets.dir.clone(), assets.shell.clone(), format!("{}/zsh", assets.shell)]
 }
 
 /// Makes sure the current assets exist on the host and returns their paths. `tmux` is the tmux
@@ -117,9 +135,12 @@ pub async fn ensure(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Res
     }
 
     let mut path = home.trim_end_matches('/').to_string();
-    for part in [".local", "share", "consuls"] {
+    for part in [".local", "share"] {
         path = format!("{path}/{part}");
         let _ = sftp.create_dir(path.clone()).await; // fine if it already exists
+    }
+    for dir in dirs(&assets) {
+        let _ = sftp.create_dir(dir).await;
     }
     for (path, content, mode) in files(&assets, &tmux) {
         let content = if path == version_path { stamp.clone() } else { content };

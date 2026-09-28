@@ -20,6 +20,7 @@ struct Recorder {
     panes: Mutex<Vec<PaneInfo>>,
     raw: Mutex<HashMap<u32, Vec<u8>>>,
     attention: Mutex<HashMap<u32, PaneAttention>>,
+    clipboard: Mutex<Vec<(u32, String)>>,
 }
 
 impl Sink for Recorder {
@@ -30,6 +31,7 @@ impl Sink for Recorder {
                 self.attention.lock().unwrap().insert(state.key, state);
             }
             CoreEvent::Notice { message, .. } => println!("  notice: {message}"),
+            CoreEvent::Clipboard { key, text } => self.clipboard.lock().unwrap().push((key, text)),
             _ => {}
         }
     }
@@ -68,7 +70,9 @@ async fn main() -> anyhow::Result<()> {
 
     let shells = core.local_shells();
     println!("     shells: {}", shells.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", "));
-    for shell in shells.iter().filter(|s| !s.id.starts_with("wsl:")) {
+    // ONLY=git-bash runs one shell.
+    let only = std::env::var("ONLY").ok();
+    for shell in shells.iter().filter(|s| !s.id.starts_with("wsl:") && only.as_deref().is_none_or(|o| o == s.id)) {
         println!("--- {} ({})", shell.name, shell.path);
         let spec = NewPaneSpec {
             host: LOCAL_HOST.into(),
@@ -118,6 +122,45 @@ async fn main() -> anyhow::Result<()> {
             core.send_text(key, c.into());
             core.send_keys(key, vec!["Enter".into()]);
             wait_for("the shell sees 100x30", Duration::from_secs(10), || draw(key).contains("size=100x30")).await;
+        }
+
+        // Shell integration: `cd` shows up as the pane's folder.
+        let target = local::to_slash(&dir);
+        let native = target.replace('/', "\\");
+        let cd = match shell.id.as_str() {
+            "pwsh" | "powershell" => format!("Set-Location -LiteralPath '{native}'"),
+            "cmd" => format!("cd /d \"{native}\""),
+            _ => format!("cd '{target}'"),
+        };
+        core.send_text(key, cd);
+        core.send_keys(key, vec!["Enter".into()]);
+        let same = |a: &str, b: &str| a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'));
+        let started = Instant::now();
+        while !pane(key).is_some_and(|p| same(&p.current_path, &target)) {
+            if started.elapsed() > Duration::from_secs(10) {
+                println!("     folder: {:?}, expected {target:?}", pane(key).map(|p| p.current_path));
+                println!("     output so far: {:?}", draw(key).chars().rev().take(400).collect::<String>().chars().rev().collect::<String>());
+                panic!("cd wasn't reported");
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        println!("ok   cd is reported as the pane's folder ({:?})", started.elapsed());
+
+        // OSC 52: a program copies text; it only reaches the UI while the app is focused.
+        let osc52 = match shell.id.as_str() {
+            "pwsh" | "powershell" => Some("[Console]::Write(\"$([char]27)]52;c;bG9jYWwtY29weQ==$([char]7)\")"),
+            "cmd" => None,
+            _ => Some("printf '\\033]52;c;bG9jYWwtY29weQ==\\a'"),
+        };
+        if let Some(c) = osc52 {
+            core.set_focus(FocusState { expanded: Some(key), window_focused: true });
+            core.send_text(key, c.into());
+            core.send_keys(key, vec!["Enter".into()]);
+            wait_for("OSC 52 copy reaches the UI", Duration::from_secs(10), || {
+                rec.clipboard.lock().unwrap().iter().any(|(k, t)| *k == key && t == "local-copy")
+            })
+            .await;
+            core.set_focus(FocusState { expanded: None, window_focused: false });
         }
 
         let hook = match shell.id.as_str() {
