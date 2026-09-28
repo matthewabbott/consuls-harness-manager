@@ -133,7 +133,7 @@ pub fn home() -> String {
 }
 
 /// Finds an executable on PATH (with PATHEXT on Windows).
-fn which(name: &str) -> Option<PathBuf> {
+pub fn which(name: &str) -> Option<PathBuf> {
     let exts: Vec<String> = if cfg!(windows) && Path::new(name).extension().is_none() {
         std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into()).split(';').map(|e| e.to_ascii_lowercase()).collect()
     } else {

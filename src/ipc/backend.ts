@@ -51,6 +51,11 @@ export interface Backend {
   forgetHostKey(id: string): Promise<void>;
   refreshTailnet(): Promise<TailnetStatus>;
   openExternal(url: string): Promise<void>;
+  /** Shows a file or folder on This PC in File Explorer / Finder. */
+  revealPath(host: string, path: string): Promise<void>;
+  vscodeStatus(): Promise<VsCodeStatus>;
+  /** Opens a file (at a line) or folder in VS Code; other machines go through Remote-SSH. */
+  openInVscode(host: string, path: string, line?: number, col?: number): Promise<void>;
   setVisiblePanes(keys: number[] | null): Promise<void>;
   streamPane(key: number, on: boolean): Promise<void>;
   sendKeys(key: number, keys: string[]): Promise<void>;
@@ -86,6 +91,12 @@ export interface Backend {
   integrationStatus(host: string): Promise<IntegrationStatus>;
   installIntegration(host: string): Promise<IntegrationStatus>;
   uninstallIntegration(host: string): Promise<IntegrationStatus>;
+}
+
+/** From the app shell (not the core, so not in bindings/). */
+export interface VsCodeStatus {
+  installed: boolean;
+  remoteSsh: boolean;
 }
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -131,6 +142,9 @@ async function tauriBackend(): Promise<Backend> {
     forgetHostKey: (id) => invoke("forget_host_key", { id }),
     refreshTailnet: () => invoke("refresh_tailnet"),
     openExternal: (url) => invoke("open_external", { url }),
+    revealPath: (host, path) => invoke("reveal_path", { host, path }),
+    vscodeStatus: () => invoke("vscode_status"),
+    openInVscode: (host, path, line, col) => invoke("open_in_vscode", { host, path, line: line ?? null, col: col ?? null }),
     setVisiblePanes: (keys) => invoke("set_visible_panes", { keys }),
     streamPane: (key, on) => invoke("stream_pane", { key, on }),
     sendKeys: (key, keys) => invoke("send_keys", { key, keys }),

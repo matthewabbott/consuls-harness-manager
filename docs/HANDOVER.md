@@ -53,7 +53,10 @@ Roughly in order. Each is small-to-medium and self-contained.
       default.
     - Double-click browses into a folder.
     - The new-pane dialog shares the chips, the nav row and the default.
-- Next: reveal, VS Code, recording mode, cwd + OSC 52, local hooks, local tmux (V3-3…V3-8).
+  - V3-3/4: Show in File Explorer and Open in VS Code (local, and Remote-SSH).
+    - The remote path is only verified up to the launch. The Mac was offline, so a real Remote-SSH
+      connection is still to check.
+- Next: recording mode, cwd + OSC 52, local hooks, local tmux (V3-5…V3-8).
 
 ### 1. Sidebars (done in V3-1)
 - Right sidebar (the filmstrip beside an expanded pane, `ExpandedPane.tsx`): its collapse toggle

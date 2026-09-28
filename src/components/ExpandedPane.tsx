@@ -1,10 +1,27 @@
-import { ArrowLeft, Bell, BellOff, BellRing, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search, X, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  ArrowLeft,
+  Bell,
+  BellOff,
+  BellRing,
+  EyeOff,
+  Maximize2,
+  Minimize2,
+  PanelRightClose,
+  PanelRightOpen,
+  Power,
+  Search,
+  SquareCode,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 
 import { backend } from "../ipc/backend";
 import { useMemo, useRef, useState } from "react";
 
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { hostLabel, shortPath } from "../lib/hosts";
+import { canOpenInVsCode, openInVsCode, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
 import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
 import { isDirect, paneIdentity, paneWhere } from "../lib/panes";
@@ -38,6 +55,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const composerRef = useRef<ComposerHandle>(null);
   const [searching, setSearching] = useState(false);
   const home = hosts[pane.host]?.facts?.home;
+  const vscode = useVsCode();
   const muted = useApp((s) => s.muted[pane.key] ?? false);
   const toggleMute = () => {
     useApp.getState().setMuted(pane.key, !muted);
@@ -115,6 +133,11 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
                 <ZoomIn className="h-3.5 w-3.5" />
               </HeaderIcon>
             </div>
+            {canOpenInVsCode(vscode, pane.host) && pane.currentPath && (
+              <HeaderIcon onClick={() => openInVsCode(pane.host, pane.currentPath)} title={`Open ${shortPath(pane.currentPath, home)} in VS Code`}>
+                <SquareCode className="h-3.5 w-3.5" />
+              </HeaderIcon>
+            )}
             <HeaderIcon
               onClick={() => ui().setMaximized(!maximized)}
               title={maximized ? "Restore side panels" : "Maximize (hide side panels)"}

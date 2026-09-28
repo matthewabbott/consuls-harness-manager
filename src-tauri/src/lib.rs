@@ -4,6 +4,7 @@
 mod alerts;
 mod commands;
 mod tray;
+mod vscode;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -122,6 +123,9 @@ pub fn run() {
             commands::forget_host_key,
             commands::refresh_tailnet,
             commands::open_external,
+            commands::reveal_path,
+            commands::vscode_status,
+            commands::open_in_vscode,
             commands::set_visible_panes,
             commands::stream_pane,
             commands::send_keys,

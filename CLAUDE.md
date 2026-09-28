@@ -75,6 +75,17 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   localStorage (`consuls.files.v1`), used by the explorer and the new-pane dialog, which share
   `PlacesBar` (chips) and `FolderNav` (back/forward via `lib/history.ts`, drive menu, crumbs, ☆).
 
+## Opening things outside the app
+
+- `reveal_path` / `open_in_vscode` (src-tauri) take paths the UI may have read from terminal
+  output: local ones must be absolute (`C:/…`), exist, and are converted to native; remote ones
+  must be absolute and on a configured machine. Never through a shell.
+- VS Code: launch `Code.exe` itself (`vscode.rs`), never `bin\code.cmd` — batch files can't take
+  arbitrary arguments safely. Other machines: `--remote ssh-remote+<authority> <path>`, where
+  the authority is a matching `~/.ssh/config` alias, else `user@<MagicDNS name>`, else (port ≠
+  22) Remote-SSH's hex-encoded JSON. Manual check: `cargo test -p consuls launches_vscode --
+  --ignored` (refuses the Sparks: VS Code server needs memory they don't have).
+
 ## Editor
 
 - `fs::{read,write}` (per transport): text is UTF-8 with the BOM stripped and reported; saves

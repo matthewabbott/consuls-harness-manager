@@ -1,11 +1,12 @@
 import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { AlertTriangle, ArrowLeft, FileText, ImageIcon, Loader2, RotateCcw, Save, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, FileText, FolderSearch, ImageIcon, Loader2, RotateCcw, Save, SquareCode, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
-import { hostLabel } from "../lib/hosts";
+import { hostLabel, isLocal } from "../lib/hosts";
+import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { parentPath } from "../lib/paths";
 import { buffers, useEditor } from "../store/editor";
 import { statusOf, useFiles } from "../store/files";
@@ -23,6 +24,7 @@ export default function FileView({ id }: { id: string }) {
   const [closing, setClosing] = useState(false);
   const badges = useFiles((s) => s.badges);
   const gitRoot = useFiles((s) => s.git?.root ?? null);
+  const vscode = useVsCode();
 
   // Watch for outside changes while it's open.
   useEffect(() => {
@@ -57,6 +59,24 @@ export default function FileView({ id }: { id: string }) {
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1">
+          {isLocal(file.host) && (
+            <button
+              onClick={() => revealPath(file.host, file.path)}
+              title={REVEAL_LABEL}
+              className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100"
+            >
+              <FolderSearch className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {canOpenInVsCode(vscode, file.host) && (
+            <button
+              onClick={() => openInVsCode(file.host, file.path, file.kind === "text" ? cursor.line : undefined, file.kind === "text" ? cursor.col : undefined)}
+              title={`Open in VS Code${file.kind === "text" ? ` at line ${cursor.line}` : ""}${file.dirty ? " (save first: it opens the file on disk)" : ""}`}
+              className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100"
+            >
+              <SquareCode className="h-3.5 w-3.5" />
+            </button>
+          )}
           {file.kind === "text" && (
             <button
               onClick={() => void editor().save(id)}

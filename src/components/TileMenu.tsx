@@ -1,8 +1,10 @@
-import { BellRing, Check, EyeOff, Maximize2, Plus, Power, Tag } from "lucide-react";
+import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Plus, Power, SquareCode, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
+import { isLocal } from "../lib/hosts";
+import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
 import { LabelEditor } from "./LabelsPanel";
 
@@ -18,6 +20,7 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
   // Read the live pane so toggles reflect immediately.
   const pane = useApp((s) => Object.values(s.panes).flat().find((p) => p.key === menu.pane.key)) ?? menu.pane;
   const [creating, setCreating] = useState(false);
+  const vscode = useVsCode();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -60,6 +63,21 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
           <MenuItem icon={<Plus className="h-3.5 w-3.5" />} onClick={() => setCreating(true)}>
             New label…
           </MenuItem>
+        )}
+        {pane.currentPath && (isLocal(pane.host) || canOpenInVsCode(vscode, pane.host)) && (
+          <>
+            <div className="my-1 h-px bg-ink-700" />
+            {isLocal(pane.host) && (
+              <MenuItem icon={<FolderSearch className="h-3.5 w-3.5" />} onClick={() => { revealPath(pane.host, pane.currentPath); onClose(); }}>
+                {REVEAL_LABEL}
+              </MenuItem>
+            )}
+            {canOpenInVsCode(vscode, pane.host) && (
+              <MenuItem icon={<SquareCode className="h-3.5 w-3.5" />} onClick={() => { openInVsCode(pane.host, pane.currentPath); onClose(); }}>
+                Open folder in VS Code
+              </MenuItem>
+            )}
+          </>
         )}
         <div className="my-1 h-px bg-ink-700" />
         <MenuItem icon={<BellRing className="h-3.5 w-3.5" />} onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}>

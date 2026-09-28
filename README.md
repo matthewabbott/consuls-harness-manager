@@ -35,7 +35,11 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   each drive on This PC or `/`), back / forward (also Alt+←/→ and the mouse's side buttons), the
   drive crumb as a menu of drives and places, a ☆ after the path that makes the folder the default
   (the new-pane dialog, which has the same navigation, starts there too), and double-click a folder
-  to browse from it. Lazy tree, git status badges rolled up to folders, new file /
+  to browse from it. **Show in File Explorer** / Reveal in Finder for This PC, and **Open in VS
+  Code** for files (at the cursor's line) and folders — other machines open through VS Code's
+  Remote-SSH, reusing your `~/.ssh/config` alias for the machine if you have one. These appear in
+  the explorer's and tiles' right-click menus, the file header and the pane header, and only when
+  VS Code (and, for other machines, Remote-SSH) is installed. Lazy tree, git status badges rolled up to folders, new file /
   folder, rename, delete (with an item count first), copy path, and "new pane here". Files open
   as tiles next to the pane they came from: a CodeMirror editor (syntax highlighting, search,
   undo/redo, Ctrl+S) that keeps the file's line endings and BOM, notices when an agent changes
@@ -120,9 +124,6 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 ## Not yet
 
 Next up (small):
-- "Show in File Explorer" / "Reveal in Finder" for files and folders on This PC.
-- "Open in VS Code" for files and folders — local, and remote via VS Code's Remote-SSH (opening
-  a connection to that machine). Only shown when VS Code is installed.
 - Recording mode: hide personal details (email, tailnet IPs, …) for screenshots and videos.
 - Local tmux on This PC (macOS/Linux, or WSL/MSYS2 on Windows).
 

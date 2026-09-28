@@ -8,6 +8,7 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::AppState;
+use crate::vscode::{self, Target, VsCode, VsCodeStatus};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -71,6 +72,64 @@ pub fn open_external(app: tauri::AppHandle, url: String) -> CmdResult<()> {
         return Err(format!("refusing to open non-https URL: {url}"));
     }
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// A path on this PC from the UI (`C:/…` on Windows, `/…` elsewhere), as a native path that
+/// exists. The UI may have taken it from terminal output, so nothing else gets through.
+fn local_path(path: &str) -> CmdResult<std::path::PathBuf> {
+    let bytes = path.as_bytes();
+    let absolute = if cfg!(windows) {
+        bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
+    } else {
+        path.starts_with('/')
+    };
+    if !absolute || path.chars().any(char::is_control) {
+        return Err(format!("not an absolute path: {path}"));
+    }
+    let native = std::path::PathBuf::from(if cfg!(windows) { path.replace('/', "\\") } else { path.to_string() });
+    if !native.exists() {
+        return Err(format!("{path} doesn't exist"));
+    }
+    Ok(native)
+}
+
+/// Shows a file or folder on this PC in File Explorer / Finder, selected.
+#[tauri::command]
+pub fn reveal_path(app: tauri::AppHandle, host: String, path: String) -> CmdResult<()> {
+    if host != chm_core::local::LOCAL_HOST {
+        return Err("only files on this PC can be shown in the file manager".into());
+    }
+    app.opener().reveal_item_in_dir(local_path(&path)?).map_err(|e| e.to_string())
+}
+
+/// Whether VS Code (and its Remote-SSH extension) is installed; checked on each call, so
+/// installing either shows up without a restart.
+#[tauri::command]
+pub fn vscode_status() -> VsCodeStatus {
+    VsCode::status(&VsCode::detect())
+}
+
+/// Opens a file (at a line) or folder in VS Code: local paths directly, paths on another
+/// machine through Remote-SSH.
+#[tauri::command]
+pub fn open_in_vscode(state: State<'_, AppState>, host: String, path: String, line: Option<u32>, col: Option<u32>) -> CmdResult<()> {
+    let code = VsCode::detect().ok_or("VS Code isn't installed")?;
+    let target = if host == chm_core::local::LOCAL_HOST {
+        Target::Local { path: local_path(&path)?, line, col }
+    } else {
+        if !code.remote_ssh {
+            return Err("VS Code's Remote-SSH extension isn't installed".into());
+        }
+        if !path.starts_with('/') || path.chars().any(char::is_control) {
+            return Err(format!("not an absolute path: {path}"));
+        }
+        let snap = state.core.snapshot();
+        let cfg = snap.config.hosts.iter().find(|h| h.id == host).ok_or_else(|| format!("unknown machine {host}"))?;
+        let peer = snap.tailnet.peers.iter().find(|p| p.id == host);
+        let ssh_config = std::fs::read_to_string(std::path::Path::new(&chm_core::local::home()).join(".ssh/config")).unwrap_or_default();
+        Target::Remote { authority: vscode::authority(cfg, peer, &ssh_config), path, line, col }
+    };
+    code.open(&target).map_err(|e| format!("couldn't start VS Code: {e}"))
 }
 
 #[tauri::command]
@@ -272,4 +331,22 @@ pub async fn list_dir(state: State<'_, AppState>, host: String, path: String) ->
 #[tauri::command]
 pub fn set_visible_panes(state: State<'_, AppState>, keys: Option<Vec<u32>>) {
     state.core.set_visible_panes(keys);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_path;
+
+    #[test]
+    fn local_paths_must_be_absolute_and_exist() {
+        let here = chm_core::local::home();
+        assert!(local_path(&here).unwrap().exists());
+        assert!(local_path("relative/path").is_err());
+        assert!(local_path(&format!("{here}/no-such-file-chm-test")).unwrap_err().contains("doesn't exist"));
+        assert!(local_path(&format!("{here}\u{7}")).is_err());
+        if cfg!(windows) {
+            assert!(local_path("/Windows").is_err(), "drive-relative paths are refused");
+            assert_eq!(local_path("C:/Windows").unwrap(), std::path::PathBuf::from(r"C:\Windows"));
+        }
+    }
 }

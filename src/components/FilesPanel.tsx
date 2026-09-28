@@ -7,6 +7,7 @@ import {
   FolderOpen,
   FolderPlus,
   FolderRoot,
+  FolderSearch,
   GitBranch,
   Loader2,
   Pencil,
@@ -14,6 +15,7 @@ import {
   PinOff,
   RefreshCw,
   ChevronsDownUp,
+  SquareCode,
   SquareTerminal,
   Star,
   Trash2,
@@ -24,7 +26,8 @@ import { backend } from "../ipc/backend";
 import type { DirEntryInfo } from "../ipc/bindings/DirEntryInfo";
 import type { GitFileStatus } from "../ipc/bindings/GitFileStatus";
 import { canBack, canForward } from "../lib/history";
-import { hostLabel, LOCAL_HOST } from "../lib/hosts";
+import { hostLabel, isLocal, LOCAL_HOST } from "../lib/hosts";
+import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
@@ -81,6 +84,7 @@ export default function FilesPanel() {
   const git = useFiles((s) => s.git);
   const history = useFiles((s) => s.history);
   const files = useFiles.getState;
+  const vscode = useVsCode();
 
   const hosts = useApp((s) => s.hosts);
   const expandedPane = useApp((s) => (s.expanded === null ? null : (Object.values(s.panes).flat().find((p) => p.key === s.expanded) ?? null)));
@@ -450,6 +454,17 @@ export default function FilesPanel() {
           {(menu.path === null || menu.isDir) && (
             <MenuItem icon={<Star className="h-3.5 w-3.5" />} onClick={() => files().setDefault(root.host, menu.path ?? root.path)}>
               Make default folder on {hostLabel(root.host)}
+            </MenuItem>
+          )}
+          {(isLocal(root.host) || canOpenInVsCode(vscode, root.host)) && <div className="my-1 h-px bg-ink-700" />}
+          {isLocal(root.host) && (
+            <MenuItem icon={<FolderSearch className="h-3.5 w-3.5" />} onClick={() => revealPath(root.host, menu.path ?? root.path)}>
+              {REVEAL_LABEL}
+            </MenuItem>
+          )}
+          {canOpenInVsCode(vscode, root.host) && (
+            <MenuItem icon={<SquareCode className="h-3.5 w-3.5" />} onClick={() => openInVsCode(root.host, menu.path ?? root.path)}>
+              Open in VS Code
             </MenuItem>
           )}
           {menu.path && (
