@@ -73,6 +73,9 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   truncate — never use it for saves.
 - UI buffers are CodeMirror states in `store/editor.ts` `buffers` (outside React); unsaved ones
   go to IndexedDB (`lib/drafts.ts`) and are restored at startup.
+- Git gutter (`src/editor/gitGutter.ts`): `Chunk.build(HEAD, doc)` a moment after edits; a chunk
+  whose HEAD side is only the empty line after the final newline counts as added (git doesn't
+  see that line). HEAD comes from `git show HEAD:./<name>` (`fs::git::head_script`).
 
 ## Bells
 
@@ -90,7 +93,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `editor.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `editor.mjs`; `gutter.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

@@ -63,6 +63,13 @@ export function mockReadFile(host: string, path: string) {
   return { kind: "text" as const, text, bom: false, stamp: { size: n.size, mtime: n.mtime, hash: null } };
 }
 
+/** The "committed" version: the sample text, so edits in the mock show in the gutter. */
+export function mockGitHead(host: string, path: string) {
+  if (host !== "spark-d683" || !path.startsWith(REPO)) return { kind: "notInRepo" as const };
+  if (path.endsWith("lib.rs")) return { kind: "untracked" as const };
+  return { kind: "text" as const, text: textOf(path) };
+}
+
 export function mockStat(host: string, path: string) {
   const n = nodes.get(k(host, path));
   return n ? { size: n.size, mtime: n.mtime, hash: null } : null;

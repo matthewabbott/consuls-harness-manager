@@ -39,6 +39,7 @@ pub(crate) enum HostCmd {
     FsCount { path: String, reply: oneshot::Sender<Result<u64, String>> },
     Git { dir: String, reply: oneshot::Sender<Result<Option<GitStatus>, String>> },
     ReadFile { path: String, reply: oneshot::Sender<Result<FileContent, String>> },
+    GitHead { path: String, reply: oneshot::Sender<Result<crate::fs::git::HeadVersion, String>> },
     ReadBytes { path: String, reply: oneshot::Sender<Result<Vec<u8>, String>> },
     StatFile { path: String, reply: oneshot::Sender<Result<Option<FileStamp>, String>> },
     WriteFile { path: String, text: String, bom: bool, expect: Option<FileStamp>, reply: oneshot::Sender<Result<FileStamp, SaveError>> },
@@ -58,6 +59,7 @@ impl HostCmd {
             HostCmd::FsCount { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::Git { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::ReadFile { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::GitHead { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::ReadBytes { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::StatFile { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::WriteFile { reply, .. } => drop(reply.send(Err(SaveError::Failed { message: why }))),
@@ -404,6 +406,12 @@ async fn connected_phase(
                     let (conn, sftp) = (conn.clone(), sftp.clone());
                     tokio::spawn(async move {
                         let _ = reply.send(rfs::read(&conn, &sftp, &path).await);
+                    });
+                }
+                Some(HostCmd::GitHead { path, reply }) => {
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::git_head(&conn, &path).await);
                     });
                 }
                 Some(HostCmd::ReadBytes { path, reply }) => {

@@ -115,6 +115,11 @@ pub async fn read_bytes(state: State<'_, AppState>, host: String, path: String) 
 }
 
 #[tauri::command]
+pub async fn git_head(state: State<'_, AppState>, host: String, path: String) -> CmdResult<chm_core::fs::git::HeadVersion> {
+    state.core.git_head(&host, &path).await
+}
+
+#[tauri::command]
 pub async fn stat_file(state: State<'_, AppState>, host: String, path: String) -> CmdResult<Option<chm_core::fs::FileStamp>> {
     state.core.stat_file(&host, &path).await
 }

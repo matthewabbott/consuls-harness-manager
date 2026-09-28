@@ -10,7 +10,7 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState } from "@codemirror/state";
+import { Compartment, EditorState, Text } from "@codemirror/state";
 import {
   crosshairCursor,
   drawSelection,
@@ -27,7 +27,10 @@ import { tags as t } from "@lezer/highlight";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 
 import { theme as palette } from "../term/palette";
+import { backend } from "../ipc/backend";
+import { gitGutter, setHead } from "../editor/gitGutter";
 import { buffers, useEditor } from "../store/editor";
+import { useFiles } from "../store/files";
 
 const MONO = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
 
@@ -113,6 +116,7 @@ const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id,
       EditorState.create({
         doc: buf.initial,
         extensions: [
+          gitGutter(),
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightSpecialChars(),
@@ -164,8 +168,27 @@ const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id,
         if (!cancelled) view.dispatch({ effects: language.reconfigure(support) });
       });
     }
+    // The committed version, for the change gutter; refreshed when git status for this file
+    // changes (e.g. after a commit in a pane) or the window regains focus.
+    const loadHead = () =>
+      void backend()
+        .then((b) => b.gitHead(file.host, file.path))
+        .then((v) => {
+          if (cancelled) return;
+          const head = v.kind === "text" ? Text.of(v.text.replace(/\r\n?/g, "\n").split("\n")) : v.kind === "untracked" ? "untracked" : null;
+          view.dispatch({ effects: setHead.of(head) });
+        })
+        .catch(() => undefined);
+    loadHead();
+    window.addEventListener("focus", loadHead);
+    const unsubGit = useFiles.subscribe((s, prev) => {
+      if (s.badges[file.path] !== prev.badges[file.path]) loadHead();
+    });
+
     view.focus();
     return () => {
+      window.removeEventListener("focus", loadHead);
+      unsubGit();
       cancelled = true;
       const b = buffers.get(id);
       if (b) b.state = view.state;

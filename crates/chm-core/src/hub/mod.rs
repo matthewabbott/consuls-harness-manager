@@ -571,6 +571,17 @@ impl Core {
         rx.await.map_err(|_| "host not found".to_string())?
     }
 
+    /// A file's committed version (HEAD), for the editor's change gutter.
+    pub async fn git_head(&self, host: &str, path: &str) -> Result<crate::fs::git::HeadVersion, String> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || crate::fs::local::git_head(&path)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::GitHead { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
     /// A file's raw bytes (image preview; capped at 20 MB).
     pub async fn read_bytes(&self, host: &str, path: &str) -> Result<Vec<u8>, String> {
         if host == LOCAL_HOST {

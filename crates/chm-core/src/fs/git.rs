@@ -37,6 +37,52 @@ pub struct GitStatus {
     pub entries: Vec<GitEntry>,
 }
 
+/// A file's committed version, for the editor's change gutter.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "kind")]
+#[ts(export)]
+pub enum HeadVersion {
+    /// Not in a git work tree (no gutter).
+    NotInRepo,
+    /// In a repository but not in HEAD (everything counts as added).
+    Untracked,
+    /// The file's text at HEAD (BOM stripped).
+    Text { text: String },
+    /// Binary or larger than [`HEAD_LIMIT`] (no gutter).
+    Skipped,
+}
+
+/// Largest committed version the gutter compares against.
+pub const HEAD_LIMIT: usize = 1024 * 1024;
+
+/// Interprets `git show HEAD:<file>` output.
+pub fn head_from_bytes(bytes: Vec<u8>) -> HeadVersion {
+    if bytes.len() > HEAD_LIMIT || bytes.contains(&0) {
+        return HeadVersion::Skipped;
+    }
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF".as_slice()).map(<[u8]>::to_vec).unwrap_or(bytes);
+    match String::from_utf8(body) {
+        Ok(text) => HeadVersion::Text { text },
+        Err(_) => HeadVersion::Skipped,
+    }
+}
+
+/// A POSIX script printing the HEAD version of `path`. Exit 4: not in a work tree; 5: not in HEAD.
+pub fn head_script(path: &str) -> String {
+    let (dir, name) = match path.rfind('/') {
+        Some(0) => ("/", &path[1..]),
+        Some(i) => (&path[..i], &path[i + 1..]),
+        None => (".", path),
+    };
+    let q = crate::ssh::exec::sh_quote;
+    format!(
+        "cd {} 2>/dev/null || exit 4\ngit rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 4\ngit cat-file -e HEAD:./{} 2>/dev/null || exit 5\nexec git show HEAD:./{}",
+        q(dir),
+        q(name),
+        q(name)
+    )
+}
+
 /// The status command, run from the repository root.
 pub const STATUS_ARGS: [&str; 6] = ["--no-optional-locks", "status", "--porcelain=v2", "-z", "--ignored=matching", "--branch"];
 

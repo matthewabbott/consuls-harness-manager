@@ -307,3 +307,13 @@ pub(crate) async fn write(
     let (size, mtime) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
     Ok(stamp_of(Some(&bytes), size, mtime))
 }
+
+/// The committed (HEAD) version of `path`, for the editor's change gutter.
+pub(crate) async fn git_head(conn: &SshConnection, path: &str) -> Result<git::HeadVersion, String> {
+    let out = exec::run(conn, &git::head_script(path), Duration::from_secs(15)).await.map_err(|e| e.to_string())?;
+    Ok(match out.status {
+        Some(0) => git::head_from_bytes(out.stdout),
+        Some(5) => git::HeadVersion::Untracked,
+        _ => git::HeadVersion::NotInRepo,
+    })
+}

@@ -15,6 +15,7 @@ import type { FsOp } from "./bindings/FsOp";
 import type { GitStatus } from "./bindings/GitStatus";
 import type { FileContent } from "./bindings/FileContent";
 import type { FileStamp } from "./bindings/FileStamp";
+import type { HeadVersion } from "./bindings/HeadVersion";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
@@ -72,6 +73,8 @@ export interface Backend {
   fsCount(host: string, path: string): Promise<number>;
   gitStatus(host: string, dir: string): Promise<GitStatus | null>;
   readFile(host: string, path: string): Promise<FileContent>;
+  /** The file's committed version, for the editor's change gutter. */
+  gitHead(host: string, path: string): Promise<HeadVersion>;
   /** Raw bytes (image preview, up to 20 MB). */
   readBytes(host: string, path: string): Promise<ArrayBuffer>;
   statFile(host: string, path: string): Promise<FileStamp | null>;
@@ -146,6 +149,7 @@ async function tauriBackend(): Promise<Backend> {
     fsCount: (host, path) => invoke("fs_count", { host, path }),
     gitStatus: (host, dir) => invoke("git_status", { host, dir }),
     readFile: (host, path) => invoke("read_file", { host, path }),
+    gitHead: (host, path) => invoke("git_head", { host, path }),
     readBytes: (host, path) => invoke("read_bytes", { host, path }),
     statFile: (host, path) => invoke("stat_file", { host, path }),
     writeFile: (host, path, text, bom, expect) => invoke("write_file", { host, path, text, bom, expect }),

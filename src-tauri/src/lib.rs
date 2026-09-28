@@ -136,6 +136,7 @@ pub fn run() {
             commands::read_file,
             commands::read_bytes,
             commands::stat_file,
+            commands::git_head,
             commands::write_file,
             commands::quit_app,
             commands::submit_prompt,

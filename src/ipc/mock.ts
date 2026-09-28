@@ -9,7 +9,7 @@ import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { LabelDef } from "./bindings/LabelDef";
-import { mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
+import { mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
@@ -467,6 +467,7 @@ export function mockBackend(): Backend {
     fsCount: async (host, path) => mockFsCount(host, path),
     gitStatus: async (host, dir) => mockGitStatus(host, dir),
     readFile: async (host, path) => mockReadFile(host, path),
+    gitHead: async (host, path) => mockGitHead(host, path),
     readBytes: async () => {
       throw new Error("no image preview in the mock");
     },

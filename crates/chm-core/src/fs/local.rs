@@ -94,6 +94,22 @@ mod tests {
     }
 
     #[test]
+    fn head_versions() {
+        let here = crate::local::to_slash(Path::new(env!("CARGO_MANIFEST_DIR")));
+        match git_head(&format!("{here}/Cargo.toml")).unwrap() {
+            git::HeadVersion::Text { text } => assert!(text.contains("[package]")),
+            // Not a checkout (e.g. a source tarball): nothing to compare.
+            git::HeadVersion::NotInRepo => {}
+            other => panic!("unexpected {other:?}"),
+        }
+        let tmp = std::env::temp_dir().join("chm-not-a-repo-file.txt");
+        std::fs::write(&tmp, "x").unwrap();
+        let v = git_head(&crate::local::to_slash(&tmp)).unwrap();
+        assert!(matches!(v, git::HeadVersion::NotInRepo | git::HeadVersion::Untracked));
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
     fn this_repo_has_a_status() {
         let here = env!("CARGO_MANIFEST_DIR");
         if let Ok(Some(st)) = git_status(here) {
@@ -217,4 +233,21 @@ mod edit_tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"z");
         std::fs::remove_dir_all(&dir).unwrap();
     }
+}
+
+/// The committed (HEAD) version of `path`, for the editor's change gutter.
+pub(crate) fn git_head(path: &str) -> Result<git::HeadVersion, String> {
+    let (dir, name) = path.rsplit_once('/').unwrap_or((".", path));
+    let dir = if dir.is_empty() || dir.ends_with(':') { format!("{dir}/") } else { dir.to_string() };
+    let inside = git_cmd().args(["-C", &dir, "rev-parse", "--is-inside-work-tree"]).output();
+    if !inside.is_ok_and(|o| o.status.success()) {
+        return Ok(git::HeadVersion::NotInRepo);
+    }
+    let spec = format!("HEAD:./{name}");
+    let exists = git_cmd().args(["-C", &dir, "cat-file", "-e", &spec]).output();
+    if !exists.is_ok_and(|o| o.status.success()) {
+        return Ok(git::HeadVersion::Untracked);
+    }
+    let out = git_cmd().args(["-C", &dir, "show", &spec]).output().map_err(|e| e.to_string())?;
+    Ok(if out.status.success() { git::head_from_bytes(out.stdout) } else { git::HeadVersion::NotInRepo })
 }

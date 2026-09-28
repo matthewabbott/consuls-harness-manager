@@ -34,7 +34,8 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   as tiles next to the pane they came from: a CodeMirror editor (syntax highlighting, search,
   undo/redo, Ctrl+S) that keeps the file's line endings and BOM, notices when an agent changes
   the file underneath you (reloads if you have no edits; otherwise offers Compare / Overwrite /
-  Reload), and keeps unsaved edits across restarts. Images get a preview.
+  Reload), and keeps unsaved edits across restarts. A VS Code–style gutter marks lines added,
+  changed or deleted since the last commit. Images get a preview.
 - **Lifecycle**: start a new agent in any directory (remote folder browser), hide a pane
   without stopping it, or quit an agent gracefully and close its tmux pane.
 - **Resilient**: one SSH connection per machine, keepalives, automatic reconnect with backoff,
