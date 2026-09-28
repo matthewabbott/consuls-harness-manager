@@ -36,3 +36,6 @@ name = "cli"
 
 [[example]]
 name = "selftest"
+
+[[example]]
+name = "localtest"

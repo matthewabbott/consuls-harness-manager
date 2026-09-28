@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import Banners from "./components/Banners";
 import ExpandedPane from "./components/ExpandedPane";
@@ -8,6 +8,7 @@ import NewPaneDialog from "./components/NewPaneDialog";
 import SettingsDialog from "./components/SettingsDialog";
 import DragGhost from "./components/DragGhost";
 import TileMenu from "./components/TileMenu";
+import Modal, { Button } from "./components/Modal";
 import { paneIdentity } from "./lib/panes";
 import TerminateDialog from "./components/TerminateDialog";
 import Grid from "./components/Grid";
@@ -32,6 +33,7 @@ export default function App() {
   const settingsOpen = useApp((s) => s.settingsOpen);
   const maximized = useUi((s) => s.maximized);
   const tileMenu = useApp((s) => s.tileMenu);
+  const [quitAsk, setQuitAsk] = useState<number | null>(null);
   const expandedPane = useMemo(
     () => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)),
     [expanded, panes],
@@ -137,10 +139,12 @@ export default function App() {
       // Subscribe before snapshotting so no event is missed; duplicates are harmless.
       unlisten = await b.onEvent((ev) => useApp.getState().apply(ev));
       const unFocus = await b.onFocusPane((key) => useApp.getState().setExpanded(key));
+      const unQuit = await b.onConfirmQuit(setQuitAsk);
       const prevUnlisten = unlisten;
       unlisten = () => {
         prevUnlisten();
         unFocus();
+        unQuit();
       };
       const snapshot = await b.getSnapshot();
       if (cancelled) return;
@@ -170,6 +174,27 @@ export default function App() {
       {settingsOpen && <SettingsDialog />}
       {tileMenu && <TileMenu menu={tileMenu} onClose={() => useApp.getState().setTileMenu(null)} />}
       <DragGhost />
+      {quitAsk !== null && (
+        <Modal
+          title="Quit Harness Manager?"
+          onClose={() => setQuitAsk(null)}
+          width={420}
+          footer={
+            <>
+              <Button onClick={() => setQuitAsk(null)}>Keep running</Button>
+              <Button kind="danger" onClick={() => backend().then((b) => b.quitApp())}>
+                Quit
+              </Button>
+            </>
+          }
+        >
+          <p className="text-[13px] leading-relaxed text-mist-300">
+            {quitAsk === 1 ? "A shell on this PC is" : `${quitAsk} shells on this PC are`} still running. Quitting ends{" "}
+            {quitAsk === 1 ? "it" : "them"} (and anything running inside). Closing the window instead keeps everything running in the
+            tray.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -93,12 +93,15 @@ pub struct LocalCommand {
 pub fn local(cmd: &LocalCommand, cols: u16, rows: u16) -> Result<Pty, String> {
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+    // Native separators on Windows: cmd.exe reads `C:/WINDOWS/…` in its own command line as
+    // `/W…` switches.
+    let native = |p: &str| if cfg!(windows) { p.replace('/', "\\") } else { p.to_string() };
     let size = |cols: u16, rows: u16| PtySize { cols: cols.max(1), rows: rows.max(1), pixel_width: 0, pixel_height: 0 };
     let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| format!("couldn't open a pseudo-terminal: {e}"))?;
-    let mut builder = CommandBuilder::new(&cmd.program);
+    let mut builder = CommandBuilder::new(native(&cmd.program));
     builder.args(&cmd.args);
     if let Some(cwd) = cmd.cwd.as_deref().filter(|c| std::path::Path::new(c).is_dir()) {
-        builder.cwd(cwd);
+        builder.cwd(native(cwd));
     }
     for (k, v) in &cmd.env {
         builder.env(k, v);

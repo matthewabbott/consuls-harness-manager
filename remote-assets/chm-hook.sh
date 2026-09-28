@@ -30,7 +30,8 @@ transcript=$(field transcript_path)
 detail=$(field notification_type)
 [ -n "$detail" ] || detail=$(field tool_name)
 
-state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/consuls
+# CHM_STATE_DIR: set for local (Windows) shells, where $HOME may not be what we expect.
+state_dir=${CHM_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/consuls}
 mkdir -p "$state_dir" 2>/dev/null
 ts=$(date +%s 2>/dev/null)
 # One short line per event, appended in a single write (atomic below PIPE_BUF).

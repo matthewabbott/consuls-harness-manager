@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { backend } from "../ipc/backend";
 import type { DirListing } from "../ipc/bindings/DirListing";
 import type { Harness } from "../ipc/bindings/Harness";
-import { shortPath } from "../lib/hosts";
+import type { LocalShell } from "../ipc/bindings/LocalShell";
+import { hostLabel, isLocal, shortPath } from "../lib/hosts";
+import { crumbsOf, isRoot, joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import HarnessBadge from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
@@ -17,6 +19,7 @@ const HARNESSES: { id: Harness; label: string; hint: string }[] = [
 ];
 
 const LAST_HARNESS = "consuls.newPane.harness";
+const LAST_SHELL = "consuls.newPane.localShell";
 /** Session choice meaning "no tmux: a plain shell on its own connection". */
 const DIRECT = "\u0000direct";
 
@@ -59,7 +62,20 @@ export default function NewPaneDialog() {
     return [...seen].slice(0, 6);
   }, [hostPanes, home]);
   const sessions = useMemo(() => [...new Set(hostPanes.flatMap((p) => (p.tmux ? [p.tmux.sessionName] : [])))], [hostPanes]);
-  const direct = session === DIRECT;
+  const local = isLocal(host);
+  const direct = local || session === DIRECT;
+  const [shells, setShells] = useState<LocalShell[]>([]);
+  const [shell, setShell] = useState<string>(() => {
+    try {
+      return localStorage.getItem(LAST_SHELL) ?? "";
+    } catch {
+      return "";
+    }
+  });
+  useEffect(() => {
+    if (local && shells.length === 0) void backend().then((b) => b.localShells()).then(setShells);
+  }, [local, shells.length]);
+  const shellId = shells.some((s) => s.id === shell) ? shell : (shells[0]?.id ?? "");
 
   const open = async (path: string) => {
     if (!host) return;
@@ -84,11 +100,7 @@ export default function NewPaneDialog() {
   }, [host]);
 
   const cwd = listing?.path ?? "";
-  const crumbs = useMemo(() => {
-    if (!cwd) return [];
-    const parts = cwd.split("/").filter(Boolean);
-    return parts.map((part, i) => ({ label: part, path: "/" + parts.slice(0, i + 1).join("/") }));
-  }, [cwd]);
+  const crumbs = useMemo(() => crumbsOf(cwd), [cwd]);
   const dirs = (listing?.entries ?? []).filter((e) => e.isDir && (showHidden || !e.name.startsWith(".")));
 
   const create = async () => {
@@ -98,6 +110,7 @@ export default function NewPaneDialog() {
     try {
       try {
         localStorage.setItem(LAST_HARNESS, harness);
+        if (local && shellId) localStorage.setItem(LAST_SHELL, shellId);
       } catch {
         /* ignore */
       }
@@ -109,6 +122,7 @@ export default function NewPaneDialog() {
         session: direct ? null : session || null,
         args: args.trim() || null,
         direct: direct || undefined,
+        shell: local ? shellId || undefined : undefined,
       });
       close();
       useApp.getState().setExpanded(key);
@@ -143,7 +157,7 @@ export default function NewPaneDialog() {
             <div className="flex flex-wrap gap-1.5">
               {connected.map((h) => (
                 <Chip key={h} on={h === host} onClick={() => setHost(h)}>
-                  {h}
+                  {hostLabel(h)}
                 </Chip>
               ))}
             </div>
@@ -166,6 +180,18 @@ export default function NewPaneDialog() {
               ))}
             </div>
           </Field>
+
+          {local && shells.length > 0 && (
+            <Field label="Shell">
+              <div className="flex flex-wrap gap-1.5">
+                {shells.map((s) => (
+                  <Chip key={s.id} on={s.id === shellId} onClick={() => setShell(s.id)}>
+                    <span title={s.path}>{s.name}</span>
+                  </Chip>
+                ))}
+              </div>
+            </Field>
+          )}
 
           <Field label="Working directory">
             {recent.length > 0 && (
@@ -214,13 +240,13 @@ export default function NewPaneDialog() {
                 {loading && <Loader2 className="ml-auto h-3.5 w-3.5 shrink-0 animate-spin text-mist-500" />}
               </div>
               <div className="scroll-thin h-52 overflow-y-auto p-1">
-                {cwd !== "/" && cwd && (
-                  <DirRow onClick={() => open(cwd.replace(/\/[^/]+\/?$/, "") || "/")}>
+                {cwd && !isRoot(cwd) && (
+                  <DirRow onClick={() => open(parentPath(cwd))}>
                     <CornerLeftUp className="h-3.5 w-3.5 text-mist-500" /> ..
                   </DirRow>
                 )}
                 {dirs.map((d) => (
-                  <DirRow key={d.name} onClick={() => open(`${cwd.replace(/\/$/, "")}/${d.name}`)}>
+                  <DirRow key={d.name} onClick={() => open(joinPath(cwd, d.name))}>
                     <Folder className="h-3.5 w-3.5 text-sky-400/80" /> {d.name}
                   </DirRow>
                 ))}
@@ -232,7 +258,7 @@ export default function NewPaneDialog() {
             </label>
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className={`grid grid-cols-2 gap-3 ${local ? "hidden" : ""}`}>
             <Field label="Name (optional)">
               <input
                 value={name}
@@ -258,7 +284,7 @@ export default function NewPaneDialog() {
               </select>
             </Field>
           </div>
-          {direct && (
+          {direct && !local && (
             <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] leading-snug text-rose-200/90 ring-1 ring-rose-500/25">
               A plain shell runs on this connection only: it's lost if the connection drops or Harness Manager quits, and it's never
               revived. Handy for <span className="font-mono">tmux attach</span> / <span className="font-mono">Ctrl+b d</span> or a

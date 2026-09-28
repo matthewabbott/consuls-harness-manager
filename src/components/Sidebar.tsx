@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { backend } from "../ipc/backend";
 import type { HostConfig } from "../ipc/bindings/HostConfig";
-import { defaultUser, machines, phaseInfo, toneText, type Machine } from "../lib/hosts";
+import { defaultUser, isLocal, machines, phaseInfo, toneText, type Machine } from "../lib/hosts";
 import { useApp } from "../store/app";
 import LabelsPanel from "./LabelsPanel";
 
@@ -20,7 +20,8 @@ function HostRow({ m }: { m: Machine }) {
   const setFocusHost = useApp((s) => s.setFocusHost);
   const paneCount = useApp((s) => s.panes[m.id]?.length ?? 0);
   const waitingCount = useApp((s) => (s.panes[m.id] ?? []).filter((p) => s.attention[p.key]?.attention === "unacked").length);
-  const info = phaseInfo(m.state?.phase, m.peer?.online);
+  const local = isLocal(m.id);
+  const info = local ? { label: "This computer", tone: "jade" as const, busy: false } : phaseInfo(m.state?.phase, m.peer?.online);
   const connected = m.state?.phase.phase === "connected";
   const idle = !m.state || ["disconnected", "failed"].includes(m.state.phase.phase);
   const active = focusHost === m.id;
@@ -35,7 +36,7 @@ function HostRow({ m }: { m: Machine }) {
       <span className={`status-dot h-2 w-2 shrink-0 rounded-full bg-current ${toneText[info.tone]} ${info.busy ? "animate-breathe" : ""}`} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <OsIcon os={m.peer?.os} className="h-3.5 w-3.5 shrink-0 text-mist-500" />
+          <OsIcon os={local ? "windows" : m.peer?.os} className="h-3.5 w-3.5 shrink-0 text-mist-500" />
           <span className="truncate text-[13px] font-medium text-mist-100">{m.label}</span>
         </div>
         <div className={`truncate text-[11px] ${info.tone === "mist" ? "text-mist-500" : toneText[info.tone]}`}>{info.label}</div>
@@ -52,38 +53,52 @@ function HostRow({ m }: { m: Machine }) {
         paneCount > 0 && <span className="rounded-md bg-ink-600/70 px-1.5 py-0.5 font-mono text-[10.5px] text-mist-300 group-hover:hidden">{paneCount}</span>
       )}
       <div className="hidden items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
-        {idle ? (
-          <IconButton title="Connect" onClick={() => backend().then((b) => b.connectHost(m.id))}>
-            <Plug className="h-3.5 w-3.5" />
+        {local ? (
+          <IconButton title="New shell on this PC" onClick={() => useApp.getState().openNewPane(m.id)}>
+            <Plus className="h-3.5 w-3.5" />
           </IconButton>
         ) : (
-          <IconButton title="Disconnect" onClick={() => backend().then((b) => b.disconnectHost(m.id))}>
-            <Unplug className="h-3.5 w-3.5" />
-          </IconButton>
+          <HostActions m={m} idle={idle} connected={connected} />
         )}
-        <IconButton title="Connection settings…" onClick={() => useApp.getState().setSettingsFor(m.id)}>
-          <Settings2 className="h-3.5 w-3.5" />
-        </IconButton>
-        {!idle && (
-          <IconButton title="Reconnect" onClick={() => backend().then((b) => b.reconnectHost(m.id))}>
-            <RotateCw className="h-3.5 w-3.5" />
-          </IconButton>
-        )}
-        {connected && (
-          <IconButton title="Notifications for hand-started agents…" onClick={() => useApp.getState().setIntegrationFor(m.id)}>
-            <BellRing className="h-3.5 w-3.5" />
-          </IconButton>
-        )}
-        <IconButton
-          title="Remove machine"
-          onClick={() => {
-            if (confirm(`Remove ${m.id} from Consuls? Its tmux sessions keep running.`)) backend().then((b) => b.removeHost(m.id));
-          }}
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </IconButton>
       </div>
     </div>
+  );
+}
+
+function HostActions({ m, idle, connected }: { m: Machine; idle: boolean; connected: boolean }) {
+  return (
+    <>
+      {idle ? (
+        <IconButton title="Connect" onClick={() => backend().then((b) => b.connectHost(m.id))}>
+          <Plug className="h-3.5 w-3.5" />
+        </IconButton>
+      ) : (
+        <IconButton title="Disconnect" onClick={() => backend().then((b) => b.disconnectHost(m.id))}>
+          <Unplug className="h-3.5 w-3.5" />
+        </IconButton>
+      )}
+      <IconButton title="Connection settings…" onClick={() => useApp.getState().setSettingsFor(m.id)}>
+        <Settings2 className="h-3.5 w-3.5" />
+      </IconButton>
+      {!idle && (
+        <IconButton title="Reconnect" onClick={() => backend().then((b) => b.reconnectHost(m.id))}>
+          <RotateCw className="h-3.5 w-3.5" />
+        </IconButton>
+      )}
+      {connected && (
+        <IconButton title="Notifications for hand-started agents…" onClick={() => useApp.getState().setIntegrationFor(m.id)}>
+          <BellRing className="h-3.5 w-3.5" />
+        </IconButton>
+      )}
+      <IconButton
+        title="Remove machine"
+        onClick={() => {
+          if (confirm(`Remove ${m.id} from Consuls? Its tmux sessions keep running.`)) backend().then((b) => b.removeHost(m.id));
+        }}
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+      </IconButton>
+    </>
   );
 }
 

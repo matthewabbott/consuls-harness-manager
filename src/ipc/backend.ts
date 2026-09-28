@@ -10,6 +10,7 @@ import type { DirListing } from "./bindings/DirListing";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { LabelDef } from "./bindings/LabelDef";
+import type { LocalShell } from "./bindings/LocalShell";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
@@ -23,6 +24,10 @@ export interface Backend {
   /** Alerts the shell surfaced (sound/toast) and toast clicks asking to open a pane. */
   onAlert(cb: (alert: Alert) => void): Promise<() => void>;
   onFocusPane(cb: (key: number) => void): Promise<() => void>;
+  /** Tray → Quit while shells on this PC are running: ask, then call quitApp. */
+  onConfirmQuit(cb: (liveShells: number) => void): Promise<() => void>;
+  quitApp(): Promise<void>;
+  localShells(): Promise<LocalShell[]>;
   setFocus(focus: FocusState): Promise<void>;
   setSoundPrefs(prefs: SoundPrefs): Promise<void>;
   testChime(kind: AlertKind, volume: number): Promise<void>;
@@ -79,6 +84,9 @@ async function tauriBackend(): Promise<Backend> {
     onEvent: async (cb) => listen<CoreEvent>("core-event", (e) => cb(e.payload)),
     onAlert: async (cb) => listen<Alert>("alert", (e) => cb(e.payload)),
     onFocusPane: async (cb) => listen<number>("focus-pane", (e) => cb(e.payload)),
+    onConfirmQuit: async (cb) => listen<number>("confirm-quit", (e) => cb(e.payload)),
+    quitApp: () => invoke("quit_app"),
+    localShells: () => invoke("local_shells"),
     setFocus: (focus) => invoke("set_focus", { focus }),
     setSoundPrefs: (prefs) => invoke("set_sound_prefs", { prefs }),
     testChime: (kind, volume) => invoke("test_chime", { kind, volume }),

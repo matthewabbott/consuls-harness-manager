@@ -23,7 +23,16 @@ export function layoutFor(snap: TileSnapshot, width: number, height: number): Ti
   const fontSize = Math.max((width / Math.max(snap.cols, 1)) / CHAR_ASPECT, MIN_FONT_PX);
   const cellW = fontSize * CHAR_ASPECT;
   const cellH = fontSize * LINE_HEIGHT;
-  const total = cellH * snap.rows;
+  // Align the last row in use (content or cursor) with the bottom, so a fresh shell whose
+  // output is all at the top still shows it.
+  let used = snap.altScreen ? snap.rows : snap.cursorY + 1;
+  for (let r = snap.lines.length - 1; r >= used; r--) {
+    if (snap.lines[r].some((run) => run.text.trim() || run.bg !== 0)) {
+      used = r + 1;
+      break;
+    }
+  }
+  const total = cellH * Math.min(used, snap.rows);
   return { cellW, cellH, fontSize, offsetY: total > height ? height - total : 0 };
 }
 

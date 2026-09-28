@@ -42,8 +42,7 @@ pub struct IntegrationStatus {
 }
 
 fn claude_template(assets: &Assets) -> Map<String, Value> {
-    let rendered = include_str!("../../../../remote-assets/claude-settings.json").replace("__HOOK__", &assets.hook);
-    let v: Value = serde_json::from_str(&rendered).expect("valid template");
+    let v: Value = serde_json::from_str(&super::assets::claude_settings(assets)).expect("valid template");
     v["hooks"].as_object().cloned().unwrap_or_default()
 }
 
@@ -110,7 +109,7 @@ pub fn codex_install(toml: &str, assets: &Assets) -> Result<CodexEdit, String> {
         return Ok(if existing.to_string().contains(MARKER) { CodexEdit::Unchanged } else { CodexEdit::Conflict });
     }
     let mut arr = toml_edit::Array::new();
-    for part in ["sh", assets.hook.as_str(), "codex", "Stop"] {
+    for part in [assets.sh.as_str(), assets.hook.as_str(), "codex", "Stop"] {
         arr.push(part);
     }
     doc.insert("notify", toml_edit::value(arr));
@@ -246,7 +245,7 @@ pub async fn install(conn: &SshConnection, home: &str) -> Result<IntegrationStat
     if exists(&sftp, &p.omp_dir).await && !exists(&sftp, &p.omp_hook).await {
         let _ = sftp.create_dir(format!("{}/hooks", p.omp_dir)).await;
         let _ = sftp.create_dir(format!("{}/hooks/post", p.omp_dir)).await;
-        let ext = include_str!("../../../../remote-assets/omp-extension.ts").replace("__HOOK__", &assets.hook);
+        let ext = super::assets::omp_extension(&assets);
         write_text(&sftp, &p.omp_hook, &ext).await?;
         notes.push("omp: extension installed (new omp sessions load it automatically).".into());
     }

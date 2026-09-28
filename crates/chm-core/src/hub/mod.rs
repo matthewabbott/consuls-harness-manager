@@ -21,9 +21,11 @@ use ctx::Ctx;
 use host::{HostCmd, HostHandle, IntegrationAction};
 use tmux_mgr::PaneCmd;
 
+use crate::harness::Harness;
+use crate::local::{self, LOCAL_HOST, LocalShell};
 use crate::model::{
-    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, LabelDef, NewPaneSpec, ResizeOutcome,
-    SoundPrefs, TailnetStatus, TerminateOutcome, label_slug,
+    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, HostPhase, LabelDef, NewPaneSpec, NoticeLevel,
+    ResizeOutcome, SoundPrefs, TailnetStatus, TerminateOutcome, label_slug,
 };
 
 /// Loads config.json. A file that exists but can't be parsed is set aside (never silently
@@ -81,6 +83,21 @@ impl Core {
     /// method is safe to call from any thread.
     pub fn start(self: &Arc<Self>) {
         let rt = self.rt.get_or_init(tokio::runtime::Handle::current).clone();
+        // This PC: always there, always connected. Hooks of agents in local shells report
+        // through the local events file.
+        self.ctx.set_phase(LOCAL_HOST, HostPhase::Connected);
+        let ctx = self.ctx.clone();
+        rt.spawn(async move {
+            let facts = tokio::task::spawn_blocking(local::facts).await.ok();
+            ctx.set_facts(LOCAL_HOST, facts);
+        });
+        let ctx = self.ctx.clone();
+        rt.spawn(local::tail_events(Arc::new(move |line: &str| {
+            if let Ok(event) = serde_json::from_str::<crate::integration::events::HookEvent>(line) {
+                direct::route_hook(&ctx, &event, false);
+            }
+        })));
+
         // Tailnet first, so host actors can resolve addresses and pinned keys.
         let core = self.clone();
         rt.spawn(async move {
@@ -385,8 +402,63 @@ impl Core {
         self.ctx.attention.lock().unwrap().set_muted(key, muted);
     }
 
+    /// Shells that can be started on this machine.
+    pub fn local_shells(&self) -> Vec<LocalShell> {
+        local::shells()
+    }
+
+    /// Local shells still running (quitting the app ends them).
+    pub fn live_local_shells(&self) -> usize {
+        self.ctx.direct.lock().unwrap().values().filter(|d| d.info.host == LOCAL_HOST && d.info.ended.is_none()).count()
+    }
+
+    /// Starts a shell on this machine (a direct pane), optionally launching a harness in it.
+    fn create_local(&self, spec: NewPaneSpec) -> Result<u32, String> {
+        let defs = local::shell_defs();
+        let def = match spec.shell.as_deref() {
+            Some(id) => defs.iter().find(|d| d.shell.id == id).cloned().ok_or_else(|| format!("unknown shell {id}"))?,
+            None => defs.first().cloned().ok_or("no shell found on this machine")?,
+        };
+        let chm_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+        let launch = if spec.harness == Harness::Shell {
+            None
+        } else {
+            let assets = local::ensure_assets()
+                .map_err(|e| self.ctx.notice(Some(LOCAL_HOST), NoticeLevel::Warning, format!("Hooks unavailable ({e}); notifications will be guessed from output")))
+                .ok();
+            spec.harness.launch_command_for(assets.as_ref(), spec.args.as_deref().unwrap_or(""), def.quoting)
+        };
+        let cwd = match spec.cwd.as_str() {
+            "" | "~" => local::home(),
+            c => c.to_string(),
+        };
+        let cmd = crate::pty::LocalCommand {
+            program: def.shell.path.clone(),
+            args: def.args.clone(),
+            cwd: Some(cwd.clone()),
+            env: local::pane_env(&def, &chm_id),
+        };
+        let pty = crate::pty::local(&cmd, host::DIRECT_COLS, host::DIRECT_ROWS)?;
+        if let Some(launch) = launch {
+            let _ = pty.input.send(crate::pty::PtyInput::Data(format!("{launch}\r").into_bytes()));
+        }
+        let spec = direct::DirectSpec {
+            host: LOCAL_HOST.into(),
+            cwd,
+            command: def.shell.name.clone(),
+            harness: (spec.harness != Harness::Shell).then_some(spec.harness),
+            chm_id,
+            cols: host::DIRECT_COLS,
+            rows: host::DIRECT_ROWS,
+        };
+        Ok(direct::spawn(&self.ctx, &self.rt(), spec, pty))
+    }
+
     /// Creates a pane running `spec.harness` and returns its key.
     pub async fn create_pane(&self, spec: NewPaneSpec) -> Result<u32, String> {
+        if spec.host == LOCAL_HOST {
+            return self.create_local(spec);
+        }
         let (tx, rx) = oneshot::channel();
         let host = spec.host.clone();
         if !self.hosts.lock().unwrap().contains_key(&host) {
@@ -424,6 +496,9 @@ impl Core {
     }
 
     async fn integration(&self, host: &str, action: IntegrationAction) -> Result<crate::integration::install::IntegrationStatus, String> {
+        if host == LOCAL_HOST {
+            return Err("Agents started from This PC get hooks at launch; global install isn't available here yet".into());
+        }
         let (tx, rx) = oneshot::channel();
         self.send(host, HostCmd::Integration { action, reply: tx });
         rx.await.map_err(|_| "host not found".to_string())?
@@ -443,6 +518,10 @@ impl Core {
     }
 
     pub async fn list_dir(&self, host: &str, path: &str) -> Result<DirListing, String> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || local::list_dir(&path)).await.map_err(|e| e.to_string())?;
+        }
         let (tx, rx) = oneshot::channel();
         self.send(host, HostCmd::ListDir { path: path.to_string(), reply: tx });
         rx.await.map_err(|_| "host not found".to_string())?

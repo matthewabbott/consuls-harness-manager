@@ -4,6 +4,16 @@ import type { HostState } from "../ipc/bindings/HostState";
 import type { TailnetPeer } from "../ipc/bindings/TailnetPeer";
 import type { TailnetStatus } from "../ipc/bindings/TailnetStatus";
 
+/** Host id of the machine the app runs on ("This PC"). */
+export const LOCAL_HOST = "@local";
+
+export const isLocal = (host: string): boolean => host === LOCAL_HOST;
+
+/** How to show a host id. */
+export function hostLabel(host: string): string {
+  return isLocal(host) ? "This PC" : host;
+}
+
 export interface Machine {
   id: string;
   label: string;
@@ -12,16 +22,17 @@ export interface Machine {
   state: HostState | null;
 }
 
-/** Configured hosts first (in config order), then other tailnet peers. */
+/** This PC, then configured hosts (in config order), then other tailnet peers. */
 export function machines(tailnet: TailnetStatus | null, configs: HostConfig[], states: Record<string, HostState>): {
   configured: Machine[];
   available: Machine[];
 } {
   const peers = tailnet?.peers ?? [];
-  const configured = configs.map((config) => {
+  const configured: Machine[] = configs.map((config) => {
     const peer = peers.find((p) => p.id === config.id) ?? null;
     return { id: config.id, label: config.id, peer, config, state: states[config.id] ?? null };
   });
+  if (states[LOCAL_HOST]) configured.unshift({ id: LOCAL_HOST, label: "This PC", peer: null, config: null, state: states[LOCAL_HOST] });
   const available = peers
     .filter((p) => !configs.some((c) => c.id === p.id))
     .map((peer) => ({ id: peer.id, label: peer.id, peer, config: null, state: null }))

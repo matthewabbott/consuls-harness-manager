@@ -2,7 +2,7 @@ import { Plus, Tag } from "lucide-react";
 import { useMemo } from "react";
 
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
-import { machines, phaseInfo, toneText } from "../lib/hosts";
+import { hostLabel, isLocal, machines, phaseInfo, toneText } from "../lib/hosts";
 import { groupPanes, sortPanes } from "../lib/organize";
 import { paneIdentity, paneName, paneWhere } from "../lib/panes";
 import { useApp } from "../store/app";
@@ -12,7 +12,7 @@ import MiniTile, { displayTitle } from "./MiniTile";
 
 function matches(p: PaneInfo, q: string, labelNames: string): boolean {
   if (!q) return true;
-  const hay = `${p.title} ${paneName(p)} ${paneWhere(p)} ${p.currentPath} ${p.currentCommand} ${p.host} ${labelNames}`.toLowerCase();
+  const hay = `${p.title} ${paneName(p)} ${paneWhere(p)} ${p.currentPath} ${p.currentCommand} ${hostLabel(p.host)} ${labelNames}`.toLowerCase();
   return q
     .toLowerCase()
     .split(/\s+/)
@@ -97,7 +97,8 @@ export default function Grid() {
     <div className="scroll-thin flex-1 overflow-y-auto px-6 pt-2 pb-10">
       {focusBanner}
       {sections.map(({ m, list }) => {
-        const info = phaseInfo(m.state?.phase, m.peer?.online);
+        const local = isLocal(m.id);
+        const info = local ? { label: "", tone: "jade" as const, busy: false } : phaseInfo(m.state?.phase, m.peer?.online);
         const connected = m.state?.phase.phase === "connected";
         const stale = connected ? null : info.label;
         const total = panes[m.id]?.length ?? 0;
@@ -108,7 +109,9 @@ export default function Grid() {
               <span className={`text-[12px] ${toneText[info.tone]}`}>{info.label}</span>
               {m.state?.facts && (
                 <span className="font-mono text-[11px] text-mist-500">
-                  {m.state.facts.user}@{m.label} · tmux {m.state.facts.tmuxVersion ?? "missing"}
+                  {local
+                    ? `${m.state.facts.user} · ${m.state.facts.uname}`
+                    : `${m.state.facts.user}@${m.label} · tmux ${m.state.facts.tmuxVersion ?? "missing"}`}
                 </span>
               )}
               <span className="ml-auto text-[12px] text-mist-500">
@@ -132,7 +135,11 @@ export default function Grid() {
               </div>
             ) : (
               <div className="rounded-xl border border-dashed border-ink-600 px-5 py-8 text-center text-[13px] text-mist-500">
-                {connected
+                {local
+                  ? total === 0
+                    ? "No shells on this PC yet. Use + to start one (PowerShell, Git Bash, …) — optionally with an agent in it."
+                    : "No panes match the current filter."
+                  : connected
                   ? m.state?.facts && !m.state.facts.tmuxVersion
                     ? `tmux isn't installed on ${m.label} (or isn't on your login shell's PATH). Install tmux 3.2+ — e.g. \`brew install tmux\` or \`apt install tmux\` — then reconnect.`
                     : total === 0

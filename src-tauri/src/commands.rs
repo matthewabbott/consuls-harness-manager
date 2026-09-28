@@ -93,6 +93,18 @@ pub fn paste_text(state: State<'_, AppState>, key: u32, text: String) {
     state.core.paste_text(key, text);
 }
 
+/// Shells that can be started on this machine ("This PC").
+#[tauri::command]
+pub fn local_shells(state: State<'_, AppState>) -> Vec<chm_core::local::LocalShell> {
+    state.core.local_shells()
+}
+
+/// Quit for real (after the UI confirmed ending local shells).
+#[tauri::command]
+pub fn quit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 /// Raw terminal input (direct panes): xterm's own encoding of keys, mouse and replies.
 #[tauri::command]
 pub fn send_input(state: State<'_, AppState>, key: u32, data: String) {

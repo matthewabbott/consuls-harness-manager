@@ -5,6 +5,7 @@
 pub mod harness;
 pub mod hub;
 pub mod integration;
+pub mod local;
 pub mod model;
 pub mod pty;
 pub mod ssh;

@@ -18,6 +18,10 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   handy for `tmux attach` / `Ctrl+b d` hopping or a quick look around. They have a red border,
   are lost if the connection drops (the pane then shows why, stays readable, and is never
   revived), and keep their own scrollback.
+- **This PC**: the machine Harness Manager runs on is always listed first. Start PowerShell,
+  Git Bash, cmd (or WSL) there, optionally with Claude Code / Codex / omp launched in it, with the
+  same tiles, notifications and composer as remote panes. Local shells end when the app quits
+  (it asks first); closing the window keeps them running in the tray.
 - **Lifecycle**: start a new agent in any directory (remote folder browser), hide a pane
   without stopping it, or quit an agent gracefully and close its tmux pane.
 - **Resilient**: one SSH connection per machine, keepalives, automatic reconnect with backoff,

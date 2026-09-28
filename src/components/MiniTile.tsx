@@ -4,7 +4,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { backend } from "../ipc/backend";
 
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
-import { shortPath } from "../lib/hosts";
+import { hostLabel, shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { beginTileDrag, consumeJustDragged } from "../store/drag";
 import { resolveLabels } from "../lib/labels";
@@ -20,7 +20,10 @@ function cleanTitle(title: string): string {
 
 export function displayTitle(p: PaneInfo): string {
   const t = cleanTitle(p.title);
-  if (t && t !== p.host && !t.startsWith(p.host + ":") && !/^[\w.-]+@[\w.-]+:/.test(t)) return t;
+  // Shells title themselves with the host, user@host:path, or (Windows) their exe path /
+  // `MINGW64:/…`; none of those beat the folder.
+  const noise = /^[\w.-]+@[\w.-]+:/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^MINGW(32|64):/.test(t);
+  if (t && t !== p.host && !t.startsWith(p.host + ":") && !noise) return t;
   if (p.harness === "shell" || p.harness === null) return shortPath(p.currentPath);
   return paneName(p);
 }
@@ -118,7 +121,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
           </div>
           {!compact && (
             <div className="truncate font-mono text-[10.5px] leading-tight text-mist-500">
-              {showHost && <span className="text-mist-400">{pane.host} · </span>}
+              {showHost && <span className="text-mist-400">{hostLabel(pane.host)} · </span>}
               {shortPath(pane.currentPath, home)}
             </div>
           )}

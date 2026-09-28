@@ -63,14 +63,21 @@ impl Harness {
     /// The shell command that starts this harness, with our hooks injected when `assets`
     /// are available. `None` for a plain shell.
     pub fn launch_command(self, assets: Option<&Assets>, extra_args: &str) -> Option<String> {
+        self.launch_command_for(assets, extra_args, Quoting::Posix)
+    }
+
+    /// Like [`Harness::launch_command`], quoted for the shell it's typed into.
+    pub fn launch_command_for(self, assets: Option<&Assets>, extra_args: &str, quoting: Quoting) -> Option<String> {
+        let q = |s: &str| quoting.quote(s);
         let base = match (self, assets) {
             (Harness::Shell, _) => return None,
-            (Harness::Claude, Some(a)) => format!("claude --settings {}", sh_quote(&a.claude_settings)),
-            (Harness::Codex, Some(a)) => {
-                let notify = format!("notify=[\"sh\",\"{}\",\"codex\",\"Stop\"]", a.hook);
-                format!("codex -c {}", sh_quote(&notify))
+            (Harness::Claude, Some(a)) => format!("claude --settings {}", q(&a.claude_settings)),
+            // cmd.exe can't pass the JSON-ish array intact; those sessions use heuristics.
+            (Harness::Codex, Some(a)) if quoting != Quoting::Cmd => {
+                let notify = format!("notify=[\"{}\",\"{}\",\"codex\",\"Stop\"]", a.sh, a.hook);
+                format!("codex -c {}", q(&notify))
             }
-            (Harness::Omp, Some(a)) => format!("omp --hook {}", sh_quote(&a.omp_extension)),
+            (Harness::Omp, Some(a)) => format!("omp --hook {}", q(&a.omp_extension)),
             (h, _) => h.name().to_string(),
         };
         let extra = extra_args.trim();
@@ -83,6 +90,24 @@ impl Harness {
             Harness::Claude | Harness::Omp | Harness::Opencode => Some("/exit"),
             Harness::Codex | Harness::Pi | Harness::Gemini => Some("/quit"),
             Harness::Shell => None,
+        }
+    }
+}
+
+/// How to quote one argument for the shell a command is typed into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Quoting {
+    Posix,
+    PowerShell,
+    Cmd,
+}
+
+impl Quoting {
+    pub fn quote(self, s: &str) -> String {
+        match self {
+            Quoting::Posix => sh_quote(s),
+            Quoting::PowerShell => format!("'{}'", s.replace('\'', "''")),
+            Quoting::Cmd => format!("\"{s}\""),
         }
     }
 }
@@ -115,5 +140,19 @@ mod tests {
         assert_eq!(Harness::Omp.launch_command(None, "").unwrap(), "omp");
         assert_eq!(Harness::Shell.launch_command(Some(&a), ""), None);
         assert_eq!(Harness::Codex.quit_command(), Some("/quit"));
+        let w = Assets::with_sh("C:/Users/A B", "D:/Git/usr/bin/sh.exe");
+        assert_eq!(
+            Harness::Claude.launch_command_for(Some(&w), "", Quoting::PowerShell).unwrap(),
+            "claude --settings 'C:/Users/A B/.local/share/consuls/claude-settings.json'"
+        );
+        assert_eq!(
+            Harness::Codex.launch_command_for(Some(&w), "", Quoting::PowerShell).unwrap(),
+            "codex -c 'notify=[\"D:/Git/usr/bin/sh.exe\",\"C:/Users/A B/.local/share/consuls/chm-hook.sh\",\"codex\",\"Stop\"]'"
+        );
+        assert_eq!(Harness::Codex.launch_command_for(Some(&w), "", Quoting::Cmd).unwrap(), "codex");
+        assert_eq!(
+            Harness::Omp.launch_command_for(Some(&w), "", Quoting::Cmd).unwrap(),
+            "omp --hook \"C:/Users/A B/.local/share/consuls/omp-extension.ts\""
+        );
     }
 }

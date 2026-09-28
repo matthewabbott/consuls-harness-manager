@@ -304,7 +304,8 @@ impl Direct {
     fn label(&self) -> PaneLabel {
         let cleaned = self.info.title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
         let title = if cleaned.is_empty() || cleaned.contains('@') { self.info.current_command.clone() } else { cleaned.chars().take(60).collect() };
-        PaneLabel { title, harness: display_name(self.info.harness).into(), host: self.info.host.clone() }
+        let host = if self.info.host == crate::local::LOCAL_HOST { "this PC".to_string() } else { self.info.host.clone() };
+        PaneLabel { title, harness: display_name(self.info.harness).into(), host }
     }
 
     fn on_hook(&mut self, event: &HookEvent, stale: bool) {

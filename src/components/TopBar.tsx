@@ -7,6 +7,7 @@ import { displayTitle } from "./MiniTile";
 import { useApp, type PaneFilter } from "../store/app";
 import { useUi } from "../store/ui";
 import { paneWhere } from "../lib/panes";
+import { hostLabel } from "../lib/hosts";
 import type { GroupBy, SortBy } from "../lib/organize";
 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange(v: string): void; options: [string, string][] }) {
@@ -119,7 +120,7 @@ export default function TopBar() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[12.5px] text-mist-100">{displayTitle(p)}</div>
                   <div className="truncate font-mono text-[10.5px] text-mist-500">
-                    {p.host} · {paneWhere(p)}
+                    {hostLabel(p.host)} · {paneWhere(p)}
                   </div>
                 </div>
                 <button

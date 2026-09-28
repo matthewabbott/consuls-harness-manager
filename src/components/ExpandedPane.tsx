@@ -4,7 +4,7 @@ import { backend } from "../ipc/backend";
 import { useMemo, useRef, useState } from "react";
 
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
-import { shortPath } from "../lib/hosts";
+import { hostLabel, shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
 import { isDirect, paneIdentity, paneWhere } from "../lib/panes";
@@ -93,8 +93,8 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           <div className="min-w-0">
             <div className="truncate text-[14.5px] font-semibold text-mist-100">{displayTitle(pane)}</div>
             <div className="truncate font-mono text-[11px] text-mist-500">
-              {harnessLabel(pane.harness)} · {pane.host} ·{" "}
-              {direct ? <span className="text-rose-300/80">plain shell (no tmux)</span> : paneWhere(pane, true)} ·{" "}
+              {harnessLabel(pane.harness)} · {hostLabel(pane.host)} ·{" "}
+              {direct ? <span className="text-rose-300/80">{pane.currentCommand} · no tmux</span> : paneWhere(pane, true)} ·{" "}
               {shortPath(pane.currentPath, home)} · {pane.width}×{pane.height}
             </div>
           </div>

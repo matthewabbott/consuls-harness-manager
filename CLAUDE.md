@@ -45,14 +45,24 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Hooks route by `CHM_PANE=direct:<chm_id>` (set when the shell starts); `chm-hook.sh` prefers
   `$TMUX_PANE`, so tmux started inside a direct shell still routes to the tmux pane.
 - Direct panes outlive their connection: they sit in `Ctx::direct`, not in a host actor.
+- This PC is host `@local` (`local.rs`): not in `config.hosts`, always connected. Paths shown to
+  the UI use forward slashes (`C:/Users/…`), but programs/cwds go to CreateProcess with native
+  backslashes — cmd.exe parses `C:/WINDOWS/…` in its own command line as `/W` switches.
+- ConPTY asks for the cursor position (`ESC[6n`) at startup and waits; the core's answer is
+  what lets local shells start even when no view is open.
+- Local hooks run through Git for Windows' `sh.exe`; `CHM_STATE_DIR` tells `chm-hook.sh` where
+  the events file is (the core polls it). Templates use `__RUN__`/`__SH__` placeholders.
 
 ## Testing
 
 - Core end-to-end: `cargo run -p chm-core --example selftest -- <host> <user>` (private tmux
   socket; covers sizing, labels, direct shells, reconnect, hooks).
+- This PC shells: `cargo run -p chm-core --example localtest` (every local shell: typing,
+  resize, hook routing, exit → ended, dismiss).
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
-  `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs`. The driver evaluates JS in
+  `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
+  `SHELL_NAME="Git Bash"` to pick a shell). The driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 
 ## Windows dev gotchas

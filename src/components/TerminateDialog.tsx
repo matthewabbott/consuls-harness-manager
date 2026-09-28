@@ -7,6 +7,7 @@ import { harnessLabel, isAgent } from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
 import { displayTitle } from "./MiniTile";
 import { isDirect, paneWhere } from "../lib/panes";
+import { hostLabel } from "../lib/hosts";
 
 export default function TerminateDialog({ paneKey }: { paneKey: number }) {
   const close = () => useApp.getState().setTerminating(null);
@@ -70,7 +71,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
     >
       {direct ? (
         <p className="text-[13px] leading-relaxed text-mist-300">
-          This hangs up the plain shell on {pane.host}; anything still running in it gets the hang-up signal and exits. Plain shells
+          This hangs up the plain shell on {hostLabel(pane.host)}; anything still running in it gets the hang-up signal and exits. Plain shells
           can't be reattached later.
         </p>
       ) : state === "stuck" ? (
@@ -86,7 +87,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
               <span className="font-mono text-mist-100">
                 {paneWhere(pane, true)}
               </span>{" "}
-              on {pane.host}.
+              on {hostLabel(pane.host)}.
             </>
           ) : (
             <>
@@ -94,7 +95,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
               <span className="font-mono text-mist-100">
                 {paneWhere(pane, true)}
               </span>{" "}
-              on {pane.host}.
+              on {hostLabel(pane.host)}.
             </>
           )}
           <span className="mt-2 block text-[12px] text-mist-500">To just remove it from the dashboard and keep it running, use Hide instead.</span>

@@ -193,6 +193,7 @@ export function mockBackend(): Backend {
   const hosts: HostState[] = [
     { id: "spark-d683", phase: { phase: "connected" }, facts: { user: "consulear", home: "/home/consulear", shell: "/bin/bash", uname: "Linux 6.11", tmuxVersion: "3.4" } },
     { id: "spark2", phase: { phase: "awaitingTailscaleCheck", url: "https://login.tailscale.com/a/example" }, facts: null },
+    { id: "@local", phase: { phase: "connected" }, facts: { user: "consul", home: "C:/Users/consul", shell: "C:/Program Files/PowerShell/7/pwsh.exe", uname: "windows DESKTOP-CONSUL", tmuxVersion: null } },
   ];
   const panes: MockPane[] = [
     pane(1, "spark-d683", { tmux: { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp" }, currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
@@ -201,6 +202,7 @@ export function mockBackend(): Backend {
     pane(4, "spark-d683", { tmux: { sessionName: "dual-setup-2", windowName: "bash" }, currentPath: "/home/consulear/models" }, shellLines, [21, 3]),
     pane(5, "spark-d683", { tmux: null, currentPath: "/home/consulear", chmId: "d5" }, shellLines, [21, 3]),
     pane(6, "spark-d683", { tmux: null, currentPath: "/home/consulear/irc", currentCommand: "bash", chmId: "d6", ended: "Connection lost" }, shellLines),
+    pane(7, "@local", { tmux: null, currentPath: "C:/Users/consul/code", currentCommand: "PowerShell", chmId: "d7" }, shellLines, [21, 3]),
   ];
 
   const sendTiles = () => {
@@ -450,7 +452,11 @@ export function mockBackend(): Backend {
       mockIntegration = { claude: "notInstalled", codex: "notInstalled", omp: "notInstalled" };
       return { ...mockIntegration, notes: ["Claude Code: hooks removed."] };
     },
-    listDir: async (_host, path) => {
+    listDir: async (host, path) => {
+      if (host === "@local") {
+        const p = path === "~" || !path ? "C:/Users/consul" : path;
+        return { path: p, home: "C:/Users/consul", entries: [{ name: "code", isDir: true }, { name: "Documents", isDir: true }, { name: "notes.txt", isDir: false }] };
+      }
       const p = path === "~" || !path ? "/home/consulear" : path;
       const dirs = p === "/home/consulear" ? ["Programming", "models", "notes", ".config"] : p.endsWith("Programming") ? ["consuls", "terrarium-annotator", "terrarium-agent", "open-webui"] : ["src", "docs", "tests"];
       return { path: p, home: "/home/consulear", entries: [...dirs.map((name) => ({ name, isDir: true })), { name: "README.md", isDir: false }] };
@@ -458,6 +464,13 @@ export function mockBackend(): Backend {
     sendInput: async (key, data) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(data === "\r" ? "\r\n" : data)));
     },
+    onConfirmQuit: async () => () => {},
+    quitApp: async () => {},
+    localShells: async () => [
+      { id: "pwsh", name: "PowerShell", path: "C:/Program Files/PowerShell/7/pwsh.exe" },
+      { id: "git-bash", name: "Git Bash", path: "C:/Program Files/Git/bin/bash.exe" },
+      { id: "cmd", name: "Command Prompt", path: "C:/WINDOWS/system32/cmd.exe" },
+    ],
     pasteText: async (key, text) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(text.replace(/\n/g, "\r\n"))));
     },
