@@ -5,7 +5,9 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
 
 - **Live grid** of every tmux pane on every connected machine, each a small live view of the terminal.
 - **Expanded view** with a full terminal (type straight into it), Ctrl+F search through the
-  scrollback, and *smart copy* that undoes the CLI's line wrapping and gutters.
+  scrollback, and *smart copy* that undoes the CLI's line wrapping and gutters. Ctrl+click opens
+  links: https URLs in the browser (other schemes are copied), and file references like
+  `src/App.tsx:42` in the editor at that line, on the pane's machine and relative to its folder.
 - **Composer**: a mouse-friendly prompt box — click to place the cursor, select, cut/paste,
   undo/redo, Shift+Enter for new lines, ↑ for prompt history, drafts kept per pane.
 - **Attention**: when an agent finishes its turn or needs permission, you get a ping (and a

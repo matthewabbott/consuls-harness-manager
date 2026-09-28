@@ -56,10 +56,18 @@ const key = async (name, mods = {}) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(...a);
+/** A real mouse click at page coordinates: hover first (xterm links need it), then press/release. */
+const click = async (x, y, mods = {}) => {
+  const modifiers = (mods.alt ? 1 : 0) | (mods.ctrl ? 2 : 0) | (mods.shift ? 8 : 0);
+  await call("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
+  await sleep(150);
+  await call("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1, modifiers });
+  await call("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1, modifiers });
+};
 
 const steps = (await import(pathToFileURL(file).href)).default;
 try {
-  await steps({ js, text, key, sleep, log });
+  await steps({ js, text, key, click, sleep, log });
 } catch (e) {
   console.log("FAILED:", e.message);
   process.exitCode = 1;

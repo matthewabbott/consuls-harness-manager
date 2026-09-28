@@ -1,5 +1,6 @@
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -13,6 +14,9 @@ import { rawCopy, selectionRows, smartCopy } from "../term/smartCopy";
 import { attachStream } from "../term/streams";
 import { paneIdentity } from "../lib/panes";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
+import { useApp } from "../store/app";
+import { useEditor } from "../store/editor";
+import { findPaths, resolvePath } from "../term/links";
 import type React from "react";
 
 const FONT = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
@@ -68,6 +72,9 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const sizeRef = useRef({ cols: pane.width, rows: pane.height });
+  // The latest pane (its working directory changes) for link resolution in terminal callbacks.
+  const paneRef = useRef(pane);
+  paneRef.current = pane;
   const id = paneIdentity(pane);
   // Read by the (long-lived) terminal callbacks without rebuilding the terminal.
   const fontRef = useRef(fontSize);
@@ -129,6 +136,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     term.unicode.activeVersion = "11";
     const search = new SearchAddon();
     term.loadAddon(search);
+    installLinks(term, () => paneRef.current);
     term.open(el);
     let webgl: WebglAddon | null = null;
     try {
@@ -374,6 +382,65 @@ function swallowQueries(term: Terminal): { dispose(): void }[] {
     p.registerDcsHandler({ intermediates: "$", final: "q" }, yes), // DECRQSS
     ...[4, 10, 11, 12].map((n) => p.registerOscHandler(n, (data) => data.includes("?"))), // colour queries
   ];
+}
+
+/** Opens a URL from the terminal: https in the browser; anything else is only copied. */
+function openUrl(uri: string) {
+  if (/^https:\/\//i.test(uri)) {
+    void backend().then((b) => b.openExternal(uri));
+  } else {
+    void navigator.clipboard.writeText(uri);
+    useApp.getState().notify("info", `Copied ${uri} (only https links open from a terminal)`);
+  }
+}
+
+/** Opens `ref` (as printed in the pane) in the editor, at its line if it has one. */
+async function openPath(pane: PaneInfo, ref: string, line?: number, col?: number) {
+  const home = useApp.getState().hosts[pane.host]?.facts?.home;
+  const path = resolvePath(ref, pane.currentPath, home);
+  const b = await backend();
+  const stat = await b.statFile(pane.host, path).catch(() => null);
+  if (!stat) {
+    useApp.getState().notify("warning", `Couldn't find ${path} on ${pane.host === "@local" ? "this PC" : pane.host}`);
+    return;
+  }
+  await useEditor.getState().open(pane.host, path, pane.key, line ? { line, col } : undefined);
+}
+
+/**
+ * Ctrl+click links: URLs (and OSC 8 hyperlinks) and file references like `src/App.tsx:42`,
+ * resolved against the pane's working directory and opened in the editor.
+ */
+function installLinks(term: Terminal, pane: () => PaneInfo) {
+  const withMod = (e: MouseEvent) => e.ctrlKey || e.metaKey;
+  term.loadAddon(new WebLinksAddon((e, uri) => withMod(e) && openUrl(uri)));
+  term.options.linkHandler = {
+    allowNonHttpProtocols: true,
+    activate: (e, uri) => {
+      if (!withMod(e)) return;
+      const file = uri.match(/^file:\/\/[^/]*(\/.*)$/);
+      if (file) void openPath(pane(), decodeURIComponent(file[1]));
+      else openUrl(uri);
+    },
+  };
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const text = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
+      const refs = findPaths(text);
+      callback(
+        refs.length
+          ? refs.map((r) => ({
+              range: { start: { x: r.index + 1, y }, end: { x: r.index + r.length, y } },
+              text: text.slice(r.index, r.index + r.length),
+              decorations: { underline: true, pointerCursor: true },
+              activate: (e: MouseEvent) => {
+                if (withMod(e)) void openPath(pane(), r.path, r.line, r.col);
+              },
+            }))
+          : undefined,
+      );
+    },
+  });
 }
 
 function MenuItem({ children, hint, onClick, disabled }: { children: React.ReactNode; hint?: string; onClick(): void; disabled?: boolean }) {

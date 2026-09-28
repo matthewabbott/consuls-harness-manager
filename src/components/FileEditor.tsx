@@ -168,6 +168,21 @@ const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id,
         if (!cancelled) view.dispatch({ effects: language.reconfigure(support) });
       });
     }
+    // Jump to a requested line (terminal links), now and whenever another one arrives.
+    const goTo = () => {
+      const g = useEditor.getState().files[id]?.goto;
+      if (!g) return;
+      const doc = view.state.doc;
+      const line = doc.line(Math.min(Math.max(g.line, 1), doc.lines));
+      const pos = Math.min(line.from + Math.max(g.col - 1, 0), line.to);
+      view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "center" }) });
+      useEditor.getState().wentTo(id);
+    };
+    goTo();
+    const unsubGoto = useEditor.subscribe((s, prev) => {
+      if (s.files[id]?.goto && s.files[id]?.goto !== prev.files[id]?.goto) goTo();
+    });
+
     // The committed version, for the change gutter; refreshed when git status for this file
     // changes (e.g. after a commit in a pane) or the window regains focus.
     const loadHead = () =>
@@ -189,6 +204,7 @@ const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id,
     return () => {
       window.removeEventListener("focus", loadHead);
       unsubGit();
+      unsubGoto();
       cancelled = true;
       const b = buffers.get(id);
       if (b) b.state = view.state;

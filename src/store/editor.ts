@@ -36,6 +36,8 @@ export interface OpenFile {
   restored?: boolean;
   /** Bumped whenever the buffer is replaced from disk (the editor then starts afresh). */
   gen: number;
+  /** Where to put the cursor once the editor shows (e.g. from a terminal link). */
+  goto?: { line: number; col: number; seq: number };
 }
 
 interface Buffer {
@@ -70,7 +72,9 @@ interface EditorStore {
   order: string[];
   active: string | null;
 
-  open(host: string, path: string, origin?: number | null): Promise<void>;
+  open(host: string, path: string, origin?: number | null, at?: { line: number; col?: number }): Promise<void>;
+  /** The editor applied `goto`. */
+  wentTo(id: string): void;
   close(id: string): void;
   setActive(id: string | null): void;
   /** The editor reports its buffer changed. */
@@ -152,13 +156,15 @@ export const useEditor = create<EditorStore>((set, get) => {
     order: [],
     active: null,
 
-    open: async (host, path, origin = null) => {
+    open: async (host, path, origin = null, at) => {
       const id = fileId(host, path);
+      const goto = at ? { line: at.line, col: at.col ?? 1, seq: Date.now() } : undefined;
       if (get().files[id]) {
+        if (goto) patch(id, { goto });
         set({ active: id });
         return;
       }
-      const f: OpenFile = { id, host, path, name: path.split("/").pop() ?? path, origin, kind: "loading", eol: "lf", bom: false, stamp: null, dirty: false, saving: false, preview: "", gen: 0 };
+      const f: OpenFile = { id, host, path, name: path.split("/").pop() ?? path, origin, kind: "loading", eol: "lf", bom: false, stamp: null, dirty: false, saving: false, preview: "", gen: 0, goto };
       set((s) => ({ files: { ...s.files, [id]: f }, order: [...s.order, id], active: id }));
       await load(id);
     },
@@ -174,6 +180,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     },
 
     setActive: (active) => set({ active }),
+    wentTo: (id) => patch(id, { goto: undefined }),
 
     edited: (id, doc) => {
       const b = buffers.get(id);

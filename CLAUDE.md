@@ -77,6 +77,13 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   whose HEAD side is only the empty line after the final newline counts as added (git doesn't
   see that line). HEAD comes from `git show HEAD:./<name>` (`fs::git::head_script`).
 
+## Terminal links
+
+- `term/links.ts` finds `path[:line[:col]]` / `path(line,col)` references (a separator, a line
+  number, or a known extension is required, and nothing inside a URL) and resolves them against
+  the pane's cwd. Ctrl+click only. URLs go through `open_external`, which stays https-only;
+  other schemes are copied instead.
+
 ## Bells
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
@@ -93,7 +100,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `editor.mjs`; `gutter.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 
