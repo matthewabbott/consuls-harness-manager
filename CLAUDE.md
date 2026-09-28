@@ -68,6 +68,12 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - `git status --porcelain=v2 -z --ignored=matching` from the repo root (`fs/git.rs`);
   `Core::git_status` shares one run between concurrent callers. The UI rolls statuses up to
   folders (`store/files.ts`), except ignored, which instead dims everything beneath.
+- The explorer keys its tree by the root's *listed* path: asking for `~`, `D:` or another case
+  re-keys the root to `listing.path` (`files.load`). Drive roots are `D:/`, never `D:` (that's
+  "the current folder on D:"). Drives come from `local::drives()` (`GetLogicalDrives` +
+  `GetDriveTypeW`, which never touch the disks). Default folders per machine live in
+  localStorage (`consuls.files.v1`), used by the explorer and the new-pane dialog, which share
+  `PlacesBar` (chips) and `FolderNav` (back/forward via `lib/history.ts`, drive menu, crumbs, ☆).
 
 ## Editor
 
@@ -107,7 +113,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

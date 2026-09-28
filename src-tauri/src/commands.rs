@@ -153,6 +153,12 @@ pub fn local_shells(state: State<'_, AppState>) -> Vec<chm_core::local::LocalShe
     state.core.local_shells()
 }
 
+/// Drives on this machine, for the explorer's drive buttons.
+#[tauri::command]
+pub fn local_drives(state: State<'_, AppState>) -> Vec<chm_core::local::DriveInfo> {
+    state.core.local_drives()
+}
+
 /// Quit for real (after the UI confirmed ending local shells).
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle) {

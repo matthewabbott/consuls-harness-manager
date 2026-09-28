@@ -33,6 +33,14 @@ for (const f of ["src/App.tsx", "src/main.tsx", "src/components/Grid.tsx", "src/
 // A big folder, for scrolling.
 for (let i = 0; i < 5000; i++) add("spark-d683", `/home/consulear/models/checkpoints/step-${String(i).padStart(5, "0")}.pt`, false, 4096);
 for (const f of ["code/notes.txt", "Documents/todo.md"]) add("@local", `C:/Users/consul/${f}`, false, 300);
+for (const f of ["a/programming/consuls-harness-manager/README.md", "a/programming/open-webui/package.json", "games/.keep"])
+  add("@local", `D:/${f}`, false, 800);
+
+/** The mock PC's drives. */
+export const MOCK_DRIVES = [
+  { path: "C:/", label: "C:", kind: "fixed" as const, volume: null },
+  { path: "D:/", label: "D:", kind: "fixed" as const, volume: "New Volume" },
+];
 
 const SAMPLE: Record<string, string> = {
   "App.tsx": [
@@ -102,6 +110,8 @@ export function mockListDir(host: string, path: string): DirListing {
   const p = path === "~" || !path ? home : path.replace(/\/$/, "") || "/";
   if (!nodes.get(k(host, p))?.dir && p !== "/") throw new Error(`${p}: No such file`);
   const prefix = p === "/" ? "/" : `${p}/`;
+  // Like the real backend, a drive root keeps its slash (`D:/`).
+  const shown = /^[A-Za-z]:$/.test(p) ? `${p}/` : p;
   const entries = [];
   for (const [key, n] of nodes) {
     const [h, full] = key.split("\n");
@@ -111,7 +121,7 @@ export function mockListDir(host: string, path: string): DirListing {
     entries.push({ name, isDir: n.dir, isSymlink: false, size: n.size, mtime: n.mtime });
   }
   entries.sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-  return { path: p, home, entries };
+  return { path: shown, home, entries };
 }
 
 export function mockFsOp(host: string, op: FsOp) {

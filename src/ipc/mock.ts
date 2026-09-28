@@ -9,7 +9,7 @@ import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { LabelDef } from "./bindings/LabelDef";
-import { mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
+import { MOCK_DRIVES, mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
@@ -483,6 +483,7 @@ export function mockBackend(): Backend {
       { id: "git-bash", name: "Git Bash", path: "C:/Program Files/Git/bin/bash.exe" },
       { id: "cmd", name: "Command Prompt", path: "C:/WINDOWS/system32/cmd.exe" },
     ],
+    localDrives: async () => MOCK_DRIVES,
     pasteText: async (key, text) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(text.replace(/\n/g, "\r\n"))));
     },

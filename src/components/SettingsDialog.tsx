@@ -1,10 +1,12 @@
-import { Play } from "lucide-react";
+import { Play, Star } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
 import type { AlertKind } from "../ipc/bindings/AlertKind";
 import type { SoundPrefs } from "../ipc/bindings/SoundPrefs";
+import { hostLabel } from "../lib/hosts";
 import { useApp } from "../store/app";
+import { useFiles } from "../store/files";
 import Modal, { Button } from "./Modal";
 
 const KINDS: { key: keyof SoundPrefs; kind: AlertKind; label: string; hint: string }[] = [
@@ -18,6 +20,7 @@ export default function SettingsDialog() {
   const close = () => useApp.getState().setSettingsOpen(false);
   const saved = useApp((s) => s.config.sound);
   const [prefs, setPrefs] = useState<SoundPrefs>(saved);
+  const defaults = useFiles((s) => s.defaults);
   const first = useRef(true);
 
   // Persist (debounced) as the user changes things — no Save button needed.
@@ -85,6 +88,33 @@ export default function SettingsDialog() {
             </div>
             <Toggle on={prefs.toasts} onChange={(v) => set("toasts", v)} />
           </label>
+        </section>
+
+        <section>
+          <div className="mb-2 text-[11px] font-semibold tracking-wide text-mist-400 uppercase">Default folders</div>
+          {Object.keys(defaults).length === 0 ? (
+            <p className="rounded-xl bg-ink-850 px-3.5 py-2.5 text-[12px] leading-relaxed text-mist-400 ring-1 ring-ink-700">
+              Where the Files explorer and the new-pane dialog start on each machine. Set one with the{" "}
+              <Star className="inline h-3 w-3 align-[-1px]" /> in the explorer.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {Object.entries(defaults).map(([host, path]) => (
+                <div key={host} className="flex items-center gap-3 rounded-xl bg-ink-850 px-3.5 py-2 ring-1 ring-ink-700">
+                  <span className="w-24 shrink-0 truncate text-[12.5px] text-mist-200">{hostLabel(host)}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-mist-400" title={path}>
+                    {path}
+                  </span>
+                  <button
+                    onClick={() => useFiles.getState().setDefault(host, null)}
+                    className="rounded-lg px-2 py-1 text-[11.5px] text-mist-400 hover:bg-ink-700 hover:text-mist-100"
+                  >
+                    Clear
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </Modal>

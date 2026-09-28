@@ -45,10 +45,15 @@ settings. Since then:
 Roughly in order. Each is small-to-medium and self-contained.
 
 **Progress (branch `v3`):**
-- Done: V3-1 sidebars.
-- Next: V3-2 places & default folders, a new item. The explorer gets a chip row (`★ default` · `~` ·
-  drives, or `/`); the default folder per machine also applies to the new-pane dialog.
-- Then: reveal, VS Code, recording mode, cwd + OSC 52, local hooks, local tmux (V3-3…V3-8).
+- Done:
+  - V3-1 sidebars.
+  - V3-2 places & default folders:
+    - The explorer's chip row (`★ default` · home · drives, or `/`).
+    - A nav row: back/forward, the drive crumb as a dropdown, and a ☆ after the path that sets the
+      default.
+    - Double-click browses into a folder.
+    - The new-pane dialog shares the chips, the nav row and the default.
+- Next: reveal, VS Code, recording mode, cwd + OSC 52, local hooks, local tmux (V3-3…V3-8).
 
 ### 1. Sidebars (done in V3-1)
 - Right sidebar (the filmstrip beside an expanded pane, `ExpandedPane.tsx`): its collapse toggle

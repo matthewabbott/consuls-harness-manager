@@ -30,6 +30,90 @@ pub struct LocalShell {
     pub path: String,
 }
 
+/// A drive on this machine (Windows), for the explorer's drive buttons.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct DriveInfo {
+    /// Its root, `D:/` (never `D:`, which means "the current folder on D:").
+    pub path: String,
+    /// `D:`
+    pub label: String,
+    pub kind: DriveKind,
+    /// The volume label of a fixed drive ("New Volume"), if it has one.
+    pub volume: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DriveKind {
+    Fixed,
+    Removable,
+    Network,
+    Optical,
+    Ram,
+    Unknown,
+}
+
+/// The drives on this machine; empty outside Windows. Only asks Windows which letters are in
+/// use and what kind they are, so a disconnected network drive can't stall it; volume labels
+/// are read for fixed drives only.
+pub fn drives() -> Vec<DriveInfo> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW};
+        // GetDriveTypeW values (winbase.h).
+        const DRIVE_REMOVABLE: u32 = 2;
+        const DRIVE_FIXED: u32 = 3;
+        const DRIVE_REMOTE: u32 = 4;
+        const DRIVE_CDROM: u32 = 5;
+        const DRIVE_RAMDISK: u32 = 6;
+
+        // SAFETY: plain Win32 calls on NUL-terminated buffers we own.
+        let mask = unsafe { GetLogicalDrives() };
+        (0..26u8)
+            .filter(|i| mask & (1 << i) != 0)
+            .map(|i| {
+                let letter = (b'A' + i) as char;
+                let root: Vec<u16> = format!("{letter}:\\").encode_utf16().chain([0]).collect();
+                let kind = match unsafe { GetDriveTypeW(root.as_ptr()) } {
+                    DRIVE_FIXED => DriveKind::Fixed,
+                    DRIVE_REMOVABLE => DriveKind::Removable,
+                    DRIVE_REMOTE => DriveKind::Network,
+                    DRIVE_CDROM => DriveKind::Optical,
+                    DRIVE_RAMDISK => DriveKind::Ram,
+                    _ => DriveKind::Unknown,
+                };
+                let volume = (kind == DriveKind::Fixed)
+                    .then(|| {
+                        let mut name = [0u16; 261];
+                        let ok = unsafe {
+                            GetVolumeInformationW(
+                                root.as_ptr(),
+                                name.as_mut_ptr(),
+                                name.len() as u32,
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                std::ptr::null_mut(),
+                                0,
+                            )
+                        };
+                        let len = name.iter().position(|&c| c == 0).unwrap_or(0);
+                        (ok != 0 && len > 0).then(|| String::from_utf16_lossy(&name[..len]))
+                    })
+                    .flatten();
+                DriveInfo { path: format!("{letter}:/"), label: format!("{letter}:"), kind, volume }
+            })
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ShellDef {
     pub shell: LocalShell,
@@ -319,5 +403,20 @@ mod tests {
         let home_listing = list_dir("~").unwrap();
         assert_eq!(home_listing.path, home());
         assert!(!shells().is_empty(), "at least one local shell");
+    }
+
+    #[test]
+    fn drives_include_the_system_drive() {
+        let drives = drives();
+        if cfg!(windows) {
+            let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()).to_ascii_uppercase();
+            let d = drives.iter().find(|d| d.label == system).expect("system drive listed");
+            assert_eq!(d.path, format!("{system}/"));
+            assert_eq!(d.kind, DriveKind::Fixed);
+            // Every drive root lists (the path form works with list_dir).
+            assert_eq!(list_dir(&d.path).unwrap().path, d.path);
+        } else {
+            assert!(drives.is_empty());
+        }
     }
 }

@@ -129,6 +129,7 @@ pub fn run() {
             commands::paste_text,
             commands::send_input,
             commands::local_shells,
+            commands::local_drives,
             commands::set_pane_bell,
             commands::fs_op,
             commands::fs_count,

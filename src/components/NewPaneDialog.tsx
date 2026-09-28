@@ -1,15 +1,19 @@
-import { ChevronRight, CornerLeftUp, Folder, Home, Loader2 } from "lucide-react";
+import { CornerLeftUp, Folder, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { backend } from "../ipc/backend";
 import type { DirListing } from "../ipc/bindings/DirListing";
 import type { Harness } from "../ipc/bindings/Harness";
 import type { LocalShell } from "../ipc/bindings/LocalShell";
+import { canBack, canForward, emptyHistory, pushHistory, stepHistory } from "../lib/history";
 import { hostLabel, isLocal, shortPath } from "../lib/hosts";
-import { crumbsOf, isRoot, joinPath, parentPath } from "../lib/paths";
+import { isRoot, joinPath, parentPath, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
+import { useFiles } from "../store/files";
+import FolderNav from "./FolderNav";
 import HarnessBadge from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
+import PlacesBar from "./PlacesBar";
 
 const HARNESSES: { id: Harness; label: string; hint: string }[] = [
   { id: "claude", label: "Claude Code", hint: "claude" },
@@ -80,7 +84,9 @@ export default function NewPaneDialog() {
   }, [local, shells.length]);
   const shellId = shells.some((s) => s.id === shell) ? shell : (shells[0]?.id ?? "");
 
-  const open = async (path: string) => {
+  const [history, setHistory] = useState(emptyHistory<string>);
+  /** Shows `path`; `record: false` for back / forward. */
+  const open = async (path: string, record = true) => {
     if (!host) return;
     setLoading(true);
     setError(null);
@@ -88,22 +94,29 @@ export default function NewPaneDialog() {
       const l = await (await backend()).listDir(host, path);
       setListing(l);
       setPathInput(l.path);
+      if (record) setHistory((h) => pushHistory(h, l.path, sameFolder));
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
   };
+  const step = (delta: -1 | 1) => {
+    const next = stepHistory(history, delta);
+    if (!next) return;
+    setHistory(next.history);
+    void open(next.entry, false);
+  };
 
   useEffect(() => {
     setListing(null);
+    setHistory(emptyHistory());
     setSession("");
-    if (host) void open(host === preselect && startIn ? startIn : (recent[0] ?? "~"));
+    if (host) void open(host === preselect && startIn ? startIn : (useFiles.getState().defaults[host] ?? recent[0] ?? "~"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host]);
 
   const cwd = listing?.path ?? "";
-  const crumbs = useMemo(() => crumbsOf(cwd), [cwd]);
   const dirs = (listing?.entries ?? []).filter((e) => e.isDir && (showHidden || !e.name.startsWith(".")));
 
   const create = async () => {
@@ -197,6 +210,9 @@ export default function NewPaneDialog() {
           )}
 
           <Field label="Working directory">
+            <div className="mb-2">
+              <PlacesBar host={host} path={cwd || null} onGo={(p) => void open(p)} />
+            </div>
             {recent.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {recent.map((r) => (
@@ -222,25 +238,25 @@ export default function NewPaneDialog() {
               <Button type="submit">Go</Button>
             </form>
             <div className="mt-2 overflow-hidden rounded-xl bg-ink-900/70 ring-1 ring-ink-700">
-              <div className="flex items-center gap-0.5 overflow-x-auto border-b border-ink-700 px-2 py-1.5 text-[12px]">
-                <button onClick={() => open("~")} title="Home" className="rounded p-1 text-mist-400 hover:bg-ink-700 hover:text-mist-100">
-                  <Home className="h-3.5 w-3.5" />
-                </button>
-                <button onClick={() => open("/")} className="rounded px-1 text-mist-400 hover:text-mist-100">
-                  /
-                </button>
-                {crumbs.map((c, i) => (
-                  <span key={c.path} className="flex items-center">
-                    {i > 0 && <ChevronRight className="h-3 w-3 text-mist-500" />}
-                    <button
-                      onClick={() => open(c.path)}
-                      className={`rounded px-1 py-0.5 whitespace-nowrap hover:bg-ink-700 ${i === crumbs.length - 1 ? "font-medium text-mist-100" : "text-mist-400"}`}
-                    >
-                      {c.label}
-                    </button>
-                  </span>
-                ))}
-                {loading && <Loader2 className="ml-auto h-3.5 w-3.5 shrink-0 animate-spin text-mist-500" />}
+              <div
+                className="border-b border-ink-700 px-1.5 py-1.5"
+                onKeyDown={(e) => {
+                  if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+                    e.preventDefault();
+                    step(e.key === "ArrowLeft" ? -1 : 1);
+                  }
+                }}
+              >
+                <FolderNav
+                  host={host}
+                  path={cwd || null}
+                  onGo={(p) => void open(p)}
+                  canBack={canBack(history)}
+                  canForward={canForward(history)}
+                  onBack={() => step(-1)}
+                  onForward={() => step(1)}
+                  trailing={loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-mist-500" />}
+                />
               </div>
               <div className="scroll-thin h-52 overflow-y-auto p-1">
                 {cwd && !isRoot(cwd) && (

@@ -7,6 +7,7 @@ import type { CoreEvent } from "./bindings/CoreEvent";
 import type { FocusState } from "./bindings/FocusState";
 import type { CoreSnapshot } from "./bindings/CoreSnapshot";
 import type { DirListing } from "./bindings/DirListing";
+import type { DriveInfo } from "./bindings/DriveInfo";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { LabelDef } from "./bindings/LabelDef";
@@ -33,6 +34,8 @@ export interface Backend {
   onConfirmQuit(cb: (liveShells: number) => void): Promise<() => void>;
   quitApp(): Promise<void>;
   localShells(): Promise<LocalShell[]>;
+  /** Drives on this PC (Windows; empty elsewhere). */
+  localDrives(): Promise<DriveInfo[]>;
   setFocus(focus: FocusState): Promise<void>;
   setSoundPrefs(prefs: SoundPrefs): Promise<void>;
   testChime(kind: AlertKind, volume: number): Promise<void>;
@@ -106,6 +109,7 @@ async function tauriBackend(): Promise<Backend> {
     onConfirmQuit: async (cb) => listen<number>("confirm-quit", (e) => cb(e.payload)),
     quitApp: () => invoke("quit_app"),
     localShells: () => invoke("local_shells"),
+    localDrives: () => invoke("local_drives"),
     setFocus: (focus) => invoke("set_focus", { focus }),
     setSoundPrefs: (prefs) => invoke("set_sound_prefs", { prefs }),
     testChime: (kind, volume) => invoke("test_chime", { kind, volume }),

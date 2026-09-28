@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ChevronsDownUp,
   SquareTerminal,
+  Star,
   Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -22,13 +23,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { backend } from "../ipc/backend";
 import type { DirEntryInfo } from "../ipc/bindings/DirEntryInfo";
 import type { GitFileStatus } from "../ipc/bindings/GitFileStatus";
+import { canBack, canForward } from "../lib/history";
 import { hostLabel, LOCAL_HOST } from "../lib/hosts";
-import { crumbsOf, joinPath, parentPath } from "../lib/paths";
+import { joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
-import { statusOf, useFiles } from "../store/files";
+import { startFolder, statusOf, useFiles } from "../store/files";
+import FolderNav from "./FolderNav";
 import HideSidebarButton from "./HideSidebarButton";
 import Modal, { Button } from "./Modal";
+import PlacesBar from "./PlacesBar";
 
 const ROW_H = 22;
 const OVERSCAN = 12;
@@ -75,6 +79,7 @@ export default function FilesPanel() {
   const selected = useFiles((s) => s.selected);
   const badges = useFiles((s) => s.badges);
   const git = useFiles((s) => s.git);
+  const history = useFiles((s) => s.history);
   const files = useFiles.getState;
 
   const hosts = useApp((s) => s.hosts);
@@ -94,12 +99,12 @@ export default function FilesPanel() {
     if (follow && expandedPane) files().setRoot({ host: expandedPane.host, path: expandedPane.currentPath });
   }, [follow, expandedPane?.host, expandedPane?.currentPath, files, expandedPane]);
 
-  // With nothing to follow, start at a machine's home.
+  // With nothing to follow, start at a machine's default folder (or home).
   useEffect(() => {
     if (root || expandedPane) return;
     const host = connected[0];
-    const home = host ? hosts[host]?.facts?.home : null;
-    if (host && home) files().setRoot({ host, path: home });
+    const start = host ? startFolder(host) : null;
+    if (host && start) files().setRoot({ host, path: start });
   }, [root, expandedPane, connected, hosts, files]);
 
   // Git badges stay fresh while the panel is open.
@@ -210,8 +215,14 @@ export default function FilesPanel() {
   const copy = (text: string) => void navigator.clipboard.writeText(text);
   const relative = (path: string) => (git && path.startsWith(git.root) ? path.slice(git.root.length + 1) : root ? path.slice(root.path.length + 1) : path);
 
-  // Keyboard: F2 rename, Delete delete, Enter/Space toggles folders.
+  // Keyboard: Alt+←/→ back/forward, F2 rename, Delete delete, Enter/Space toggles folders.
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      if (e.key === "ArrowLeft") files().back();
+      else files().forward();
+      return;
+    }
     if (!selected || edit) return;
     const row = rows.find((r) => r.kind === "entry" && r.path === selected);
     if (!row || row.kind !== "entry") return;
@@ -222,10 +233,18 @@ export default function FilesPanel() {
     e.preventDefault();
   };
 
-  const crumbs = root ? crumbsOf(root.path) : [];
-
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      // The mouse's back / forward buttons.
+      onMouseUp={(e) => {
+        if (e.button === 3 || e.button === 4) {
+          e.preventDefault();
+          if (e.button === 3) files().back();
+          else files().forward();
+        }
+      }}
+    >
       <div className="flex items-center gap-1 px-2.5 pt-2.5 pb-1">
         <div className="flex-1 text-[10.5px] font-semibold tracking-[0.08em] text-mist-500 uppercase">Explorer</div>
         <HeaderButton title="New file" disabled={!root} onClick={() => root && startNew("newFile", root.path)}>
@@ -248,8 +267,8 @@ export default function FilesPanel() {
           value={root?.host ?? ""}
           onChange={(e) => {
             const host = e.target.value;
-            const home = hosts[host]?.facts?.home;
-            if (home) files().setRoot({ host, path: home }, { follow: false });
+            const start = startFolder(host);
+            if (start) files().setRoot({ host, path: start }, { follow: false });
           }}
           className="min-w-0 flex-1 truncate rounded-md bg-ink-800 px-1.5 py-1 text-[12px] text-mist-200 ring-1 ring-ink-700 outline-none"
         >
@@ -270,24 +289,30 @@ export default function FilesPanel() {
       </div>
 
       {root && (
-        <div className="flex flex-wrap items-center gap-x-0.5 px-2.5 pb-1.5 font-mono text-[11px] text-mist-500">
-          {crumbs.map((c, i) => (
-            <span key={c.path} className="flex items-center">
-              {i > 0 && <ChevronRight className="h-3 w-3 text-mist-600" />}
-              <button
-                onClick={() => files().setRoot({ host: root.host, path: c.path }, { follow: false })}
-                className={`rounded px-0.5 hover:bg-ink-700 hover:text-mist-200 ${i === crumbs.length - 1 ? "text-mist-200" : ""}`}
-              >
-                {c.label}
-              </button>
-            </span>
-          ))}
-          {git?.branch && (
-            <span className="ml-auto flex items-center gap-1 text-mist-400" title={`git: ${git.root}`}>
-              <GitBranch className="h-3 w-3" />
-              {git.branch}
-            </span>
-          )}
+        <div className="px-2.5 pb-1.5">
+          <PlacesBar host={root.host} path={root.path} onGo={(path) => files().setRoot({ host: root.host, path }, { follow: false })} />
+        </div>
+      )}
+
+      {root && (
+        <div className="px-1.5 pb-1.5">
+          <FolderNav
+            host={root.host}
+            path={root.path}
+            onGo={(path) => files().setRoot({ host: root.host, path }, { follow: false })}
+            canBack={canBack(history)}
+            canForward={canForward(history)}
+            onBack={files().back}
+            onForward={files().forward}
+            trailing={
+              git?.branch && (
+                <span className="flex items-center gap-1 text-mist-400" title={`git: ${git.root}`}>
+                  <GitBranch className="h-3 w-3" />
+                  {git.branch}
+                </span>
+              )
+            }
+          />
         </div>
       )}
 
@@ -347,6 +372,8 @@ export default function FilesPanel() {
                     if (entry.isDir) files().toggle(path);
                     else void useEditor.getState().open(root.host, path, follow && expandedPane?.host === root.host ? expandedPane.key : null);
                   }}
+                  // Double-clicking a folder browses from it (its two clicks cancel each other's toggle).
+                  onDoubleClick={() => entry.isDir && files().setRoot({ host: root.host, path }, { follow: false })}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -412,8 +439,17 @@ export default function FilesPanel() {
             </>
           )}
           {menu.path && menu.isDir && (
-            <MenuItem icon={<FolderRoot className="h-3.5 w-3.5" />} onClick={() => files().setRoot({ host: root.host, path: menu.path! }, { follow: false })}>
+            <MenuItem
+              icon={<FolderRoot className="h-3.5 w-3.5" />}
+              hint="dbl-click"
+              onClick={() => files().setRoot({ host: root.host, path: menu.path! }, { follow: false })}
+            >
               Browse from here
+            </MenuItem>
+          )}
+          {(menu.path === null || menu.isDir) && (
+            <MenuItem icon={<Star className="h-3.5 w-3.5" />} onClick={() => files().setDefault(root.host, menu.path ?? root.path)}>
+              Make default folder on {hostLabel(root.host)}
             </MenuItem>
           )}
           {menu.path && (

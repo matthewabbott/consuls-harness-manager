@@ -419,6 +419,11 @@ impl Core {
         local::shells()
     }
 
+    /// Drives on this machine (Windows; empty elsewhere).
+    pub fn local_drives(&self) -> Vec<local::DriveInfo> {
+        local::drives()
+    }
+
     /// Local shells still running (quitting the app ends them).
     pub fn live_local_shells(&self) -> usize {
         self.ctx.direct.lock().unwrap().values().filter(|d| d.info.host == LOCAL_HOST && d.info.ended.is_none()).count()

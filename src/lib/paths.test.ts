@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { crumbsOf, isRoot, joinPath, parentPath } from "./paths";
+import { baseName, crumbsOf, driveOf, isRoot, isWithin, joinPath, parentPath, sameFolder } from "./paths";
 
 describe("paths", () => {
   it("walks up POSIX paths", () => {
@@ -30,5 +30,21 @@ describe("paths", () => {
     ]);
     expect(joinPath("C:/", "Users")).toBe("C:/Users");
     expect(joinPath("/home/u/", "x")).toBe("/home/u/x");
+  });
+
+  it("compares folders for the places bar", () => {
+    expect(driveOf("d:/a/programming")).toBe("D:");
+    expect(driveOf("/home/u")).toBe(null);
+    expect(sameFolder("D:/a/Programming", "d:/a/programming/")).toBe(true);
+    expect(sameFolder("D:/", "D:")).toBe(true);
+    expect(sameFolder("/home/U", "/home/u")).toBe(false);
+    expect(isWithin("D:/a/programming/x", "D:/")).toBe(true);
+    expect(isWithin("D:/a/programming", "d:/a/programming")).toBe(true);
+    expect(isWithin("D:/a/programmingx", "D:/a/programming")).toBe(false);
+    expect(isWithin("C:/Users", "D:/")).toBe(false);
+    expect(isWithin("/home/u", "/")).toBe(true);
+    expect(baseName("D:/a/programming")).toBe("programming");
+    expect(baseName("D:/")).toBe("D:");
+    expect(baseName("/")).toBe("/");
   });
 });

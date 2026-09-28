@@ -31,7 +31,11 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   same tiles, notifications and composer as remote panes. Local shells end when the app quits
   (it asks first); closing the window keeps them running in the tray.
 - **Files**: a VS Code–style explorer in the left sidebar, following the open pane's folder (or
-  pinned anywhere on any machine): lazy tree, git status badges rolled up to folders, new file /
+  pinned anywhere on any machine). One-click places (your default folder for that machine, home,
+  each drive on This PC or `/`), back / forward (also Alt+←/→ and the mouse's side buttons), the
+  drive crumb as a menu of drives and places, a ☆ after the path that makes the folder the default
+  (the new-pane dialog, which has the same navigation, starts there too), and double-click a folder
+  to browse from it. Lazy tree, git status badges rolled up to folders, new file /
   folder, rename, delete (with an item count first), copy path, and "new pane here". Files open
   as tiles next to the pane they came from: a CodeMirror editor (syntax highlighting, search,
   undo/redo, Ctrl+S) that keeps the file's line endings and BOM, notices when an agent changes
