@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, BellOff, EyeOff, Power, Search } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search } from "lucide-react";
 
 import { backend } from "../ipc/backend";
 import { useMemo, useRef, useState } from "react";
@@ -6,6 +6,8 @@ import { useMemo, useRef, useState } from "react";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
+import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
+import ResizeHandle from "./ResizeHandle";
 import Composer, { type ComposerHandle } from "./Composer";
 import HarnessBadge, { harnessLabel, isAgent } from "./HarnessBadge";
 import { displayTitle } from "./MiniTile";
@@ -13,6 +15,14 @@ import MiniTile from "./MiniTile";
 import QuickKeys from "./QuickKeys";
 import SearchBar from "./SearchBar";
 import TerminalView, { type TerminalHandle } from "./TerminalView";
+
+function HeaderIcon({ onClick, title, children }: { onClick(): void; title: string; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} title={title} className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100">
+      {children}
+    </button>
+  );
+}
 
 export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const setExpanded = useApp((s) => s.setExpanded);
@@ -28,6 +38,14 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
     backend().then((b) => b.setPaneMuted(pane.key, !muted));
   };
   const connected = hosts[pane.host]?.phase.phase === "connected";
+  const filmstripWidth = useUi((s) => s.filmstripWidth);
+  const filmstripCollapsed = useUi((s) => s.filmstripCollapsed);
+  const maximized = useUi((s) => s.maximized);
+  const composerHeight = useUi((s) => s.composerHeight);
+  const ui = useUi.getState;
+  const waitingElsewhere = useApp(
+    (s) => Object.values(s.attention).filter((a) => a.key !== pane.key && a.attention === "unacked").length,
+  );
 
   const others = useMemo(
     () =>
@@ -37,7 +55,11 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
     [panes, pane.key],
   );
 
-  const back = () => setExpanded(null);
+  const back = () => {
+    ui().setMaximized(false);
+    setExpanded(null);
+  };
+  const showFilmstrip = others.length > 0 && !filmstripCollapsed && !maximized;
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -59,6 +81,22 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             </div>
           </div>
           <div className="ml-auto flex items-center gap-1">
+            <HeaderIcon
+              onClick={() => ui().setMaximized(!maximized)}
+              title={maximized ? "Restore side panels" : "Maximize (hide side panels)"}
+            >
+              {maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            </HeaderIcon>
+            {others.length > 0 && !maximized && (
+              <HeaderIcon onClick={() => ui().toggleFilmstrip()} title={filmstripCollapsed ? "Show other panes" : "Hide other panes"}>
+                <span className="relative">
+                  {filmstripCollapsed ? <PanelRightOpen className="h-3.5 w-3.5" /> : <PanelRightClose className="h-3.5 w-3.5" />}
+                  {filmstripCollapsed && waitingElsewhere > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 h-2 w-2 rounded-full bg-ember-400 ring-2 ring-ink-900" />
+                  )}
+                </span>
+              </HeaderIcon>
+            )}
             <button
               onClick={toggleMute}
               title={muted ? "Unmute pings for this pane" : "Mute pings for this pane (it will still glow)"}
@@ -126,7 +164,15 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             Click the terminal to type into it directly · Ctrl+F search · Ctrl+Shift+G grid
           </span>
         </div>
-        <div className="mt-2 shrink-0">
+        <ResizeHandle
+          axis="y"
+          size={composerHeight}
+          direction={-1}
+          onResize={(h) => ui().setComposerHeight(h)}
+          resetTo={COMPOSER.default}
+          className="mt-0.5"
+        />
+        <div className="shrink-0" style={{ height: composerHeight }}>
           <Composer
             ref={composerRef}
             pane={pane}
@@ -135,8 +181,21 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
         </div>
       </section>
 
-      {others.length > 0 && (
-        <aside className="scroll-thin w-72 shrink-0 space-y-3 overflow-y-auto border-l border-ink-700/80 p-3">
+      {showFilmstrip && (
+        <ResizeHandle
+          axis="x"
+          size={filmstripWidth}
+          direction={-1}
+          onResize={(w) => ui().setFilmstripWidth(w)}
+          resetTo={FILMSTRIP.default}
+          className="-mr-1.5"
+        />
+      )}
+      {showFilmstrip && (
+        <aside
+          style={{ width: filmstripWidth }}
+          className="scroll-thin shrink-0 space-y-3 overflow-y-auto border-l border-ink-700/80 p-3"
+        >
           {others.map((p) => (
             <MiniTile
               key={p.key}

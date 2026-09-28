@@ -9,10 +9,11 @@ import SettingsDialog from "./components/SettingsDialog";
 import TerminateDialog from "./components/TerminateDialog";
 import Grid from "./components/Grid";
 import Notices from "./components/Notices";
-import Sidebar from "./components/Sidebar";
+import LeftSidebar from "./components/LeftSidebar";
 import TopBar from "./components/TopBar";
 import { backend } from "./ipc/backend";
 import { useApp } from "./store/app";
+import { useUi } from "./store/ui";
 import { applyFrames } from "./term/tiles";
 
 export const APP_TITLE = "Consul's Harness Manager";
@@ -26,6 +27,7 @@ export default function App() {
   const integrationFor = useApp((s) => s.integrationFor);
   const settingsFor = useApp((s) => s.settingsFor);
   const settingsOpen = useApp((s) => s.settingsOpen);
+  const maximized = useUi((s) => s.maximized);
   const expandedPane = useMemo(
     () => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)),
     [expanded, panes],
@@ -73,6 +75,11 @@ export default function App() {
         e.preventDefault();
         useApp.getState().setExpanded(null);
       }
+      // Ctrl+Shift+B toggles the sidebar (plain Ctrl+B is tmux's prefix, so it stays with the pane).
+      if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        useUi.getState().toggleSidebar();
+      }
       if (mod && e.shiftKey && (e.key === " " || e.code === "Space")) {
         e.preventDefault();
         const st = useApp.getState();
@@ -117,7 +124,7 @@ export default function App() {
 
   return (
     <div className="app-backdrop flex h-full">
-      <Sidebar />
+      {!(maximized && expandedPane) && <LeftSidebar />}
       <main className="flex min-w-0 flex-1 flex-col">
         {!expandedPane && <TopBar />}
         <Banners />

@@ -1,0 +1,25 @@
+import { SIDEBAR, useUi } from "../store/ui";
+import ActivityBar from "./ActivityBar";
+import ResizeHandle from "./ResizeHandle";
+import MachinesPanel from "./Sidebar";
+
+export default function LeftSidebar() {
+  const collapsed = useUi((s) => s.sidebarCollapsed);
+  const width = useUi((s) => s.sidebarWidth);
+  const setWidth = useUi((s) => s.setSidebarWidth);
+  const tab = useUi((s) => s.sidebarTab);
+
+  return (
+    <div className="flex h-full shrink-0">
+      <ActivityBar />
+      {!collapsed && (
+        <>
+          <aside style={{ width }} className="flex shrink-0 flex-col border-r border-ink-700/80 bg-ink-950/40">
+            {tab === "machines" && <MachinesPanel />}
+          </aside>
+          <ResizeHandle axis="x" size={width} direction={1} onResize={setWidth} resetTo={SIDEBAR.default} className="-ml-1.5" />
+        </>
+      )}
+    </div>
+  );
+}

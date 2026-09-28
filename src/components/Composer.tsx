@@ -15,7 +15,7 @@ export interface ComposerHandle {
 
 const theme = EditorView.theme(
   {
-    "&": { color: "var(--color-mist-100)", backgroundColor: "transparent", fontSize: "13.5px", maxHeight: "40vh" },
+    "&": { color: "var(--color-mist-100)", backgroundColor: "transparent", fontSize: "13.5px", height: "100%" },
     ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--color-ember-400)", padding: "10px 0", lineHeight: "1.5" },
     ".cm-line": { padding: "0 14px" },
     ".cm-scroller": { overflow: "auto" },
@@ -147,11 +147,11 @@ const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pane, onE
 
   return (
     <div
-      className={`flex items-end rounded-xl bg-ink-850 ring-1 transition-shadow ${
+      className={`flex h-full items-end rounded-xl bg-ink-850 ring-1 transition-shadow ${
         focused ? "shadow-[0_0_0_3px_rgb(245_162_93/0.12)] ring-ember-400/50" : "ring-ink-700"
       }`}
     >
-      <div ref={hostRef} className="min-w-0 flex-1 cursor-text" onMouseDown={() => setTimeout(() => viewRef.current?.focus(), 0)} />
+      <div ref={hostRef} className="h-full min-w-0 flex-1 cursor-text" onMouseDown={() => setTimeout(() => viewRef.current?.focus(), 0)} />
       <button
         onClick={sendClick}
         disabled={empty}

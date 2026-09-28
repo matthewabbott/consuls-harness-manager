@@ -1,4 +1,4 @@
-import { BellRing, Laptop, Monitor, Plug, Plus, RefreshCw, RotateCw, Server, Settings, Settings2, Smartphone, Trash2, Unplug } from "lucide-react";
+import { BellRing, Laptop, Monitor, Plug, Plus, RefreshCw, RotateCw, Server, Settings2, Smartphone, Trash2, Unplug } from "lucide-react";
 import { useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -158,7 +158,8 @@ function AvailableRow({ m }: { m: Machine }) {
   );
 }
 
-export default function Sidebar() {
+/** The Machines tab of the left sidebar. */
+export default function MachinesPanel() {
   const tailnet = useApp((s) => s.tailnet);
   const config = useApp((s) => s.config);
   const hosts = useApp((s) => s.hosts);
@@ -176,9 +177,8 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="flex w-64 shrink-0 flex-col border-r border-ink-700/80 bg-ink-950/40">
+    <>
       <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-        <img src="/app-icon.svg" alt="" className="h-7 w-7" />
         <div className="min-w-0 leading-tight">
           <div className="text-[9.5px] font-semibold tracking-[0.14em] text-ember-400/80 uppercase">Consul's</div>
           <div className="font-display text-[15px] font-semibold tracking-tight text-mist-100">Harness Manager</div>
@@ -210,19 +210,12 @@ export default function Sidebar() {
           {available.length === 0 && <p className="px-2.5 text-[11.5px] text-mist-500">Nothing else found.</p>}
         </div>
       </div>
-      <div className="flex items-center gap-2 border-t border-ink-700/80 px-3 py-2">
-        <span className="min-w-0 flex-1 truncate text-[10.5px] text-mist-500" title="Tailnet">
-          {tailnet?.tailnetName ?? ""}
-        </span>
-        <button
-          onClick={() => useApp.getState().setSettingsOpen(true)}
-          title="Settings"
-          className="rounded-md p-1.5 text-mist-500 transition-colors hover:bg-ink-700 hover:text-mist-100"
-        >
-          <Settings className="h-4 w-4" />
-        </button>
-      </div>
-    </aside>
+      {tailnet?.tailnetName && (
+        <div className="truncate border-t border-ink-700/80 px-4 py-2 text-[10.5px] text-mist-500" title="Tailnet">
+          {tailnet.tailnetName}
+        </div>
+      )}
+    </>
   );
 }
 
