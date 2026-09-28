@@ -127,6 +127,7 @@ pub fn run() {
             commands::send_keys,
             commands::send_text,
             commands::paste_text,
+            commands::send_input,
             commands::submit_prompt,
             commands::set_focus,
             commands::set_sound_prefs,

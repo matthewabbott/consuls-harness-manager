@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { machines, phaseInfo, toneText } from "../lib/hosts";
 import { groupPanes, sortPanes } from "../lib/organize";
-import { paneIdentity } from "../lib/panes";
+import { paneIdentity, paneName, paneWhere } from "../lib/panes";
 import { useApp } from "../store/app";
 import { useUi } from "../store/ui";
 import { isAgent } from "./HarnessBadge";
@@ -12,7 +12,7 @@ import MiniTile, { displayTitle } from "./MiniTile";
 
 function matches(p: PaneInfo, q: string, labelNames: string): boolean {
   if (!q) return true;
-  const hay = `${p.title} ${p.windowName} ${p.sessionName} ${p.currentPath} ${p.currentCommand} ${p.host} ${labelNames}`.toLowerCase();
+  const hay = `${p.title} ${paneName(p)} ${paneWhere(p)} ${p.currentPath} ${p.currentCommand} ${p.host} ${labelNames}`.toLowerCase();
   return q
     .toLowerCase()
     .split(/\s+/)

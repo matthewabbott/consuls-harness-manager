@@ -3,6 +3,7 @@
 
 pub mod attention;
 mod ctx;
+mod direct;
 pub mod frames;
 mod host;
 mod tmux_mgr;
@@ -196,6 +197,9 @@ impl Core {
         if let Some(h) = self.hosts.lock().unwrap().remove(id) {
             h.send(HostCmd::Shutdown);
         }
+        for d in self.ctx.direct.lock().unwrap().values().filter(|d| d.info.host == id) {
+            let _ = d.tx.send(direct::DirectMsg::Close);
+        }
         self.ctx.remove_host(id);
     }
 
@@ -239,15 +243,16 @@ impl Core {
     /// Which pane tiles the UI is showing (`None` = all). Hidden panes stop getting frames.
     pub fn set_visible_panes(&self, keys: Option<Vec<u32>>) {
         *self.ctx.visible.write().unwrap() = keys.map(|k| k.into_iter().collect());
-        for h in self.hosts.lock().unwrap().values() {
-            h.send(HostCmd::ResendTiles);
-        }
+        self.resend_tiles();
     }
 
     /// Re-send every tile (the UI reloaded or re-subscribed).
     pub fn resend_tiles(&self) {
         for h in self.hosts.lock().unwrap().values() {
             h.send(HostCmd::ResendTiles);
+        }
+        for d in self.ctx.direct.lock().unwrap().values() {
+            let _ = d.tx.send(direct::DirectMsg::Resend);
         }
     }
 
@@ -256,9 +261,18 @@ impl Core {
         panes.iter().find(|(_, list)| list.iter().any(|p| p.key == key)).map(|(h, _)| h.clone())
     }
 
-    fn pane(&self, key: u32, cmd: PaneCmd) {
-        if let Some(host) = self.host_of_pane(key) {
-            self.send(&host, HostCmd::Pane(cmd));
+    /// Sends a pane command to whoever owns the pane (a direct pane's task, or its host's
+    /// tmux manager). Returns false if the pane is unknown.
+    fn pane(&self, key: u32, cmd: PaneCmd) -> bool {
+        if let Some(d) = self.ctx.direct.lock().unwrap().get(&key) {
+            return d.tx.send(direct::DirectMsg::Pane(cmd)).is_ok();
+        }
+        match self.host_of_pane(key) {
+            Some(host) => {
+                self.send(&host, HostCmd::Pane(cmd));
+                true
+            }
+            None => false,
         }
     }
 
@@ -285,6 +299,11 @@ impl Core {
     /// Pastes text into a pane (bracketed paste when the app supports it).
     pub fn paste_text(&self, key: u32, text: String) {
         self.pane(key, PaneCmd::Paste { key, text });
+    }
+
+    /// Raw terminal input in the terminal's own encoding (direct panes).
+    pub fn send_input(&self, key: u32, data: Vec<u8>) {
+        self.pane(key, PaneCmd::Input { key, data });
     }
 
     pub fn sound_prefs(&self) -> SoundPrefs {
@@ -380,8 +399,9 @@ impl Core {
     /// Resizes a pane (pins its tmux window's size).
     pub async fn resize_pane(&self, key: u32, cols: u16, rows: u16) -> Result<ResizeOutcome, String> {
         let (tx, rx) = oneshot::channel();
-        let Some(host) = self.host_of_pane(key) else { return Err("pane not found".into()) };
-        self.send(&host, HostCmd::Pane(PaneCmd::Resize { key, cols, rows, reply: tx }));
+        if !self.pane(key, PaneCmd::Resize { key, cols, rows, reply: tx }) {
+            return Err("pane not found".into());
+        }
         rx.await.map_err(|_| "host went away".to_string())?
     }
 
@@ -397,8 +417,9 @@ impl Core {
     /// Gracefully quits the pane's harness and closes it (or kills it with `force`).
     pub async fn terminate_pane(&self, key: u32, force: bool) -> Result<TerminateOutcome, String> {
         let (tx, rx) = oneshot::channel();
-        let Some(host) = self.host_of_pane(key) else { return Ok(TerminateOutcome::Closed) };
-        self.send(&host, HostCmd::Pane(PaneCmd::Terminate { key, force, reply: tx }));
+        if !self.pane(key, PaneCmd::Terminate { key, force, reply: tx }) {
+            return Ok(TerminateOutcome::Closed);
+        }
         rx.await.map_err(|_| "host went away".to_string())?
     }
 

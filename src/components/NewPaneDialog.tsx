@@ -17,6 +17,8 @@ const HARNESSES: { id: Harness; label: string; hint: string }[] = [
 ];
 
 const LAST_HARNESS = "consuls.newPane.harness";
+/** Session choice meaning "no tmux: a plain shell on its own connection". */
+const DIRECT = "\u0000direct";
 
 function loadLastHarness(): Harness {
   try {
@@ -56,7 +58,8 @@ export default function NewPaneDialog() {
     for (const p of hostPanes) if (p.currentPath && p.currentPath !== home) seen.add(p.currentPath);
     return [...seen].slice(0, 6);
   }, [hostPanes, home]);
-  const sessions = useMemo(() => [...new Set(hostPanes.map((p) => p.sessionName))], [hostPanes]);
+  const sessions = useMemo(() => [...new Set(hostPanes.flatMap((p) => (p.tmux ? [p.tmux.sessionName] : [])))], [hostPanes]);
+  const direct = session === DIRECT;
 
   const open = async (path: string) => {
     if (!host) return;
@@ -102,9 +105,10 @@ export default function NewPaneDialog() {
         host,
         cwd,
         harness,
-        name: name.trim() || null,
-        session: session || null,
+        name: direct ? null : name.trim() || null,
+        session: direct ? null : session || null,
         args: args.trim() || null,
+        direct: direct || undefined,
       });
       close();
       useApp.getState().setExpanded(key);
@@ -232,6 +236,7 @@ export default function NewPaneDialog() {
             <Field label="Name (optional)">
               <input
                 value={name}
+                disabled={direct}
                 onChange={(e) => setName(e.target.value)}
                 placeholder={cwd ? `${cwd.split("/").pop()}${harness === "shell" ? "" : `-${harness}`}` : ""}
                 className="w-full rounded-lg bg-ink-900 px-2.5 py-1.5 text-[12.5px] text-mist-100 ring-1 ring-ink-600 outline-none placeholder:text-mist-500 focus:ring-sky-400/60"
@@ -249,9 +254,17 @@ export default function NewPaneDialog() {
                     Add window to {s}
                   </option>
                 ))}
+                <option value={DIRECT}>No tmux (plain shell)</option>
               </select>
             </Field>
           </div>
+          {direct && (
+            <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] leading-snug text-rose-200/90 ring-1 ring-rose-500/25">
+              A plain shell runs on this connection only: it's lost if the connection drops or Harness Manager quits, and it's never
+              revived. Handy for <span className="font-mono">tmux attach</span> / <span className="font-mono">Ctrl+b d</span> or a
+              quick look around.
+            </p>
+          )}
           {harness !== "shell" && (
             <Field label="Extra arguments (optional)">
               <input

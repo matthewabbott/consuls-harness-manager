@@ -262,14 +262,23 @@ mod config_tests {
     }
 }
 
-/// One tmux pane, as shown in the grid.
+/// How a pane's process is hosted.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum PaneKind {
+    /// A tmux pane: survives disconnects; tmux is the source of truth.
+    Tmux,
+    /// A plain shell on a PTY we own (SSH channel or local ConPTY). Lost when the connection
+    /// or the app goes away, and never revived.
+    Direct,
+}
+
+/// Where a tmux pane lives.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct PaneInfo {
-    /// App-wide numeric key; frames for this pane carry it.
-    pub key: u32,
-    pub host: HostId,
+pub struct TmuxLoc {
     /// tmux ids, e.g. `%3`, `@2`, `$1`.
     pub pane_id: String,
     pub window_id: String,
@@ -279,25 +288,41 @@ pub struct PaneInfo {
     pub window_index: u32,
     pub window_name: String,
     pub pane_index: u32,
+    pub dead: bool,
+    pub window_active: bool,
+    pub pane_active: bool,
+    /// Panes in this pane's tmux window (resizing a split window affects its neighbours).
+    pub window_panes: u32,
+    /// Harness Manager has pinned this window's size.
+    pub sized: bool,
+}
+
+/// One pane, as shown in the grid.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct PaneInfo {
+    /// App-wide numeric key; frames for this pane carry it.
+    pub key: u32,
+    pub host: HostId,
+    pub kind: PaneKind,
+    /// Set for [`PaneKind::Tmux`] panes.
+    pub tmux: Option<TmuxLoc>,
     pub width: u16,
     pub height: u16,
     pub current_command: String,
     pub current_path: String,
     pub title: String,
     pub harness: Option<crate::harness::Harness>,
-    pub dead: bool,
     pub alternate_on: bool,
-    pub window_active: bool,
-    pub pane_active: bool,
-    /// Set on panes the app created (and on panes the user has expanded, for stable identity).
+    /// Stable identity: set on panes the app created (and on tmux panes the user has
+    /// expanded), used to key per-pane preferences.
     pub chm_id: Option<String>,
     pub hidden: bool,
-    /// Panes in this pane's tmux window (resizing a split window affects its neighbours).
-    pub window_panes: u32,
-    /// Harness Manager has pinned this window's size.
-    pub sized: bool,
     /// Label ids (see [`LabelDef`]).
     pub labels: Vec<String>,
+    /// Direct panes: why the session ended. The pane stays readable until dismissed.
+    pub ended: Option<String>,
 }
 
 /// Result of a resize request.
@@ -334,6 +359,14 @@ pub struct NewPaneSpec {
     pub session: Option<String>,
     /// Extra command-line arguments for the harness.
     pub args: Option<String>,
+    /// A plain shell on its own PTY instead of a tmux pane (lost on disconnect).
+    #[serde(default)]
+    #[ts(optional)]
+    pub direct: Option<bool>,
+    /// Local shells: which one (a [`LocalShell`] id). Remote direct shells use the login shell.
+    #[serde(default)]
+    #[ts(optional)]
+    pub shell: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

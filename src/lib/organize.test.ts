@@ -7,29 +7,33 @@ import { groupPanes, sortPanes } from "./organize";
 const pane = (key: number, extra: Partial<PaneInfo> = {}): PaneInfo => ({
   key,
   host: "h",
-  paneId: `%${key}`,
-  windowId: "@1",
-  sessionId: "$1",
-  sessionName: "s",
-  sessionGroup: null,
-  windowIndex: 1,
-  windowName: `w${key}`,
-  paneIndex: 1,
+  kind: "tmux",
+  tmux: {
+    paneId: `%${key}`,
+    windowId: "@1",
+    sessionId: "$1",
+    sessionName: "s",
+    sessionGroup: null,
+    windowIndex: 1,
+    windowName: `w${key}`,
+    paneIndex: 1,
+    dead: false,
+    windowActive: true,
+    paneActive: true,
+    windowPanes: 1,
+    sized: false,
+  },
   width: 80,
   height: 24,
   currentCommand: "bash",
   currentPath: "/home/u/proj",
   title: "",
   harness: "shell",
-  dead: false,
   alternateOn: false,
-  windowActive: true,
-  paneActive: true,
   chmId: null,
   hidden: false,
-  windowPanes: 1,
-  sized: false,
   labels: [],
+  ended: null,
   ...extra,
 });
 
@@ -59,7 +63,7 @@ describe("organize", () => {
 
   it("attention-first sort puts unseen needs-input first, working after waiting", () => {
     const attention = { 1: att(1, "none", "working"), 2: att(2, "unacked", "idle"), 3: att(3, "unacked", "needsInput"), 4: att(4, "acked", "idle") };
-    const sorted = sortPanes([pane(1), pane(2), pane(3), pane(4), pane(5)], "attention", (p) => p.windowName, attention, {}, (p) => String(p.key));
+    const sorted = sortPanes([pane(1), pane(2), pane(3), pane(4), pane(5)], "attention", (p) => p.tmux!.windowName, attention, {}, (p) => String(p.key));
     expect(sorted.map((p) => p.key)).toEqual([3, 2, 4, 1, 5]);
   });
 

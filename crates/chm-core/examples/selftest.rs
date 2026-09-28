@@ -4,15 +4,16 @@
 //!   cargo run -p chm-core --example selftest -- <host> <user> [harness] [cwd]
 //!
 //! Creates a throwaway session, then drives it through `Core` exactly like the UI does:
-//! discovery → tile frames → expand (RESET) → typing/keys/paste (RAW) → create a pane
-//! running `harness` (default: shell) → hide/unhide → graceful terminate → cleanup.
+//! discovery → tile frames → expand (RESET) → typing/keys/paste (RAW) → sizing → labels →
+//! a direct (no tmux) shell → reconnect → create a pane running `harness` (default: shell)
+//! → hide/unhide → graceful terminate → cleanup.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chm_core::harness::Harness;
-use chm_core::model::{Activity, Alert, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, TerminateOutcome};
+use chm_core::model::{Activity, Alert, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome};
 use chm_core::{Core, Sink};
 
 #[derive(Default)]
@@ -47,7 +48,8 @@ impl Sink for Recorder {
             2 => self.raw.lock().unwrap().entry(key).or_default().extend_from_slice(&frame[9..]),
             3 => {
                 *self.resets.lock().unwrap().entry(key).or_default() += 1;
-                self.raw.lock().unwrap().insert(key, Vec::new());
+                // The rebuilt terminal starts from the RESET payload (after cols, rows).
+                self.raw.lock().unwrap().insert(key, frame[13..].to_vec());
             }
             _ => {}
         }
@@ -120,7 +122,7 @@ async fn main() -> anyhow::Result<()> {
     let outcome = core.resize_pane(key, 100, 30).await.map_err(anyhow::Error::msg)?;
     println!("     resize outcome: {outcome:?}");
     wait_for("pane is 100x30 and pinned", Duration::from_secs(5), || {
-        pane(key).is_some_and(|p| (p.width, p.height, p.sized) == (100, 30, true))
+        pane(key).is_some_and(|p| (p.width, p.height, p.tmux.as_ref().is_some_and(|t| t.sized)) == (100, 30, true))
     })
     .await;
     wait_for("fresh RESET after resize", Duration::from_secs(5), || {
@@ -130,24 +132,24 @@ async fn main() -> anyhow::Result<()> {
     let wsize = core.exec(&host, &format!("tmux -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
     assert_eq!(wsize.stdout_str().trim(), "manual", "resize pins window-size");
     core.release_pane_size(key);
-    wait_for("release un-pins", Duration::from_secs(5), || pane(key).is_some_and(|p| !p.sized)).await;
+    wait_for("release un-pins", Duration::from_secs(5), || pane(key).is_some_and(|p| p.tmux.as_ref().is_some_and(|t| !t.sized))).await;
     let wsize = core.exec(&host, &format!("tmux -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
     assert_eq!(wsize.stdout_str().trim(), "", "release restores the window's own (unset) window-size");
     core.exec(&host, &format!("tmux -L {socket} split-window -h -t scratch")).await.map_err(anyhow::Error::msg)?;
-    wait_for("split window seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.window_panes == 2)).await;
+    wait_for("split window seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.tmux.as_ref().is_some_and(|t| t.window_panes == 2))).await;
     core.resize_pane(key, 60, 20).await.map_err(anyhow::Error::msg)?;
     wait_for("split pane resized to ~60x20", Duration::from_secs(5), || {
         pane(key).is_some_and(|p| p.width.abs_diff(60) <= 1 && p.height == 20)
     })
     .await;
     core.release_pane_size(key);
-    let split = rec.panes.lock().unwrap().iter().find(|p| p.key != key && p.window_panes == 2).map(|p| p.key);
+    let split = rec.panes.lock().unwrap().iter().find(|p| p.key != key && p.tmux.as_ref().is_some_and(|t| t.window_panes == 2)).map(|p| p.key);
     if let Some(k) = split {
         let _ = core.terminate_pane(k, true).await;
     }
 
     // --- labels: stored on the tmux pane, and changes made elsewhere arrive via the subscription
-    let pane_id = pane(key).expect("pane").pane_id;
+    let pane_id = pane(key).and_then(|p| p.tmux).expect("tmux pane").pane_id;
     core.set_pane_labels(key, vec!["alpha".into(), "beta".into(), "alpha".into()]);
     wait_for("labels applied (deduplicated)", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels == ["alpha", "beta"])).await;
     let stored = core.exec(&host, &format!("tmux -L {socket} show-options -pqv -t '{pane_id}' @chm_labels")).await.map_err(anyhow::Error::msg)?;
@@ -157,8 +159,51 @@ async fn main() -> anyhow::Result<()> {
     core.set_pane_labels(key, vec![]);
     wait_for("labels cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels.is_empty())).await;
 
+    // --- direct shell: a plain PTY session with no tmux; the core answers terminal queries
+    let spec = NewPaneSpec {
+        host: host.clone(),
+        cwd: "/tmp".into(),
+        harness: Harness::Shell,
+        name: None,
+        session: None,
+        args: None,
+        direct: Some(true),
+        shell: None,
+    };
+    let dkey = core.create_pane(spec).await.map_err(anyhow::Error::msg)?;
+    wait_for("direct pane listed", Duration::from_secs(5), || pane(dkey).is_some_and(|p| p.kind == PaneKind::Direct && p.ended.is_none())).await;
+    wait_for("direct tile frame", Duration::from_secs(5), || rec.tiles.lock().unwrap().contains_key(&dkey)).await;
+    core.stream_pane(dkey, true);
+    wait_for("direct RESET on expand", Duration::from_secs(5), || rec.resets.lock().unwrap().contains_key(&dkey)).await;
+    let draw = |k: u32| String::from_utf8_lossy(rec.raw.lock().unwrap().get(&k).map(Vec::as_slice).unwrap_or(&[])).into_owned();
+    core.send_text(dkey, "cd /tmp; printf 'direct-%s\\n' $((6*7)); printf '\\033[6n'; IFS= read -rs -t 3 -d R r; echo \"dsr:${r#??}\"".into());
+    core.send_keys(dkey, vec!["Enter".into()]);
+    wait_for("typed into the direct shell", Duration::from_secs(5), || draw(dkey).contains("direct-42")).await;
+    wait_for("cursor-position query answered by the core", Duration::from_secs(6), || {
+        draw(dkey).split("dsr:").nth(2).is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+    })
+    .await;
+    let resets_before = rec.resets.lock().unwrap().get(&dkey).copied().unwrap_or(0);
+    core.resize_pane(dkey, 100, 30).await.map_err(anyhow::Error::msg)?;
+    wait_for("direct pane resized, with a fresh RESET", Duration::from_secs(5), || {
+        pane(dkey).is_some_and(|p| (p.width, p.height) == (100, 30)) && rec.resets.lock().unwrap().get(&dkey).copied().unwrap_or(0) > resets_before
+    })
+    .await;
+    core.send_text(dkey, "stty size".into());
+    core.send_keys(dkey, vec!["Enter".into()]);
+    wait_for("the shell sees the new size", Duration::from_secs(5), || draw(dkey).contains("30 100")).await;
+    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.send_text(dkey, "sh ~/.local/share/consuls/chm-hook.sh claude Stop </dev/null".into());
+    core.send_keys(dkey, vec!["Enter".into()]);
+    wait_for("hook inside the direct shell reaches its pane (CHM_PANE)", Duration::from_secs(10), || {
+        rec.attention.lock().unwrap().get(&dkey).is_some_and(|a| a.attention == AttentionLevel::Unacked)
+    })
+    .await;
+    core.ack_pane(dkey);
+
     // Drop the connection: it must come back on its own, with the same pane keys, and the
-    // expanded pane must get a fresh RESET without the UI asking again.
+    // expanded pane must get a fresh RESET without the UI asking again. The direct shell is
+    // lost and says so, but stays listed (readable) and is never revived.
     let resets_before = rec.resets.lock().unwrap().get(&key).copied().unwrap_or(0);
     let started = Instant::now();
     core.reconnect(&host);
@@ -169,13 +214,23 @@ async fn main() -> anyhow::Result<()> {
     println!("     (reconnect round trip {:?})", started.elapsed());
     assert!(rec.panes.lock().unwrap().iter().any(|p| p.key == key), "pane key stable across reconnect");
     core.stream_pane(key, false);
+    wait_for("direct pane marked ended, still listed", Duration::from_secs(5), || pane(dkey).is_some_and(|p| p.ended.is_some())).await;
+    println!("     (ended: {:?})", pane(dkey).and_then(|p| p.ended));
+    let resets_before = rec.resets.lock().unwrap().get(&dkey).copied().unwrap_or(0);
+    core.stream_pane(dkey, true);
+    wait_for("an ended pane still re-opens with its history", Duration::from_secs(5), || {
+        rec.resets.lock().unwrap().get(&dkey).copied().unwrap_or(0) > resets_before && draw(dkey).contains("direct-42")
+    })
+    .await;
+    core.terminate_pane(dkey, true).await.map_err(anyhow::Error::msg)?;
+    wait_for("dismissed direct pane removed", Duration::from_secs(5), || pane(dkey).is_none()).await;
 
     // --- lifecycle: list dir, create, hide, terminate
     let listing = core.list_dir(&host, "~").await.map_err(anyhow::Error::msg)?;
     println!("ok   list_dir ~ -> {} ({} entries)", listing.path, listing.entries.len());
     let harness = args.get(2).and_then(|h| Harness::from_name(h)).unwrap_or(Harness::Shell);
     let cwd = args.get(3).cloned().unwrap_or_else(|| listing.path.clone());
-    let spec = NewPaneSpec { host: host.clone(), cwd: cwd.clone(), harness, name: None, session: None, args: None };
+    let spec = NewPaneSpec { host: host.clone(), cwd: cwd.clone(), harness, name: None, session: None, args: None, direct: None, shell: None };
     let new_key = core.create_pane(spec).await.map_err(anyhow::Error::msg)?;
     println!("ok   create_pane {} in {cwd} -> key {new_key}", harness.name());
     let find = |k: u32| rec.panes.lock().unwrap().iter().find(|p| p.key == k).cloned();

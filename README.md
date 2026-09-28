@@ -14,6 +14,10 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
 - **Labels**: tag panes (right-click a tile, or drag it onto a label in the sidebar), then
   group the grid by label, project, status or machine and sort by attention, name or recency.
   Labels are stored on the tmux pane (`@chm_labels`), so every device sees the same tags.
+- **Plain shells**: pick *No tmux* in the new-pane dialog for a shell on its own connection —
+  handy for `tmux attach` / `Ctrl+b d` hopping or a quick look around. They have a red border,
+  are lost if the connection drops (the pane then shows why, stays readable, and is never
+  revived), and keep their own scrollback.
 - **Lifecycle**: start a new agent in any directory (remote folder browser), hide a pane
   without stopping it, or quit an agent gracefully and close its tmux pane.
 - **Resilient**: one SSH connection per machine, keepalives, automatic reconnect with backoff,
@@ -46,6 +50,10 @@ remote host: tmux ≥ 3.2, and (uploaded on demand) ~/.local/share/consuls/{chm-
   injected at launch (`claude --settings`, `codex -c notify=…`, `omp --hook`). For agents you
   start by hand, the bell icon on a machine installs the same hooks globally (opt-in,
   reversible, backed up). Without hooks, Consuls falls back to guessing from output activity.
+- **Plain shells** run on an SSH `pty` channel. Consuls keeps their terminal state itself (10k
+  lines of scrollback) and answers terminal queries (cursor position, device attributes,
+  colours) even while the pane isn't open, so programs behave the same either way. Hooks inside
+  them find their pane through `CHM_PANE`.
 - **Seeding** a pane (on attach, expand, or when tmux pauses a slow client) turns the pane's
   output off, captures it, reads its modes and turns output back on — atomically, so the
   local terminal matches tmux exactly (see `crates/chm-core/tests/live.rs`).

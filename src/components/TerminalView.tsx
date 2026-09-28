@@ -37,6 +37,11 @@ interface Props {
   fontSize: number | null;
   /** Extra overlay content positioned over the terminal's box (e.g. the resize grip). */
   children?: React.ReactNode;
+  /**
+   * Direct pane (no tmux): keys go out in xterm's own encoding, and the core, not xterm,
+   * answers terminal queries (it answers even while the pane isn't open here).
+   */
+  raw?: boolean;
 }
 
 interface Menu {
@@ -55,7 +60,7 @@ function measureCharRatio(): number {
 }
 
 const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
-  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children },
+  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false },
   ref,
 ) {
   const [menu, setMenu] = useState<Menu | null>(null);
@@ -139,6 +144,9 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     termRef.current = term;
     searchRef.current = search;
 
+    // Direct panes: the core answers terminal queries, so xterm must not answer them too.
+    const swallowed = raw ? swallowQueries(term) : [];
+
     // The user's zoom if they set one; otherwise fit the font so the pane's columns fill the
     // available width (a zoomed-in terminal wider than the view scrolls horizontally).
     const fit = () => {
@@ -182,12 +190,15 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       be.streamPane(key, true);
     });
 
-    // Typed text: batch briefly so fast typing becomes few tmux commands.
+    // Typed text: batch briefly so fast typing becomes few commands.
     let textBuf = "";
     let textTimer = 0;
     const flushText = () => {
       textTimer = 0;
-      if (textBuf && b) b.sendText(key, textBuf);
+      if (textBuf && b) {
+        if (raw) b.sendInput(key, textBuf);
+        else b.sendText(key, textBuf);
+      }
       textBuf = "";
     };
     const sendKeys = (keys: string[]) => {
@@ -234,6 +245,16 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       if (mod && e.key.toLowerCase() === "v") {
         return true; // let the browser fire a paste event (handled below)
       }
+      if (raw) {
+        // xterm encodes keys itself. Shift+Enter → LF: a newline in agent prompts, as with tmux panes.
+        if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          textBuf += "\n";
+          flushText();
+          return false;
+        }
+        return true;
+      }
       const name = tmuxKey(e);
       if (name) {
         e.preventDefault();
@@ -244,8 +265,9 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     });
 
     const dataSub = term.onData((data) => {
-      // Anything starting with ESC is xterm answering a terminal query; tmux already did.
-      if (data.startsWith("\x1b")) return;
+      // tmux panes: anything starting with ESC is xterm answering a terminal query, which tmux
+      // already did. Direct panes: keys, mouse and focus reports all go out as-is.
+      if (!raw && data.startsWith("\x1b")) return;
       textBuf += data;
       if (!textTimer) textTimer = window.setTimeout(flushText, 8);
     });
@@ -265,6 +287,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     return () => {
       el.removeEventListener("paste", onPaste, true);
       dataSub.dispose();
+      swallowed.forEach((d) => d.dispose());
       if (textTimer) window.clearTimeout(textTimer);
       flushText();
       detach();
@@ -330,6 +353,28 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     </>
   );
 });
+
+/**
+ * Stops xterm from replying to terminal queries (device attributes, cursor position, mode and
+ * colour reports, …). Returning true marks a sequence handled; OSC colour *sets* still apply.
+ */
+function swallowQueries(term: Terminal): { dispose(): void }[] {
+  const p = term.parser;
+  const yes = () => true;
+  return [
+    p.registerCsiHandler({ final: "c" }, yes), // DA1
+    p.registerCsiHandler({ prefix: ">", final: "c" }, yes), // DA2
+    p.registerCsiHandler({ prefix: "=", final: "c" }, yes), // DA3
+    p.registerCsiHandler({ final: "n" }, yes), // DSR (status, cursor position)
+    p.registerCsiHandler({ prefix: "?", final: "n" }, yes), // DECDSR
+    p.registerCsiHandler({ intermediates: "$", final: "p" }, yes), // DECRQM
+    p.registerCsiHandler({ prefix: "?", intermediates: "$", final: "p" }, yes), // DECRQM (private)
+    p.registerCsiHandler({ prefix: ">", final: "q" }, yes), // XTVERSION
+    p.registerCsiHandler({ prefix: "?", final: "u" }, yes), // kitty keyboard flags
+    p.registerDcsHandler({ intermediates: "$", final: "q" }, yes), // DECRQSS
+    ...[4, 10, 11, 12].map((n) => p.registerOscHandler(n, (data) => data.includes("?"))), // colour queries
+  ];
+}
 
 function MenuItem({ children, hint, onClick, disabled }: { children: React.ReactNode; hint?: string; onClick(): void; disabled?: boolean }) {
   return (

@@ -30,12 +30,12 @@ export default function SizeMenu({ pane, sizing }: { pane: PaneInfo; sizing: Siz
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        title="How this pane's tmux window is sized"
+        title={pane.tmux ? "How this pane's tmux window is sized" : "Terminal size"}
         className={`flex items-center gap-1.5 rounded-lg px-2 py-1 font-mono text-[11px] ring-1 transition-colors ${
           sizing.resizedElsewhere ? "text-ember-300 ring-ember-400/40" : "text-mist-300 ring-ink-700 hover:bg-ink-700"
         }`}
       >
-        {pane.sized && <Lock className="h-3 w-3 text-mist-500" />}
+        {pane.tmux?.sized && <Lock className="h-3 w-3 text-mist-500" />}
         {pane.width}×{pane.height}
         <span className="text-mist-500">· {label}</span>
         <ChevronDown className="h-3 w-3 text-mist-500" />
@@ -73,7 +73,7 @@ export default function SizeMenu({ pane, sizing }: { pane: PaneInfo; sizing: Siz
             checked={sizing.mode === "scale" && !maximized}
             onClick={pick(() => sizing.setMode("scale"))}
           />
-          {pane.sized && (
+          {pane.tmux?.sized && (
             <>
               <div className="my-1 h-px bg-ink-700" />
               <Item
@@ -84,10 +84,10 @@ export default function SizeMenu({ pane, sizing }: { pane: PaneInfo; sizing: Siz
               />
             </>
           )}
-          {pane.windowPanes > 1 && (
+          {(pane.tmux?.windowPanes ?? 1) > 1 && (
             <p className="px-2.5 pt-1.5 pb-1 text-[10.5px] leading-snug text-mist-500">
-              This pane shares its tmux window with {pane.windowPanes - 1} other pane{pane.windowPanes > 2 ? "s" : ""}; resizing it
-              resizes them too.
+              This pane shares its tmux window with {pane.tmux!.windowPanes - 1} other pane{pane.tmux!.windowPanes > 2 ? "s" : ""};
+              resizing it resizes them too.
             </p>
           )}
         </div>

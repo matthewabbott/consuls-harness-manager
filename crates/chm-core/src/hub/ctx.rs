@@ -24,7 +24,12 @@ pub(crate) struct Ctx {
     pub known_hosts: Arc<KnownHosts>,
     pub tailnet: RwLock<TailnetStatus>,
     pub host_states: Mutex<BTreeMap<HostId, HostState>>,
+    /// Every pane per host as the UI sees it: tmux panes, then direct panes.
     pub panes: Mutex<BTreeMap<HostId, Vec<PaneInfo>>>,
+    tmux_panes: Mutex<BTreeMap<HostId, Vec<PaneInfo>>>,
+    /// Direct (non-tmux) panes by key. They belong to no host actor: an ended session stays
+    /// readable after its connection is gone.
+    pub direct: Mutex<BTreeMap<u32, super::direct::DirectHandle>>,
     /// Pane keys the UI currently shows; `None` means "all".
     pub visible: RwLock<Option<HashSet<u32>>>,
     pane_keys: Mutex<PaneKeys>,
@@ -41,6 +46,8 @@ impl Ctx {
             tailnet: RwLock::new(TailnetStatus::default()),
             host_states: Mutex::new(BTreeMap::new()),
             panes: Mutex::new(BTreeMap::new()),
+            tmux_panes: Mutex::new(BTreeMap::new()),
+            direct: Mutex::new(BTreeMap::new()),
             visible: RwLock::new(None),
             pane_keys: Mutex::new((HashMap::new(), 1)),
             attention: Mutex::new(AttentionBook::default()),
@@ -88,17 +95,50 @@ impl Ctx {
         self.emit(CoreEvent::HostRemoved { id: id.to_string() });
     }
 
+    /// The host's tmux panes changed.
     pub fn set_panes(&self, host: &str, panes: Vec<PaneInfo>) {
+        self.tmux_panes.lock().unwrap().insert(host.to_string(), panes);
+        self.republish(host);
+    }
+
+    /// A direct pane was added or changed.
+    pub fn set_direct(&self, info: PaneInfo) {
+        let host = info.host.clone();
+        if let Some(d) = self.direct.lock().unwrap().get_mut(&info.key) {
+            d.info = info;
+        }
+        self.republish(&host);
+    }
+
+    pub fn remove_direct(&self, key: u32) {
+        let removed = self.direct.lock().unwrap().remove(&key);
+        if let Some(d) = removed {
+            self.republish(&d.info.host);
+        }
+    }
+
+    /// Recomputes the host's merged pane list and emits it if it changed.
+    fn republish(&self, host: &str) {
+        let mut merged = self.tmux_panes.lock().unwrap().get(host).cloned().unwrap_or_default();
+        merged.extend(self.direct.lock().unwrap().values().filter(|d| d.info.host == host).map(|d| d.info.clone()));
         {
             let mut all = self.panes.lock().unwrap();
-            if all.get(host) == Some(&panes) {
+            if all.get(host) == Some(&merged) {
                 return;
             }
-            all.insert(host.to_string(), panes.clone());
+            all.insert(host.to_string(), merged.clone());
             let alive: HashSet<u32> = all.values().flatten().map(|p| p.key).collect();
             self.attention.lock().unwrap().retain(&alive);
         }
-        self.emit(CoreEvent::Panes { host: host.to_string(), panes });
+        self.emit(CoreEvent::Panes { host: host.to_string(), panes: merged });
+    }
+
+    /// A fresh app-wide pane key (direct panes; tmux panes use [`Ctx::pane_key`]).
+    pub fn alloc_key(&self) -> u32 {
+        let mut guard = self.pane_keys.lock().unwrap();
+        let k = guard.1;
+        guard.1 += 1;
+        k
     }
 
     /// Stable numeric key for a pane; changes if the tmux server restarts (ids get reused).

@@ -12,6 +12,7 @@ import type { LabelDef } from "./bindings/LabelDef";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
+import type { TmuxLoc } from "./bindings/TmuxLoc";
 import type { TailnetPeer } from "./bindings/TailnetPeer";
 import { FRAME_RAW, FRAME_RESET, FRAME_TILE, encodeFrame, encodeTile, type TileRun, type TileSnapshot } from "./frames";
 
@@ -110,35 +111,46 @@ interface MockPane {
   cursor: [number, number] | null;
 }
 
-function pane(key: number, host: string, extra: Partial<PaneInfo>, lines: Seg[][], cursor: [number, number] | null = null): MockPane {
+type PaneExtra = Partial<Omit<PaneInfo, "tmux">> & { tmux?: Partial<TmuxLoc> | null };
+
+function pane(key: number, host: string, extra: PaneExtra, lines: Seg[][], cursor: [number, number] | null = null): MockPane {
+  const { tmux, ...rest } = extra;
   return {
     info: {
       key,
       host,
-      paneId: `%${key}`,
-      windowId: `@${key}`,
-      sessionId: `$${key}`,
-      sessionName: "main",
-      sessionGroup: null,
-      windowIndex: 1,
-      windowName: "bash",
-      paneIndex: 1,
+      kind: tmux === null ? "direct" : "tmux",
+      tmux:
+        tmux === null
+          ? null
+          : {
+              paneId: `%${key}`,
+              windowId: `@${key}`,
+              sessionId: `$${key}`,
+              sessionName: "main",
+              sessionGroup: null,
+              windowIndex: 1,
+              windowName: "bash",
+              paneIndex: 1,
+              dead: false,
+              windowActive: true,
+              paneActive: true,
+              windowPanes: 1,
+              sized: false,
+              ...tmux,
+            },
       width: 100,
       height: 28,
       currentCommand: "bash",
       currentPath: "/home/consulear",
       title: "",
       harness: "shell",
-      dead: false,
       alternateOn: false,
-      windowActive: true,
-      paneActive: true,
       chmId: null,
       hidden: false,
-      windowPanes: 1,
-      sized: false,
       labels: [],
-      ...extra,
+      ended: null,
+      ...rest,
     },
     lines,
     cursor,
@@ -183,10 +195,12 @@ export function mockBackend(): Backend {
     { id: "spark2", phase: { phase: "awaitingTailscaleCheck", url: "https://login.tailscale.com/a/example" }, facts: null },
   ];
   const panes: MockPane[] = [
-    pane(1, "spark-d683", { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp", currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
-    pane(2, "spark-d683", { sessionName: "consuls", windowName: "claude", currentCommand: "claude", harness: "claude", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22 }, claudeLines, [4, 15]),
-    pane(3, "spark-d683", { sessionName: "fix-owui-3", windowName: "codex", currentCommand: "codex", harness: "codex", labels: ["urgent"], title: "", currentPath: "/home/consulear/Programming/open-webui", width: 66, height: 18 }, codexLines, [4, 13]),
-    pane(4, "spark-d683", { sessionName: "dual-setup-2", windowName: "bash", currentPath: "/home/consulear/models" }, shellLines, [21, 3]),
+    pane(1, "spark-d683", { tmux: { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp" }, currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
+    pane(2, "spark-d683", { tmux: { sessionName: "consuls", windowName: "claude" }, currentCommand: "claude", harness: "claude", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22 }, claudeLines, [4, 15]),
+    pane(3, "spark-d683", { tmux: { sessionName: "fix-owui-3", windowName: "codex" }, currentCommand: "codex", harness: "codex", labels: ["urgent"], title: "", currentPath: "/home/consulear/Programming/open-webui", width: 66, height: 18 }, codexLines, [4, 13]),
+    pane(4, "spark-d683", { tmux: { sessionName: "dual-setup-2", windowName: "bash" }, currentPath: "/home/consulear/models" }, shellLines, [21, 3]),
+    pane(5, "spark-d683", { tmux: null, currentPath: "/home/consulear", chmId: "d5" }, shellLines, [21, 3]),
+    pane(6, "spark-d683", { tmux: null, currentPath: "/home/consulear/irc", currentCommand: "bash", chmId: "d6", ended: "Connection lost" }, shellLines),
   ];
 
   const sendTiles = () => {
@@ -344,7 +358,19 @@ export function mockBackend(): Backend {
       const key = 100 + panes.length;
       const name = spec.cwd.split("/").filter(Boolean).pop() ?? "agent";
       panes.push(
-        pane(key, spec.host, { sessionName: `${name}-${spec.harness}`, windowName: spec.harness, currentCommand: spec.harness === "shell" ? "bash" : spec.harness, harness: spec.harness, currentPath: spec.cwd, chmId: "mock" }, [[["Starting " + spec.harness + "…", P(8)]]], [0, 1]),
+        pane(
+          key,
+          spec.host,
+          {
+            tmux: spec.direct ? null : { sessionName: `${name}-${spec.harness}`, windowName: spec.harness },
+            currentCommand: spec.harness === "shell" ? "bash" : spec.harness,
+            harness: spec.harness,
+            currentPath: spec.cwd,
+            chmId: `mock${key}`,
+          },
+          [[["Starting " + spec.harness + "…", P(8)]]],
+          [0, 1],
+        ),
       );
       emitPanes(spec.host);
       setTimeout(sendTiles, 50);
@@ -353,7 +379,7 @@ export function mockBackend(): Backend {
     resizePane: async (key, cols, rows) => {
       const p = panes.find((p) => p.info.key === key);
       if (!p) throw new Error("no such pane");
-      p.info = { ...p.info, width: cols, height: rows, sized: true, chmId: p.info.chmId ?? `mock${key}` };
+      p.info = { ...p.info, width: cols, height: rows, tmux: p.info.tmux && { ...p.info.tmux, sized: true }, chmId: p.info.chmId ?? `mock${key}` };
       emitPanes(p.info.host);
       if (streaming.has(key)) {
         const header = new Uint8Array(4);
@@ -370,7 +396,7 @@ export function mockBackend(): Backend {
     releasePaneSize: async (key) => {
       const p = panes.find((p) => p.info.key === key);
       if (!p) return;
-      p.info = { ...p.info, sized: false };
+      p.info = { ...p.info, tmux: p.info.tmux && { ...p.info.tmux, sized: false } };
       emitPanes(p.info.host);
     },
     createLabel: async (name, color) => {
@@ -428,6 +454,9 @@ export function mockBackend(): Backend {
       const p = path === "~" || !path ? "/home/consulear" : path;
       const dirs = p === "/home/consulear" ? ["Programming", "models", "notes", ".config"] : p.endsWith("Programming") ? ["consuls", "terrarium-annotator", "terrarium-agent", "open-webui"] : ["src", "docs", "tests"];
       return { path: p, home: "/home/consulear", entries: [...dirs.map((name) => ({ name, isDir: true })), { name: "README.md", isDir: false }] };
+    },
+    sendInput: async (key, data) => {
+      if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(data === "\r" ? "\r\n" : data)));
     },
     pasteText: async (key, text) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(text.replace(/\n/g, "\r\n"))));

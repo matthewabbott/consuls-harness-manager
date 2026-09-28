@@ -93,6 +93,12 @@ pub fn paste_text(state: State<'_, AppState>, key: u32, text: String) {
     state.core.paste_text(key, text);
 }
 
+/// Raw terminal input (direct panes): xterm's own encoding of keys, mouse and replies.
+#[tauri::command]
+pub fn send_input(state: State<'_, AppState>, key: u32, data: String) {
+    state.core.send_input(key, data.into_bytes());
+}
+
 #[tauri::command]
 pub async fn integration_status(state: State<'_, AppState>, host: String) -> CmdResult<IntegrationStatus> {
     state.core.integration_status(&host).await

@@ -20,4 +20,12 @@ session: string | null,
 /**
  * Extra command-line arguments for the harness.
  */
-args: string | null, };
+args: string | null, 
+/**
+ * A plain shell on its own PTY instead of a tmux pane (lost on disconnect).
+ */
+direct?: boolean, 
+/**
+ * Local shells: which one (a [`LocalShell`] id). Remote direct shells use the login shell.
+ */
+shell?: string, };

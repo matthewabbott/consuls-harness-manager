@@ -6,6 +6,7 @@ pub mod harness;
 pub mod hub;
 pub mod integration;
 pub mod model;
+pub mod pty;
 pub mod ssh;
 pub mod tailscale;
 pub mod term;

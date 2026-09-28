@@ -36,6 +36,25 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   windows, so attach one client per `session_group`.
 - Claude Code only runs hooks in folders it trusts (the trust prompt blocks them).
 
+## Direct panes (no tmux)
+
+- `PaneInfo.kind` is `tmux` or `direct`; tmux-only fields live in `PaneInfo.tmux`. Use
+  `lib/panes.ts` (`paneIdentity`, `paneWhere`, `paneName`) instead of reaching into `tmux`.
+- The core answers terminal queries for direct panes (`term::Collector` → `PtyWrite`), so the
+  expanded xterm must not: `TerminalView` swallows DA/DSR/DECRQM/OSC-colour queries when `raw`.
+- Hooks route by `CHM_PANE=direct:<chm_id>` (set when the shell starts); `chm-hook.sh` prefers
+  `$TMUX_PANE`, so tmux started inside a direct shell still routes to the tmux pane.
+- Direct panes outlive their connection: they sit in `Ctx::direct`, not in a host actor.
+
+## Testing
+
+- Core end-to-end: `cargo run -p chm-core --example selftest -- <host> <user>` (private tmux
+  socket; covers sizing, labels, direct shells, reconnect, hooks).
+- Real UI end-to-end: start the app with
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
+  `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs`. The driver evaluates JS in
+  the WebView and sends real key events; keep tests on direct shells or private sockets.
+
 ## Windows dev gotchas
 
 - Git Bash rewrites `/tmp`-style args into Windows paths; prefix with `MSYS_NO_PATHCONV=1`.

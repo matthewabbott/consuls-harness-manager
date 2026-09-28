@@ -81,10 +81,13 @@ async fn watch(host: &str, user: &str) -> anyhow::Result<()> {
                 CoreEvent::Panes { host, panes } => {
                     println!("[panes] {host}: {} panes", panes.len());
                     for p in panes {
+                        let place = match &p.tmux {
+                            Some(t) => format!("{} {}:{} '{}'", t.pane_id, t.session_name, t.window_index, t.window_name),
+                            None => format!("direct{}", p.ended.as_deref().map(|e| format!(" (ended: {e})")).unwrap_or_default()),
+                        };
                         println!(
-                            "   key={} {} {}:{} '{}' cmd={} harness={:?} {}x{} title={:?}",
-                            p.key, p.pane_id, p.session_name, p.window_index, p.window_name, p.current_command,
-                            p.harness, p.width, p.height, p.title
+                            "   key={} {place} cmd={} harness={:?} {}x{} title={:?}",
+                            p.key, p.current_command, p.harness, p.width, p.height, p.title
                         );
                     }
                 }

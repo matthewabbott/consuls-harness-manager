@@ -51,9 +51,10 @@ export function useTerminalSizing(
   const pref = useViewPrefs((s) => s.prefs[id]);
   const maximized = useUi((s) => s.maximized);
   const settled = useSettledSize(frameRef);
-  const split = pane.windowPanes > 1;
+  const split = (pane.tmux?.windowPanes ?? 1) > 1;
   const mode: SizeMode = pref?.sizeMode ?? (split ? "scale" : "fit");
-  const effective: SizeMode = maximized ? "fit" : mode;
+  // An ended direct pane has nothing left to resize: just show what it had.
+  const effective: SizeMode = pane.ended ? "scale" : maximized ? "fit" : mode;
   const fontSize = effective === "scale" ? (pref?.fontSize ?? null) : (pref?.fontSize ?? FONT.default);
   const lastRequest = useRef<{ cols: number; rows: number; at: number } | null>(null);
   const [nonce, setNonce] = useState(0);

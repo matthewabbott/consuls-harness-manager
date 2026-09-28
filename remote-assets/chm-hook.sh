@@ -7,7 +7,9 @@
 # the omp extension). Contract: never print, never fail, never block the agent — the
 # output and exit code of some hooks (e.g. Claude's PermissionRequest/Stop) have meaning.
 
-[ -n "$TMUX_PANE" ] || exit 0
+# tmux panes have $TMUX_PANE; direct (no tmux) shells started by Consuls export CHM_PANE.
+pane=${TMUX_PANE:-$CHM_PANE}
+[ -n "$pane" ] || exit 0
 harness=$1
 event=$2
 payload=""
@@ -33,8 +35,8 @@ mkdir -p "$state_dir" 2>/dev/null
 ts=$(date +%s 2>/dev/null)
 # One short line per event, appended in a single write (atomic below PIPE_BUF).
 printf '{"v":1,"ts":%s,"pane":"%s","harness":"%s","event":"%s","detail":"%s","session":"%s","transcript":"%s"}\n' \
-  "${ts:-0}" "$TMUX_PANE" "$harness" "$event" "$detail" "$session" "$transcript" \
+  "${ts:-0}" "$pane" "$harness" "$event" "$detail" "$session" "$transcript" \
   >>"$state_dir/events.jsonl" 2>/dev/null
 
-__TMUX__ set-option -p -t "$TMUX_PANE" @chm_state "$event" >/dev/null 2>&1
+[ -n "$TMUX_PANE" ] && __TMUX__ set-option -p -t "$TMUX_PANE" @chm_state "$event" >/dev/null 2>&1
 exit 0

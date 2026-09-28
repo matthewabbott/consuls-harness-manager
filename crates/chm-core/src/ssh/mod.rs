@@ -214,6 +214,14 @@ impl SshConnection {
         Ok(channel)
     }
 
+    /// Opens a session channel with a PTY and runs `command` in it (interactive sessions).
+    pub async fn open_pty(&self, command: &str, cols: u16, rows: u16) -> Result<Channel, SshError> {
+        let channel = self.handle.channel_open_session().await?;
+        channel.request_pty(true, "xterm-256color", cols as u32, rows as u32, 0, 0, &[]).await?;
+        channel.exec(true, command).await?;
+        Ok(channel)
+    }
+
     pub async fn open_sftp(&self) -> Result<russh_sftp::client::SftpSession, SshError> {
         let channel = self.handle.channel_open_session().await?;
         channel.request_subsystem(true, "sftp").await?;

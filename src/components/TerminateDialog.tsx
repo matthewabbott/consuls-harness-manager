@@ -6,6 +6,7 @@ import { useApp } from "../store/app";
 import { harnessLabel, isAgent } from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
 import { displayTitle } from "./MiniTile";
+import { isDirect, paneWhere } from "../lib/panes";
 
 export default function TerminateDialog({ paneKey }: { paneKey: number }) {
   const close = () => useApp.getState().setTerminating(null);
@@ -16,6 +17,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
 
   if (!pane) return null;
   const agent = isAgent(pane.harness);
+  const direct = isDirect(pane);
 
   const run = async (force: boolean) => {
     setState("working");
@@ -60,13 +62,18 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
             </Button>
             <Button kind="danger" onClick={() => run(false)} disabled={state === "working"}>
               {state === "working" && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-              {agent ? `Quit ${harnessLabel(pane.harness)} & close` : "Close pane"}
+              {direct ? "Close shell" : agent ? `Quit ${harnessLabel(pane.harness)} & close` : "Close pane"}
             </Button>
           </>
         )
       }
     >
-      {state === "stuck" ? (
+      {direct ? (
+        <p className="text-[13px] leading-relaxed text-mist-300">
+          This hangs up the plain shell on {pane.host}; anything still running in it gets the hang-up signal and exits. Plain shells
+          can't be reattached later.
+        </p>
+      ) : state === "stuck" ? (
         <p className="text-[13px] leading-relaxed text-mist-300">
           <span className="font-mono text-mist-100">{stuckOn || "The process"}</span> is still running in this pane. Force-killing closes the
           tmux pane immediately; anything unsaved in it is lost.
@@ -77,7 +84,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
             <>
               Consuls will ask {harnessLabel(pane.harness)} to exit (so it can save its session), then close the tmux pane{" "}
               <span className="font-mono text-mist-100">
-                {pane.sessionName}:{pane.windowIndex}.{pane.paneIndex}
+                {paneWhere(pane, true)}
               </span>{" "}
               on {pane.host}.
             </>
@@ -85,7 +92,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
             <>
               This closes the tmux pane{" "}
               <span className="font-mono text-mist-100">
-                {pane.sessionName}:{pane.windowIndex}.{pane.paneIndex}
+                {paneWhere(pane, true)}
               </span>{" "}
               on {pane.host}.
             </>

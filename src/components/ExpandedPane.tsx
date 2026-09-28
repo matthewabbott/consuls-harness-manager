@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, BellOff, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search, X, ZoomIn, ZoomOut } from "lucide-react";
 
 import { backend } from "../ipc/backend";
 import { useMemo, useRef, useState } from "react";
@@ -7,7 +7,7 @@ import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
-import { paneIdentity } from "../lib/panes";
+import { isDirect, paneIdentity, paneWhere } from "../lib/panes";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
 import ResizeHandle from "./ResizeHandle";
 import Composer, { type ComposerHandle } from "./Composer";
@@ -44,6 +44,12 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
     backend().then((b) => b.setPaneMuted(pane.key, !muted));
   };
   const connected = hosts[pane.host]?.phase.phase === "connected";
+  const direct = isDirect(pane);
+  const ended = pane.ended !== null;
+  const dismiss = () => {
+    backend().then((b) => b.terminatePane(pane.key, true));
+    back();
+  };
   const filmstripWidth = useUi((s) => s.filmstripWidth);
   const filmstripCollapsed = useUi((s) => s.filmstripCollapsed);
   const maximized = useUi((s) => s.maximized);
@@ -87,7 +93,8 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           <div className="min-w-0">
             <div className="truncate text-[14.5px] font-semibold text-mist-100">{displayTitle(pane)}</div>
             <div className="truncate font-mono text-[11px] text-mist-500">
-              {harnessLabel(pane.harness)} · {pane.host} · {pane.sessionName}:{pane.windowIndex}.{pane.paneIndex} ·{" "}
+              {harnessLabel(pane.harness)} · {pane.host} ·{" "}
+              {direct ? <span className="text-rose-300/80">plain shell (no tmux)</span> : paneWhere(pane, true)} ·{" "}
               {shortPath(pane.currentPath, home)} · {pane.width}×{pane.height}
             </div>
           </div>
@@ -143,24 +150,34 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
                 backend().then((b) => b.setPaneHidden(pane.key, true));
                 back();
               }}
-              title="Hide from dashboard (keeps running in tmux)"
+              title={direct ? "Hide from dashboard (keeps running)" : "Hide from dashboard (keeps running in tmux)"}
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-ink-700 hover:text-mist-100"
             >
               <EyeOff className="h-3.5 w-3.5" /> Hide
             </button>
-            <button
-              onClick={() => useApp.getState().setTerminating(pane.key)}
-              title="Quit the agent and close the tmux pane"
-              className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-rose-400/10 hover:text-rose-400"
-            >
-              <Power className="h-3.5 w-3.5" /> Close
-            </button>
+            {ended ? (
+              <button
+                onClick={dismiss}
+                title="Remove this ended shell"
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-ink-700 hover:text-mist-100"
+              >
+                <X className="h-3.5 w-3.5" /> Dismiss
+              </button>
+            ) : (
+              <button
+                onClick={() => useApp.getState().setTerminating(pane.key)}
+                title={direct ? "Hang up this shell" : "Quit the agent and close the tmux pane"}
+                className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-rose-400/10 hover:text-rose-400"
+              >
+                <Power className="h-3.5 w-3.5" /> Close
+              </button>
+            )}
           </div>
         </header>
 
         <div
           ref={frameRef}
-          className="scroll-thin relative min-h-0 flex-1 overflow-auto rounded-xl bg-[#0e1119] p-3 ring-1 ring-ink-700"
+          className={`scroll-thin relative min-h-0 flex-1 overflow-auto rounded-xl bg-[#0e1119] p-3 ring-1 ${direct ? "ring-rose-500/40" : "ring-ink-700"}`}
           onMouseDown={() => setTimeout(() => termRef.current?.focus(), 0)}
         >
           <TerminalView
@@ -171,6 +188,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             autoFocus={!isAgent(pane.harness)}
             onCompose={() => composerRef.current?.focus()}
             fontSize={sizing.fontSize}
+            raw={direct}
           >
             {sizing.effective !== "scale" && (
               <ResizeGrip
@@ -198,13 +216,24 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
               }}
             />
           )}
-          {!connected && (
+          {ended && (
+            <div className="sticky top-0 left-0 z-10 mb-2 flex items-center gap-3 rounded-lg bg-rose-950/85 px-3 py-2 text-[12px] text-rose-100 ring-1 ring-rose-500/40 backdrop-blur">
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold">Session ended</span> · {pane.ended}. Its output stays readable here; plain shells are never
+                revived.
+              </span>
+              <button onClick={dismiss} className="shrink-0 rounded-md bg-rose-400/15 px-2.5 py-1 font-medium ring-1 ring-rose-400/40 hover:bg-rose-400/25">
+                Dismiss
+              </button>
+            </div>
+          )}
+          {!connected && !direct && (
             <div className="absolute inset-0 flex items-center justify-center bg-ink-950/40 backdrop-blur-[1px]">
               <span className="rounded-full bg-ink-800/90 px-3 py-1 text-[12px] text-mist-300 ring-1 ring-ink-600">Reconnecting…</span>
             </div>
           )}
         </div>
-        <div className="mt-2.5 flex shrink-0 items-center gap-3">
+        <div className={`mt-2.5 flex shrink-0 items-center gap-3 ${ended ? "pointer-events-none opacity-40" : ""}`}>
           <QuickKeys paneKey={pane.key} harness={pane.harness} />
           <span className="ml-auto text-[11px] text-mist-500">
             Click the terminal to type into it directly · Ctrl+F search · Ctrl+Shift+G grid
@@ -218,7 +247,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           resetTo={COMPOSER.default}
           className="mt-0.5"
         />
-        <div className="shrink-0" style={{ height: composerHeight }}>
+        <div className={`shrink-0 ${ended ? "pointer-events-none opacity-40" : ""}`} style={{ height: composerHeight }}>
           <Composer
             ref={composerRef}
             pane={pane}

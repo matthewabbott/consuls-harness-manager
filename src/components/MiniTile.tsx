@@ -1,4 +1,4 @@
-import { EyeOff, Lock, Power } from "lucide-react";
+import { EyeOff, Lock, Power, X } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -8,6 +8,7 @@ import { shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { beginTileDrag, consumeJustDragged } from "../store/drag";
 import { resolveLabels } from "../lib/labels";
+import { isDirect, paneName, paneWhere } from "../lib/panes";
 import { paintTile } from "../term/tilePainter";
 import { getTile, subscribeTile } from "../term/tiles";
 import HarnessBadge from "./HarnessBadge";
@@ -21,7 +22,7 @@ export function displayTitle(p: PaneInfo): string {
   const t = cleanTitle(p.title);
   if (t && t !== p.host && !t.startsWith(p.host + ":") && !/^[\w.-]+@[\w.-]+:/.test(t)) return t;
   if (p.harness === "shell" || p.harness === null) return shortPath(p.currentPath);
-  return p.windowName;
+  return paneName(p);
 }
 
 interface Props {
@@ -63,7 +64,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
     let frame = 0;
     const paint = () => {
       frame = 0;
-      paintTile(canvas, getTile(pane.key), stale !== null);
+      paintTile(canvas, getTile(pane.key), stale !== null || pane.ended !== null);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(paint);
@@ -77,10 +78,15 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
       ro.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [pane.key, stale]);
+  }, [pane.key, stale, pane.ended]);
 
   const title = displayTitle(pane);
-  const where = `${pane.sessionName}:${pane.windowIndex}${pane.paneIndex > 1 || !pane.paneActive ? `.${pane.paneIndex}` : ""}`;
+  const where = paneWhere(pane);
+  const direct = isDirect(pane);
+  const sized = pane.tmux?.sized ?? false;
+  // Direct panes don't reconnect: they're either live or ended (never "stale").
+  const overlay = direct ? (pane.ended ? "Ended" : null) : stale;
+  const dismiss = () => backend().then((b) => b.terminatePane(pane.key, true));
 
   return (
     <article
@@ -94,7 +100,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
         e.preventDefault();
         useApp.getState().setTileMenu({ pane, x: e.clientX, y: e.clientY });
       }}
-      className={`tile group relative cursor-pointer overflow-hidden rounded-xl border border-ink-700/70 ${glow}`}
+      className={`tile group relative cursor-pointer overflow-hidden rounded-xl border ${direct ? "border-rose-500/35" : "border-ink-700/70"} ${glow}`}
     >
       <header className={`flex items-center gap-2.5 ${compact ? "h-8 px-2.5" : "h-10 px-3"}`}>
         <HarnessBadge harness={pane.harness} size={compact ? 18 : 22} />
@@ -120,19 +126,31 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
         {!compact && (
           <>
             <span
-              className="shrink-0 rounded bg-ink-700/80 px-1.5 py-0.5 font-mono text-[10.5px] text-mist-400 group-hover:hidden"
-              title={`${pane.paneId} · ${pane.width}×${pane.height}${pane.sized ? " · size pinned by Harness Manager" : ""}`}
+              className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10.5px] group-hover:hidden ${direct ? "bg-rose-500/10 text-rose-300/80" : "bg-ink-700/80 text-mist-400"}`}
+              title={
+                direct
+                  ? `Plain shell without tmux · ${pane.width}×${pane.height} · lost if the connection drops`
+                  : `${pane.tmux?.paneId} · ${pane.width}×${pane.height}${sized ? " · size pinned by Harness Manager" : ""}`
+              }
             >
-              {pane.sized && <Lock className="mr-1 inline h-2.5 w-2.5 align-[-1px]" />}
+              {sized && <Lock className="mr-1 inline h-2.5 w-2.5 align-[-1px]" />}
               {where}
             </span>
             <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>
-              <TileAction title="Hide from dashboard (keeps running)" onClick={() => backend().then((b) => b.setPaneHidden(pane.key, true))}>
-                <EyeOff className="h-3.5 w-3.5" />
-              </TileAction>
-              <TileAction title="Quit & close…" danger onClick={() => useApp.getState().setTerminating(pane.key)}>
-                <Power className="h-3.5 w-3.5" />
-              </TileAction>
+              {pane.ended ? (
+                <TileAction title="Dismiss" onClick={dismiss}>
+                  <X className="h-3.5 w-3.5" />
+                </TileAction>
+              ) : (
+                <>
+                  <TileAction title="Hide from dashboard (keeps running)" onClick={() => backend().then((b) => b.setPaneHidden(pane.key, true))}>
+                    <EyeOff className="h-3.5 w-3.5" />
+                  </TileAction>
+                  <TileAction title={direct ? "Close shell…" : "Quit & close…"} danger onClick={() => useApp.getState().setTerminating(pane.key)}>
+                    <Power className="h-3.5 w-3.5" />
+                  </TileAction>
+                </>
+              )}
             </div>
           </>
         )}
@@ -154,7 +172,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
       )}
       <div className={`relative overflow-hidden rounded-lg bg-[#0e1119] ring-1 ring-black/40 ${compact ? "mx-1.5 mb-1.5 aspect-[16/9]" : "mx-2 mb-2 aspect-[16/10]"}`}>
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
-        {waiting && !stale && (
+        {waiting && !overlay && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-ink-950/85 to-transparent px-2 pt-6 pb-2">
             <span
               className={`flex max-w-full items-center gap-1.5 truncate rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 backdrop-blur ${
@@ -168,9 +186,14 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
             </span>
           </div>
         )}
-        {stale && (
+        {overlay && (
           <div className="absolute inset-0 flex items-center justify-center bg-ink-950/30 backdrop-blur-[1px]">
-            <span className="rounded-full bg-ink-800/90 px-3 py-1 text-[11px] font-medium text-mist-300 ring-1 ring-ink-600">{stale}</span>
+            <span
+              title={pane.ended ?? undefined}
+              className={`rounded-full px-3 py-1 text-[11px] font-medium ring-1 ${direct ? "bg-rose-950/80 text-rose-200 ring-rose-500/40" : "bg-ink-800/90 text-mist-300 ring-ink-600"}`}
+            >
+              {direct ? `Ended · ${pane.ended}` : overlay}
+            </span>
           </div>
         )}
       </div>

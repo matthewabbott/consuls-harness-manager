@@ -8,6 +8,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info};
 
 use super::ctx::Ctx;
+use super::direct::{self, DirectSpec};
 use super::tmux_mgr::{PaneCmd, TmuxManager};
 use crate::model::{DirEntryInfo, DirListing, HostConfig, HostErrorKind, HostFacts, HostPhase, NewPaneSpec, NoticeLevel};
 use crate::ssh::exec::{self, ExecOutput};
@@ -378,6 +379,10 @@ async fn connected_phase(
                     mgr.resend_all();
                 }
                 Some(HostCmd::Pane(cmd)) => mgr.pane_cmd(cmd).await,
+                Some(HostCmd::CreatePane { spec, reply }) if spec.direct == Some(true) => {
+                    let res = create_direct(&conn, &mut mgr, ctx, spec, facts.as_ref()).await;
+                    let _ = reply.send(res);
+                }
                 Some(HostCmd::CreatePane { spec, reply }) => {
                     let res = if tmux_ok { mgr.create_pane(spec).await } else { Err("tmux 3.2+ isn't available on this host".into()) };
                     let _ = reply.send(res);
@@ -437,7 +442,7 @@ async fn connected_phase(
                     // Events replayed right after (re)connecting that are clearly old: fold
                     // them into one summary instead of a burst of pings.
                     let stale = replaying_since.elapsed() < Duration::from_secs(3) && event.ts + 20 < now;
-                    let alerted = mgr.on_hook(&event, stale);
+                    let alerted = direct::route_hook(ctx, &event, stale) || mgr.on_hook(&event, stale);
                     if stale && !alerted && matches!(event.event.as_str(), "Stop" | "PermissionRequest" | "AskUserQuestion") {
                         missed += 1;
                         last_missed_at = Some(std::time::Instant::now());
@@ -464,6 +469,45 @@ async fn connected_phase(
             _ = conn.closed() => return Outcome::Lost("connection closed".into()),
         }
     }
+}
+
+/// Initial size of a direct shell until the UI fits it.
+pub(crate) const DIRECT_COLS: u16 = 120;
+pub(crate) const DIRECT_ROWS: u16 = 34;
+
+/// Starts a plain login shell on its own PTY channel (no tmux), in `spec.cwd`, with
+/// `CHM_PANE` set so hooks fired inside it find their way back to the pane.
+async fn create_direct(
+    conn: &SshConnection,
+    mgr: &mut TmuxManager,
+    ctx: &Arc<Ctx>,
+    spec: NewPaneSpec,
+    facts: Option<&HostFacts>,
+) -> Result<u32, String> {
+    let chm_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+    // Deployed even for a plain shell: hooks of agents started in it by hand use the script.
+    let assets = mgr.ensure_assets().await;
+    let launch = spec.harness.launch_command(assets.as_ref(), spec.args.as_deref().unwrap_or(""));
+    // Run through sh so the user's own shell (bash, zsh, fish, …) only has to parse a plain
+    // command line; then exec their login shell interactively.
+    let script = r#"cd "$1" 2>/dev/null; CHM_PANE="$2"; COLORTERM=truecolor; export CHM_PANE COLORTERM; exec "${SHELL:-/bin/sh}" -l"#;
+    let command = format!("exec sh -c {} chm {} {}", exec::sh_quote(script), exec::sh_quote(&spec.cwd), exec::sh_quote(&format!("direct:{chm_id}")));
+    let pty = crate::pty::ssh(conn, &command, DIRECT_COLS, DIRECT_ROWS).await.map_err(|e| e.to_string())?;
+    let shell = facts.map(|f| f.shell.rsplit('/').next().unwrap_or("shell").to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| "shell".into());
+    if let Some(cmd) = &launch {
+        // Typed like a user would; the tty buffers it until the shell is ready.
+        let _ = pty.input.send(crate::pty::PtyInput::Data(format!("{cmd}\r").into_bytes()));
+    }
+    let spec = DirectSpec {
+        host: spec.host,
+        cwd: spec.cwd,
+        command: shell,
+        harness: (spec.harness != crate::harness::Harness::Shell).then_some(spec.harness),
+        chm_id,
+        cols: DIRECT_COLS,
+        rows: DIRECT_ROWS,
+    };
+    Ok(direct::spawn(ctx, &tokio::runtime::Handle::current(), spec, pty))
 }
 
 #[cfg(test)]

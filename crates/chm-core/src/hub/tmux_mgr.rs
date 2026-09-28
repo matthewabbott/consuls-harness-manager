@@ -14,7 +14,7 @@ use super::ctx::Ctx;
 use super::frames;
 use crate::harness::Harness;
 use crate::integration::assets::{self, Assets};
-use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, ResizeOutcome, TerminateOutcome};
+use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc};
 use crate::ssh::SshConnection;
 use crate::ssh::exec;
 use crate::term::TileTerm;
@@ -35,6 +35,8 @@ pub(crate) enum PaneCmd {
     Keys { key: u32, keys: Vec<String> },
     /// Literal text typed by the user.
     Text { key: u32, text: String },
+    /// Raw terminal input (xterm's own encoding; direct panes).
+    Input { key: u32, data: Vec<u8> },
     /// Paste text (bracketed if the app asked for it).
     Paste { key: u32, text: String },
     /// Composer prompt: paste it, give the TUI a moment, then press Enter.
@@ -300,29 +302,33 @@ impl TmuxManager {
         PaneInfo {
             key: p.key,
             host: self.host.clone(),
-            pane_id: format!("%{}", r.pane),
-            window_id: format!("@{}", r.window),
-            session_id: format!("${}", r.session),
-            session_name: r.session_name.clone(),
-            session_group: r.session_group.clone(),
-            window_index: r.window_index,
-            window_name: r.window_name.clone(),
-            pane_index: r.pane_index,
+            kind: PaneKind::Tmux,
+            tmux: Some(TmuxLoc {
+                pane_id: format!("%{}", r.pane),
+                window_id: format!("@{}", r.window),
+                session_id: format!("${}", r.session),
+                session_name: r.session_name.clone(),
+                session_group: r.session_group.clone(),
+                window_index: r.window_index,
+                window_name: r.window_name.clone(),
+                pane_index: r.pane_index,
+                dead: r.dead,
+                window_active: r.window_active,
+                pane_active: r.pane_active,
+                window_panes: r.window_panes,
+                sized: r.sized,
+            }),
             width: r.width,
             height: r.height,
             current_command: r.current_command.clone(),
             current_path: r.current_path.clone(),
             title: r.title.clone(),
             harness: Harness::detect(&r.current_command, r.chm_harness.as_deref()),
-            dead: r.dead,
             alternate_on: r.alternate_on,
-            window_active: r.window_active,
-            pane_active: r.pane_active,
             chm_id: r.chm_id.clone(),
             hidden: r.chm_hidden,
-            window_panes: r.window_panes,
-            sized: r.sized,
             labels: r.labels.clone(),
+            ended: None,
         }
     }
 
@@ -587,18 +593,25 @@ impl TmuxManager {
         self.home = home;
     }
 
-    /// Creates a window (in a new session by default), types the harness launch command
-    /// into its shell, and returns the new pane's key.
-    pub async fn create_pane(&mut self, spec: NewPaneSpec) -> Result<u32, String> {
-        let home = self.home.clone().ok_or("host details unknown (still connecting?)")?;
+    /// Deploys the hook assets once per connection. `None` if that failed (launching without
+    /// hooks still works; notifications fall back to heuristics).
+    pub async fn ensure_assets(&mut self) -> Option<Assets> {
+        let home = self.home.clone()?;
         if self.assets.is_none() {
             match assets::ensure(&self.conn, &home).await {
                 Ok(a) => self.assets = Some(a),
-                // Launching without hooks still works; notifications fall back to heuristics.
                 Err(e) => self.ctx.notice(Some(&self.host), NoticeLevel::Warning, format!("Couldn't install hooks: {e}")),
             }
         }
-        let launch = spec.harness.launch_command(self.assets.as_ref(), spec.args.as_deref().unwrap_or(""));
+        self.assets.clone()
+    }
+
+    /// Creates a window (in a new session by default), types the harness launch command
+    /// into its shell, and returns the new pane's key.
+    pub async fn create_pane(&mut self, spec: NewPaneSpec) -> Result<u32, String> {
+        self.home.as_ref().ok_or("host details unknown (still connecting?)")?;
+        let assets = self.ensure_assets().await;
+        let launch = spec.harness.launch_command(assets.as_ref(), spec.args.as_deref().unwrap_or(""));
 
         let base = spec
             .name
@@ -820,6 +833,10 @@ impl TmuxManager {
                         return;
                     }
                 }
+            }
+            PaneCmd::Input { key, data } => {
+                // tmux panes take keys, not raw bytes; this is only reached for plain text.
+                Box::pin(self.pane_cmd(PaneCmd::Text { key, text: String::from_utf8_lossy(&data).into_owned() })).await;
             }
             PaneCmd::Paste { key, text } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };

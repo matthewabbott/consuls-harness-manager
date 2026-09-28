@@ -43,6 +43,8 @@ export interface Backend {
   sendKeys(key: number, keys: string[]): Promise<void>;
   sendText(key: number, text: string): Promise<void>;
   pasteText(key: number, text: string): Promise<void>;
+  /** Raw terminal input in xterm's own encoding (direct panes). */
+  sendInput(key: number, data: string): Promise<void>;
   submitPrompt(key: number, text: string): Promise<void>;
   createPane(spec: NewPaneSpec): Promise<number>;
   setPaneHidden(key: number, hidden: boolean): Promise<void>;
@@ -103,6 +105,7 @@ async function tauriBackend(): Promise<Backend> {
     sendKeys: (key, keys) => invoke("send_keys", { key, keys }),
     sendText: (key, text) => invoke("send_text", { key, text }),
     pasteText: (key, text) => invoke("paste_text", { key, text }),
+    sendInput: (key, data) => invoke("send_input", { key, data }),
     submitPrompt: (key, text) => invoke("submit_prompt", { key, text }),
     createPane: (spec) => invoke("create_pane", { spec }),
     setPaneHidden: (key, hidden) => invoke("set_pane_hidden", { key, hidden }),

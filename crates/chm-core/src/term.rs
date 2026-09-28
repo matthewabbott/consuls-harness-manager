@@ -1,13 +1,19 @@
-//! Per-pane terminal state (alacritty_terminal, visible screen only) and the compact
-//! snapshot encoding the frontend paints mini tiles from.
+//! Per-pane terminal state (alacritty_terminal) and the compact snapshot encoding the
+//! frontend paints mini tiles from.
+//!
+//! tmux panes keep only the visible screen (tmux has the history). Direct panes keep their
+//! own scrollback, answer terminal queries through an [`EventListener`], and can be
+//! [serialized](TileTerm::serialize) to rebuild an expanded view from scratch.
+
+use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::Term;
-use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::event::{Event, EventListener, VoidListener};
+use alacritty_terminal::grid::{Dimensions, Row};
 use alacritty_terminal::index::{Column, Line};
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Config, TermMode};
-use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, StdSyncHandler};
+use alacritty_terminal::vte::ansi::{Color, NamedColor, Processor, Rgb, StdSyncHandler};
 
 struct Size {
     cols: usize,
@@ -26,18 +32,48 @@ impl Dimensions for Size {
     }
 }
 
-pub struct TileTerm {
-    term: Term<VoidListener>,
+pub struct TileTerm<L: EventListener = VoidListener> {
+    term: Term<L>,
     parser: Processor<StdSyncHandler>,
     cols: u16,
     rows: u16,
 }
 
-impl TileTerm {
+impl TileTerm<VoidListener> {
+    /// Visible screen only, no replies (tmux panes).
     pub fn new(cols: u16, rows: u16) -> Self {
+        Self::with_listener(cols, rows, 0, VoidListener)
+    }
+}
+
+/// Collects what a terminal asks of its host (query replies, title, bell, ...).
+#[derive(Clone, Default)]
+pub struct Collector(Arc<Mutex<Vec<Event>>>);
+
+impl EventListener for Collector {
+    fn send_event(&self, event: Event) {
+        match event {
+            Event::Wakeup | Event::MouseCursorDirty | Event::CursorBlinkingChange => {}
+            other => self.0.lock().unwrap().push(other),
+        }
+    }
+}
+
+impl Collector {
+    pub fn drain(&self) -> Vec<Event> {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+impl<L: EventListener> TileTerm<L> {
+    pub fn with_listener(cols: u16, rows: u16, history: usize, listener: L) -> Self {
         let size = Size { cols: cols.max(1) as usize, rows: rows.max(1) as usize };
-        let config = Config { scrolling_history: 0, ..Config::default() };
-        Self { term: Term::new(config, &size, VoidListener), parser: Processor::new(), cols, rows }
+        let config = Config { scrolling_history: history, ..Config::default() };
+        Self { term: Term::new(config, &size, listener), parser: Processor::new(), cols, rows }
+    }
+
+    pub fn mode(&self) -> TermMode {
+        *self.term.mode()
     }
 
     pub fn size(&self) -> (u16, u16) {
@@ -146,6 +182,193 @@ impl TileTerm {
         }
         out
     }
+
+    /// Bytes that rebuild this terminal (scrollback, screen, cursor and modes) on a fresh
+    /// terminal of the same size. Wrapped rows are written through, so the receiving terminal
+    /// knows they're one logical line (reflow, copy). While an app is on the alternate screen
+    /// only that screen is available.
+    pub fn serialize(&self) -> Vec<u8> {
+        let grid = self.term.grid();
+        let mode = *self.term.mode();
+        let cols = grid.columns();
+        let alt = mode.contains(TermMode::ALT_SCREEN);
+        let mut out: Vec<u8> = Vec::with_capacity((grid.history_size() + grid.screen_lines()) * 48);
+        out.extend_from_slice(b"\x1bc");
+        if alt {
+            out.extend_from_slice(b"\x1b[?1049h\x1b[H");
+        }
+        let top = if alt { 0 } else { -(grid.history_size() as i32) };
+        let bottom = grid.screen_lines() as i32 - 1;
+        for l in top..=bottom {
+            let row = &grid[Line(l)];
+            let wrapped = cols > 0 && row[Column(cols - 1)].flags.contains(Flags::WRAPLINE);
+            write_row(&mut out, row, cols, wrapped);
+            if l != bottom && !wrapped {
+                out.extend_from_slice(b"\r\n");
+            }
+        }
+        let cursor = grid.cursor.point;
+        out.extend_from_slice(format!("\x1b[{};{}H", cursor.line.0.max(0) + 1, cursor.column.0 + 1).as_bytes());
+        let flags: [(TermMode, &[u8]); 12] = [
+            (TermMode::APP_CURSOR, b"\x1b[?1h"),
+            (TermMode::APP_KEYPAD, b"\x1b="),
+            (TermMode::BRACKETED_PASTE, b"\x1b[?2004h"),
+            (TermMode::MOUSE_REPORT_CLICK, b"\x1b[?1000h"),
+            (TermMode::MOUSE_DRAG, b"\x1b[?1002h"),
+            (TermMode::MOUSE_MOTION, b"\x1b[?1003h"),
+            (TermMode::UTF8_MOUSE, b"\x1b[?1005h"),
+            (TermMode::SGR_MOUSE, b"\x1b[?1006h"),
+            (TermMode::FOCUS_IN_OUT, b"\x1b[?1004h"),
+            (TermMode::ALTERNATE_SCROLL, b"\x1b[?1007h"),
+            (TermMode::INSERT, b"\x1b[4h"),
+            (TermMode::LINE_FEED_NEW_LINE, b"\x1b[20h"),
+        ];
+        for (flag, seq) in flags {
+            if mode.contains(flag) {
+                out.extend_from_slice(seq);
+            }
+        }
+        if !mode.contains(TermMode::LINE_WRAP) {
+            out.extend_from_slice(b"\x1b[?7l");
+        }
+        if !mode.contains(TermMode::SHOW_CURSOR) {
+            out.extend_from_slice(b"\x1b[?25l");
+        }
+        out
+    }
+}
+
+/// Writes one grid row as SGR-styled text. Rows that wrap are written in full (so the
+/// receiving terminal wraps too); others drop trailing default blanks.
+fn write_row(out: &mut Vec<u8>, row: &Row<Cell>, cols: usize, wrapped: bool) {
+    let mut end = cols;
+    if !wrapped {
+        while end > 0 {
+            let c = &row[Column(end - 1)];
+            let blank = (c.c == ' ' || c.c == '\0' || c.flags.contains(Flags::WIDE_CHAR_SPACER))
+                && c.bg == Color::Named(NamedColor::Background)
+                && !c.flags.intersects(Flags::INVERSE | Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
+            if !blank {
+                break;
+            }
+            end -= 1;
+        }
+    }
+    let mut pen: Option<(Color, Color, Flags)> = None;
+    let mut buf = [0u8; 4];
+    for col in 0..end {
+        let c = &row[Column(col)];
+        if c.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+            continue;
+        }
+        let style = (c.fg, c.bg, c.flags & STYLE_FLAGS);
+        if pen != Some(style) {
+            out.extend_from_slice(sgr(c).as_bytes());
+            pen = Some(style);
+        }
+        let ch = if c.c == '\0' { ' ' } else { c.c };
+        out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
+        if let Some(extra) = c.zerowidth() {
+            for z in extra {
+                out.extend_from_slice(z.encode_utf8(&mut buf).as_bytes());
+            }
+        }
+    }
+    if pen.is_some() {
+        out.extend_from_slice(b"\x1b[0m");
+    }
+}
+
+const STYLE_FLAGS: Flags = Flags::BOLD
+    .union(Flags::ITALIC)
+    .union(Flags::ALL_UNDERLINES)
+    .union(Flags::INVERSE)
+    .union(Flags::DIM)
+    .union(Flags::STRIKEOUT)
+    .union(Flags::HIDDEN);
+
+/// A full SGR sequence (starting from a reset) for the cell's style.
+fn sgr(c: &Cell) -> String {
+    let mut p: Vec<String> = vec!["0".into()];
+    let f = c.flags;
+    if f.contains(Flags::BOLD) {
+        p.push("1".into());
+    }
+    if f.contains(Flags::DIM) {
+        p.push("2".into());
+    }
+    if f.contains(Flags::ITALIC) {
+        p.push("3".into());
+    }
+    if f.contains(Flags::DOUBLE_UNDERLINE) {
+        p.push("4:2".into());
+    } else if f.contains(Flags::UNDERCURL) {
+        p.push("4:3".into());
+    } else if f.contains(Flags::DOTTED_UNDERLINE) {
+        p.push("4:4".into());
+    } else if f.contains(Flags::DASHED_UNDERLINE) {
+        p.push("4:5".into());
+    } else if f.intersects(Flags::ALL_UNDERLINES) {
+        p.push("4".into());
+    }
+    if f.contains(Flags::INVERSE) {
+        p.push("7".into());
+    }
+    if f.contains(Flags::HIDDEN) {
+        p.push("8".into());
+    }
+    if f.contains(Flags::STRIKEOUT) {
+        p.push("9".into());
+    }
+    if let Some(s) = color_sgr(c.fg, false) {
+        p.push(s);
+    }
+    if let Some(s) = color_sgr(c.bg, true) {
+        p.push(s);
+    }
+    format!("\x1b[{}m", p.join(";"))
+}
+
+fn color_sgr(c: Color, bg: bool) -> Option<String> {
+    let (base, bright, ext) = if bg { (40, 100, 48) } else { (30, 90, 38) };
+    match c {
+        Color::Spec(rgb) => Some(format!("{ext};2;{};{};{}", rgb.r, rgb.g, rgb.b)),
+        Color::Indexed(i) => Some(format!("{ext};5;{i}")),
+        Color::Named(n) => {
+            let idx = match n {
+                NamedColor::Foreground | NamedColor::Background | NamedColor::Cursor | NamedColor::DimForeground => return None,
+                NamedColor::BrightForeground => 15,
+                n if (n as usize) < 16 => n as usize,
+                // Dim variants: the dim attribute is carried separately, use the normal colour.
+                n => (n as usize).saturating_sub(NamedColor::DimBlack as usize).min(7),
+            };
+            Some(if idx < 8 { format!("{}", base + idx) } else { format!("{}", bright + idx - 8) })
+        }
+    }
+}
+
+/// The UI's terminal palette (src/term/palette.ts), for answering colour queries (OSC 4/10/11/12).
+pub fn palette_rgb(index: usize) -> Rgb {
+    const ANSI: [u32; 16] = [
+        0x1c2130, 0xf07178, 0xa6d189, 0xe5c07b, 0x7aa2f7, 0xc792ea, 0x7fdbca, 0xc9d1e3, 0x5c6680, 0xff8b92, 0xb9e39a,
+        0xf2d38f, 0x9ab8ff, 0xd7a8f5, 0x9eeadb, 0xeef1f8,
+    ];
+    let hex = |v: u32| Rgb { r: (v >> 16) as u8, g: (v >> 8) as u8, b: v as u8 };
+    match index {
+        0..=15 => hex(ANSI[index]),
+        16..=231 => {
+            let i = index - 16;
+            let step = |v: usize| if v == 0 { 0 } else { (55 + v * 40) as u8 };
+            Rgb { r: step(i / 36), g: step((i / 6) % 6), b: step(i % 6) }
+        }
+        232..=255 => {
+            let v = (8 + (index - 232) * 10) as u8;
+            Rgb { r: v, g: v, b: v }
+        }
+        256 => hex(0xc9d1e3), // foreground
+        258 => hex(0xf5a25d), // cursor
+        _ => hex(0x0e1119),   // background (257) and anything else
+    }
 }
 
 fn put_u16(out: &mut Vec<u8>, v: u16) {
@@ -229,6 +452,49 @@ mod tests {
         assert_eq!(u16::from_le_bytes([snap[6], snap[7]]), 1);
         // row 0 has two runs: "hi " default and "red" in palette 1
         assert_eq!(u16::from_le_bytes([snap[9], snap[10]]), 2);
+    }
+
+    /// Feeding `serialize()` into a fresh terminal of the same size reproduces the screen,
+    /// the scrollback, wrapped lines, styles and the cursor.
+    #[test]
+    fn serialize_round_trips() {
+        let mut t = TileTerm::with_listener(12, 4, 100, VoidListener);
+        for i in 0..8 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        t.feed(b"\x1b[1;31mbold red\x1b[0m and a line that wraps around\r\n$ ");
+        let bytes = t.serialize();
+        let mut u = TileTerm::with_listener(12, 4, 100, VoidListener);
+        u.feed(&bytes);
+        assert_eq!(u.text(), t.text());
+        assert_eq!(u.snapshot(), t.snapshot(), "styles and cursor survive");
+        assert_eq!(u.term.grid().history_size(), t.term.grid().history_size(), "scrollback survives");
+        // A second round trip is stable (wrapped rows stayed wrapped).
+        assert_eq!(u.serialize(), bytes);
+    }
+
+    #[test]
+    fn serialize_restores_modes_and_alt_screen() {
+        let mut t = TileTerm::with_listener(10, 3, 50, VoidListener);
+        t.feed(b"prompt$ \x1b[?1049h\x1b[?1h\x1b[?2004h\x1b[?25l\x1b[2;3Hvim");
+        let mut u = TileTerm::with_listener(10, 3, 50, VoidListener);
+        u.feed(&t.serialize());
+        assert_eq!(u.text(), t.text());
+        assert_eq!(u.mode(), t.mode());
+    }
+
+    #[test]
+    fn collector_answers_queries() {
+        let c = Collector::default();
+        let mut t = TileTerm::with_listener(10, 3, 0, c.clone());
+        t.feed(b"ab\x1b[6n\x1b[c");
+        let replies: Vec<String> = c
+            .drain()
+            .into_iter()
+            .filter_map(|e| if let Event::PtyWrite(s) = e { Some(s) } else { None })
+            .collect();
+        assert_eq!(replies[0], "\x1b[1;3R");
+        assert!(replies[1].starts_with("\x1b[?"));
     }
 
     #[test]
