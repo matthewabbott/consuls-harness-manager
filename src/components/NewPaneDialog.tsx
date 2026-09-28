@@ -10,6 +10,7 @@ import { hostLabel, isLocal, shortPath } from "../lib/hosts";
 import { isRoot, joinPath, parentPath, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useFiles } from "../store/files";
+import { useRedact } from "../store/recording";
 import FolderNav from "./FolderNav";
 import HarnessBadge from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
@@ -56,6 +57,7 @@ export default function NewPaneDialog() {
   const [session, setSession] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
+  const red = useRedact();
 
   const home = hosts[host]?.facts?.home ?? "";
   const hostPanes = panes[host] ?? [];
@@ -156,7 +158,7 @@ export default function NewPaneDialog() {
       width={640}
       footer={
         <>
-          {error && <span className="mr-auto truncate text-[12px] text-rose-400">{error}</span>}
+          {error && <span className="mr-auto truncate text-[12px] text-rose-400">{red(error)}</span>}
           <Button onClick={close}>Cancel</Button>
           <Button kind="primary" onClick={create} disabled={!cwd || creating}>
             {creating && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
@@ -173,7 +175,7 @@ export default function NewPaneDialog() {
             <div className="flex flex-wrap gap-1.5">
               {connected.map((h) => (
                 <Chip key={h} on={h === host} onClick={() => setHost(h)}>
-                  {hostLabel(h)}
+                  {red(hostLabel(h))}
                 </Chip>
               ))}
             </div>
@@ -217,7 +219,7 @@ export default function NewPaneDialog() {
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {recent.map((r) => (
                   <Chip key={r} on={r === cwd} onClick={() => open(r)} mono>
-                    {shortPath(r, home)}
+                    {red(shortPath(r, home))}
                   </Chip>
                 ))}
               </div>
@@ -233,7 +235,7 @@ export default function NewPaneDialog() {
                 value={pathInput}
                 onChange={(e) => setPathInput(e.target.value)}
                 spellCheck={false}
-                className="min-w-0 flex-1 rounded-lg bg-ink-900 px-2.5 py-1.5 font-mono text-[12px] text-mist-100 ring-1 ring-ink-600 outline-none focus:ring-sky-400/60"
+                className="personal min-w-0 flex-1 rounded-lg bg-ink-900 px-2.5 py-1.5 font-mono text-[12px] text-mist-100 ring-1 ring-ink-600 outline-none focus:ring-sky-400/60"
               />
               <Button type="submit">Go</Button>
             </form>
@@ -266,7 +268,7 @@ export default function NewPaneDialog() {
                 )}
                 {dirs.map((d) => (
                   <DirRow key={d.name} onClick={() => open(joinPath(cwd, d.name))}>
-                    <Folder className="h-3.5 w-3.5 text-sky-400/80" /> {d.name}
+                    <Folder className="h-3.5 w-3.5 text-sky-400/80" /> {red(d.name)}
                   </DirRow>
                 ))}
                 {listing && dirs.length === 0 && <div className="px-3 py-2 text-[12px] text-mist-500">No subfolders.</div>}
@@ -283,7 +285,7 @@ export default function NewPaneDialog() {
                 value={name}
                 disabled={direct}
                 onChange={(e) => setName(e.target.value)}
-                placeholder={cwd ? `${cwd.split("/").pop()}${harness === "shell" ? "" : `-${harness}`}` : ""}
+                placeholder={cwd ? `${red(cwd.split("/").pop() ?? "")}${harness === "shell" ? "" : `-${harness}`}` : ""}
                 className="w-full rounded-lg bg-ink-900 px-2.5 py-1.5 text-[12.5px] text-mist-100 ring-1 ring-ink-600 outline-none placeholder:text-mist-500 focus:ring-sky-400/60"
               />
             </Field>
@@ -291,7 +293,7 @@ export default function NewPaneDialog() {
               <select
                 value={noTmux ? DIRECT : session}
                 disabled={noTmux}
-                title={noTmux ? `tmux isn't installed on ${host}` : undefined}
+                title={noTmux ? `tmux isn't installed on ${red(host)}` : undefined}
                 onChange={(e) => setSession(e.target.value)}
                 className="w-full rounded-lg bg-ink-900 px-2 py-1.5 text-[12.5px] text-mist-100 ring-1 ring-ink-600 outline-none disabled:opacity-60"
               >
@@ -307,7 +309,7 @@ export default function NewPaneDialog() {
           </div>
           {direct && !local && (
             <p className="rounded-lg bg-rose-500/10 px-3 py-2 text-[11.5px] leading-snug text-rose-200/90 ring-1 ring-rose-500/25">
-              {noTmux && <>tmux isn't installed on {host}, so this opens a plain shell. </>}A plain shell runs on this connection only:
+              {noTmux && <>tmux isn't installed on {red(host)}, so this opens a plain shell. </>}A plain shell runs on this connection only:
               it's lost if the connection drops or Harness Manager quits, and it's never revived. Handy for <span className="font-mono">tmux attach</span> / <span className="font-mono">Ctrl+b d</span> or a
               quick look around.
             </p>

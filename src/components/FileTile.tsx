@@ -4,10 +4,12 @@ import { memo } from "react";
 import { hostLabel, shortPath } from "../lib/hosts";
 import { parentPath } from "../lib/paths";
 import { useEditor } from "../store/editor";
+import { useRedact } from "../store/recording";
 
 /** An open file in the grid: name, where it lives, and its first lines. */
 function FileTile({ id, home, showHost = false }: { id: string; home?: string | null; showHost?: boolean }) {
   const file = useEditor((s) => s.files[id]);
+  const r = useRedact();
   if (!file) return null;
   const open = () => useEditor.getState().setActive(id);
   return (
@@ -22,12 +24,12 @@ function FileTile({ id, home, showHost = false }: { id: string; home?: string | 
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <span className="truncate text-[13px] leading-tight font-medium text-mist-100">{file.name}</span>
+            <span className="truncate text-[13px] leading-tight font-medium text-mist-100">{r(file.name)}</span>
             {file.dirty && <span title="Unsaved changes" className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember-400" />}
           </div>
           <div className="truncate font-mono text-[10.5px] leading-tight text-mist-500">
-            {showHost && <span className="text-mist-400">{hostLabel(file.host)} · </span>}
-            {shortPath(parentPath(file.path), home)}
+            {showHost && <span className="text-mist-400">{r(hostLabel(file.host))} · </span>}
+            {r(shortPath(parentPath(file.path), home))}
           </div>
         </div>
         <span className="shrink-0 rounded bg-sky-400/10 px-1.5 py-0.5 font-mono text-[10.5px] text-sky-300/80 group-hover:hidden">file</span>
@@ -45,7 +47,7 @@ function FileTile({ id, home, showHost = false }: { id: string; home?: string | 
       </header>
       <div className="relative mx-2 mb-2 aspect-[16/10] overflow-hidden rounded-lg bg-[#0e1119] px-2.5 py-2 ring-1 ring-black/40">
         {file.kind === "text" ? (
-          <pre className="font-mono text-[9.5px] leading-[1.35] whitespace-pre text-mist-300">{file.preview}</pre>
+          <pre className="font-mono text-[9.5px] leading-[1.35] whitespace-pre text-mist-300">{r(file.preview)}</pre>
         ) : (
           <div className="flex h-full items-center justify-center text-[11px] text-mist-500">
             {file.kind === "loading" ? "Loading…" : file.kind === "image" ? "Image" : file.kind === "error" ? "Couldn't open" : "Can't be edited here"}

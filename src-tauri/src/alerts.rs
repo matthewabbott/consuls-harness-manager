@@ -2,6 +2,7 @@
 //! window is minimized), Windows toasts that open the pane when clicked, and a taskbar flash.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 
 use chm_core::model::{Alert, AlertKind, SoundPrefs};
@@ -87,15 +88,21 @@ fn gain(volume: f32) -> f32 {
 pub struct Alerter {
     audio: Mutex<Sender<(AlertKind, f32)>>,
     prefs: Mutex<SoundPrefs>,
+    /// Recording mode: toasts don't name the pane or the machine.
+    recording: AtomicBool,
 }
 
 impl Alerter {
     pub fn new() -> Self {
-        Self { audio: Mutex::new(start_audio()), prefs: Mutex::new(SoundPrefs::default()) }
+        Self { audio: Mutex::new(start_audio()), prefs: Mutex::new(SoundPrefs::default()), recording: AtomicBool::new(false) }
     }
 
     pub fn set_prefs(&self, prefs: SoundPrefs) {
         *self.prefs.lock().unwrap() = prefs;
+    }
+
+    pub fn set_recording(&self, on: bool) {
+        self.recording.store(on, Ordering::Relaxed);
     }
 
     /// Plays a chime regardless of the enabled switches (Settings' test buttons).
@@ -115,11 +122,27 @@ impl Alerter {
             let _ = w.request_user_attention(Some(UserAttentionType::Informational));
         }
         if alert.toast {
-            show_toast(app, &alert);
+            if self.recording.load(Ordering::Relaxed) {
+                show_toast(app, &anonymous(&alert));
+            } else {
+                show_toast(app, &alert);
+            }
         }
         // The UI also hears about it (e.g. to pulse the tile).
         let _ = app.emit("alert", &alert);
     }
+}
+
+/// The toast for recording mode: what happened, not where (titles and machine names can be
+/// personal).
+fn anonymous(alert: &Alert) -> Alert {
+    let title = match alert.kind {
+        AlertKind::NeedsInput => "A pane needs your input",
+        AlertKind::Bell => "A pane rang its bell",
+        AlertKind::Subtask => "A subtask finished",
+        AlertKind::Finished | AlertKind::Summary => "A pane is waiting for you",
+    };
+    Alert { title: title.into(), body: "Recording mode is on.".into(), ..alert.clone() }
 }
 
 #[cfg(windows)]
@@ -166,5 +189,22 @@ mod tests {
             assert!(s.iter().all(|x| (x * gain(1.0)).abs() <= 1.0), "{kind:?} doesn't clip at full volume");
         }
         assert_eq!(gain(0.0), 0.0);
+    }
+
+    #[test]
+    fn recording_mode_toasts_name_nothing() {
+        let alert = Alert {
+            key: Some(3),
+            kind: AlertKind::NeedsInput,
+            title: "consulear@spark-d683: Claude needs you".into(),
+            body: "Allow Bash(rm -rf /home/consulear/x)? · spark-d683".into(),
+            sound: true,
+            toast: true,
+            flash: true,
+        };
+        let a = anonymous(&alert);
+        assert_eq!(a.title, "A pane needs your input");
+        assert!(!a.body.contains("consulear") && !a.body.contains("spark"));
+        assert_eq!(a.key, Some(3), "clicking it still opens the pane");
     }
 }

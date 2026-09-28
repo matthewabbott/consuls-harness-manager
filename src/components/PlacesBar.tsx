@@ -8,11 +8,13 @@ import { hostLabel } from "../lib/hosts";
 import { baseName, isWithin, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useFiles } from "../store/files";
+import { useRedact } from "../store/recording";
 
 export default function PlacesBar({ host, path, onGo }: { host: string; path: string | null; onGo(path: string): void }) {
   const def = useFiles((s) => s.defaults[host] ?? null);
   const home = useApp((s) => s.hosts[host]?.facts?.home ?? null);
   const known = useDrives(host);
+  const r = useRedact();
   const drives = known ?? [];
 
   // Exactly one chip lights up: the most specific place the current folder is.
@@ -28,13 +30,13 @@ export default function PlacesBar({ host, path, onGo }: { host: string; path: st
   return (
     <div className="flex flex-wrap items-center gap-1">
       {def && (
-        <Place on={active === "default"} onClick={() => onGo(def)} title={`Default folder on ${hostLabel(host)}: ${def}`}>
+        <Place on={active === "default"} onClick={() => onGo(def)} title={r(`Default folder on ${hostLabel(host)}: ${def}`)}>
           <Star className="h-3 w-3 fill-current text-ember-400" />
-          <span className="max-w-28 truncate">{baseName(def)}</span>
+          <span className="max-w-28 truncate">{r(baseName(def))}</span>
         </Place>
       )}
       {home && (
-        <Place on={active === "home"} onClick={() => onGo(home)} title={`Home: ${home}`}>
+        <Place on={active === "home"} onClick={() => onGo(home)} title={r(`Home: ${home}`)}>
           <Home className="h-3 w-3" />
         </Place>
       )}

@@ -8,6 +8,7 @@ import { useApp, type PaneFilter } from "../store/app";
 import { useUi } from "../store/ui";
 import { paneWhere } from "../lib/panes";
 import { hostLabel } from "../lib/hosts";
+import { useRedact } from "../store/recording";
 import type { GroupBy, SortBy } from "../lib/organize";
 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange(v: string): void; options: [string, string][] }) {
@@ -44,6 +45,7 @@ export default function TopBar() {
   const [showHidden, setShowHidden] = useState(false);
   const groupBy = useUi((s) => s.groupBy);
   const sortBy = useUi((s) => s.sortBy);
+  const r = useRedact();
 
   const tabs: { id: PaneFilter; label: string; icon: React.ReactNode }[] = [
     { id: "all", label: "All panes", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
@@ -59,7 +61,7 @@ export default function TopBar() {
         {focusHost && (
           <>
             <span className="text-mist-500">/</span>
-            <span className="font-semibold text-mist-100">{focusHost}</span>
+            <span className="font-semibold text-mist-100">{r(focusHost)}</span>
           </>
         )}
       </div>
@@ -118,9 +120,9 @@ export default function TopBar() {
             {hidden.map((p) => (
               <div key={p.key} className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 hover:bg-ink-750">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[12.5px] text-mist-100">{displayTitle(p)}</div>
+                  <div className="truncate text-[12.5px] text-mist-100">{r(displayTitle(p))}</div>
                   <div className="truncate font-mono text-[10.5px] text-mist-500">
-                    {hostLabel(p.host)} · {paneWhere(p)}
+                    {r(`${hostLabel(p.host)} · ${paneWhere(p)}`)}
                   </div>
                 </div>
                 <button

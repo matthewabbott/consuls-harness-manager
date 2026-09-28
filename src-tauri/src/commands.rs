@@ -102,6 +102,12 @@ pub fn reveal_path(app: tauri::AppHandle, host: String, path: String) -> CmdResu
     app.opener().reveal_item_in_dir(local_path(&path)?).map_err(|e| e.to_string())
 }
 
+/// Recording mode: toasts stop naming panes and machines.
+#[tauri::command]
+pub fn set_recording(state: State<'_, AppState>, on: bool) {
+    state.sink.alerter.set_recording(on);
+}
+
 /// Whether VS Code (and its Remote-SSH extension) is installed; checked on each call, so
 /// installing either shows up without a restart.
 #[tauri::command]

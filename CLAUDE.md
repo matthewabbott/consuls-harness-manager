@@ -86,6 +86,19 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   22) Remote-SSH's hex-encoded JSON. Manual check: `cargo test -p consuls launches_vscode --
   --ignored` (refuses the Sparks: VS Code server needs memory they don't have).
 
+## Recording mode
+
+- `store/recording.ts` rebuilds three redactors (`lib/redact.ts`) from live data whenever the
+  tailnet, hosts or config change: `ui` (machine names → "machine N"), `tile` (one • per
+  character, so row text can be sliced back into runs in `tilePainter.redactRow`) and `stream`
+  (one • per cell). New UI text that can hold personal data goes through `useRedact()`; inputs
+  holding such values get the `personal` class (dots while recording).
+- The expanded terminal masks in `term/redactStream.ts` before `term.write`: escape sequences
+  pass through, text between them is matched, and only a tail that could still become a secret
+  is held back (≤ 30 ms). Toggling the mode re-requests a RESET (`streamPane(key, true)`).
+- The editor draws masks with replace decorations (`editor/redaction.ts`); toasts go generic
+  via `set_recording`. E2E: `scripts/e2e/recording.mjs`.
+
 ## Editor
 
 - `fs::{read,write}` (per transport): text is UTF-8 with the BOM stripped and reported; saves
@@ -124,7 +137,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

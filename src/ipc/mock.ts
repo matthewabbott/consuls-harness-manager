@@ -339,6 +339,7 @@ export function mockBackend(): Backend {
     revealPath: async (host, path) => console.info("[mock] reveal", host, path),
     vscodeStatus: async () => ({ installed: true, remoteSsh: true }),
     openInVscode: async (host, path, line, col) => console.info("[mock] open in VS Code", host, path, line, col),
+    setRecording: async () => {},
     setVisiblePanes: async () => {},
     streamPane: async (key, on) => {
       const p = panes.find((p) => p.info.key === key);

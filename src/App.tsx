@@ -17,6 +17,7 @@ import LeftSidebar from "./components/LeftSidebar";
 import TopBar from "./components/TopBar";
 import { backend } from "./ipc/backend";
 import { useApp } from "./store/app";
+import { startRecordingMode } from "./store/recording";
 import { useUi } from "./store/ui";
 import { applyFrames } from "./term/tiles";
 import FileView from "./components/FileView";
@@ -155,6 +156,7 @@ export default function App() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
+    startRecordingMode();
     (async () => {
       const b = await backend();
       // Subscribe before snapshotting so no event is missed; duplicates are harmless.

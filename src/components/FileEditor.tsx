@@ -29,6 +29,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { theme as palette } from "../term/palette";
 import { backend } from "../ipc/backend";
 import { gitGutter, setHead } from "../editor/gitGutter";
+import { redaction } from "../editor/redaction";
 import { buffers, useEditor } from "../store/editor";
 import { useFiles } from "../store/files";
 
@@ -117,6 +118,7 @@ const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id,
         doc: buf.initial,
         extensions: [
           gitGutter(),
+          redaction,
           lineNumbers(),
           highlightActiveLineGutter(),
           highlightSpecialChars(),

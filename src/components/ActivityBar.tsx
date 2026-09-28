@@ -1,4 +1,4 @@
-import { Files, Server, Settings } from "lucide-react";
+import { Files, Server, Settings, Video } from "lucide-react";
 
 import { useApp } from "../store/app";
 import { useUi, type SidebarTab } from "../store/ui";
@@ -15,6 +15,7 @@ export default function ActivityBar() {
   const tab = useUi((s) => s.sidebarTab);
   const collapsed = useUi((s) => s.sidebarCollapsed || s.maximized);
   const show = useUi((s) => s.showSidebarTab);
+  const recording = useUi((s) => s.recording);
   const waiting = useApp((s) => Object.values(s.attention).filter((a) => a.attention === "unacked").length);
 
   const tabs: Tab[] = [
@@ -53,6 +54,20 @@ export default function ActivityBar() {
         );
       })}
       <div className="flex-1" />
+      <button
+        onClick={() => useUi.getState().setRecording(!recording)}
+        title={
+          recording
+            ? "Recording mode is on: your e-mail, IPs, user names and PC name are hidden (click to show them)"
+            : "Recording mode: hide your e-mail, IPs, user names and PC name, for screenshots and videos"
+        }
+        className={`relative flex h-10 w-10 items-center justify-center rounded-lg transition-colors ${
+          recording ? "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/40" : "text-mist-500 hover:bg-ink-800 hover:text-mist-200"
+        }`}
+      >
+        <Video className="h-[18px] w-[18px]" />
+        {recording && <span className="absolute top-1.5 right-1.5 h-2 w-2 animate-breathe rounded-full bg-rose-400" />}
+      </button>
       <button
         onClick={() => useApp.getState().setSettingsOpen(true)}
         title="Settings"

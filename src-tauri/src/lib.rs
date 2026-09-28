@@ -126,6 +126,7 @@ pub fn run() {
             commands::reveal_path,
             commands::vscode_status,
             commands::open_in_vscode,
+            commands::set_recording,
             commands::set_visible_panes,
             commands::stream_pane,
             commands::send_keys,

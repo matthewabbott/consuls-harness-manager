@@ -56,6 +56,8 @@ export interface Backend {
   vscodeStatus(): Promise<VsCodeStatus>;
   /** Opens a file (at a line) or folder in VS Code; other machines go through Remote-SSH. */
   openInVscode(host: string, path: string, line?: number, col?: number): Promise<void>;
+  /** Recording mode: OS notifications then say only that a pane needs you. */
+  setRecording(on: boolean): Promise<void>;
   setVisiblePanes(keys: number[] | null): Promise<void>;
   streamPane(key: number, on: boolean): Promise<void>;
   sendKeys(key: number, keys: string[]): Promise<void>;
@@ -145,6 +147,7 @@ async function tauriBackend(): Promise<Backend> {
     revealPath: (host, path) => invoke("reveal_path", { host, path }),
     vscodeStatus: () => invoke("vscode_status"),
     openInVscode: (host, path, line, col) => invoke("open_in_vscode", { host, path, line: line ?? null, col: col ?? null }),
+    setRecording: (on) => invoke("set_recording", { on }),
     setVisiblePanes: (keys) => invoke("set_visible_panes", { keys }),
     streamPane: (key, on) => invoke("stream_pane", { key, on }),
     sendKeys: (key, keys) => invoke("send_keys", { key, keys }),

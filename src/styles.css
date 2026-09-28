@@ -137,3 +137,8 @@ textarea {
 .status-dot {
   box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 18%, transparent);
 }
+
+/* Recording mode: inputs holding personal values (user names, addresses, paths) show dots. */
+html.recording input.personal {
+  -webkit-text-security: disc;
+}

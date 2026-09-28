@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { backend } from "../ipc/backend";
 import { useApp } from "../store/app";
+import { useRedact } from "../store/recording";
 import { harnessLabel, isAgent } from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
 import { displayTitle } from "./MiniTile";
@@ -15,6 +16,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
   const [state, setState] = useState<"confirm" | "working" | "stuck">("confirm");
   const [stuckOn, setStuckOn] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const r = useRedact();
 
   if (!pane) return null;
   const agent = isAgent(pane.harness);
@@ -42,7 +44,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
     <Modal
       title={
         <span className="flex items-center gap-2">
-          <Power className="h-4 w-4 text-rose-400" /> Close “{displayTitle(pane)}”
+          <Power className="h-4 w-4 text-rose-400" /> Close “{r(displayTitle(pane))}”
         </span>
       }
       onClose={close}
@@ -57,7 +59,7 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
           </>
         ) : (
           <>
-            {error && <span className="mr-auto truncate text-[12px] text-rose-400">{error}</span>}
+            {error && <span className="mr-auto truncate text-[12px] text-rose-400">{r(error)}</span>}
             <Button onClick={close} disabled={state === "working"}>
               Cancel
             </Button>
@@ -71,12 +73,12 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
     >
       {direct ? (
         <p className="text-[13px] leading-relaxed text-mist-300">
-          This hangs up the plain shell on {hostLabel(pane.host)}; anything still running in it gets the hang-up signal and exits. Plain shells
+          This hangs up the plain shell on {r(hostLabel(pane.host))}; anything still running in it gets the hang-up signal and exits. Plain shells
           can't be reattached later.
         </p>
       ) : state === "stuck" ? (
         <p className="text-[13px] leading-relaxed text-mist-300">
-          <span className="font-mono text-mist-100">{stuckOn || "The process"}</span> is still running in this pane. Force-killing closes the
+          <span className="font-mono text-mist-100">{r(stuckOn) || "The process"}</span> is still running in this pane. Force-killing closes the
           tmux pane immediately; anything unsaved in it is lost.
         </p>
       ) : (
@@ -85,17 +87,17 @@ export default function TerminateDialog({ paneKey }: { paneKey: number }) {
             <>
               Consuls will ask {harnessLabel(pane.harness)} to exit (so it can save its session), then close the tmux pane{" "}
               <span className="font-mono text-mist-100">
-                {paneWhere(pane, true)}
+                {r(paneWhere(pane, true))}
               </span>{" "}
-              on {hostLabel(pane.host)}.
+              on {r(hostLabel(pane.host))}.
             </>
           ) : (
             <>
               This closes the tmux pane{" "}
               <span className="font-mono text-mist-100">
-                {paneWhere(pane, true)}
+                {r(paneWhere(pane, true))}
               </span>{" "}
-              on {hostLabel(pane.host)}.
+              on {r(hostLabel(pane.host))}.
             </>
           )}
           <span className="mt-2 block text-[12px] text-mist-500">To just remove it from the dashboard and keep it running, use Hide instead.</span>

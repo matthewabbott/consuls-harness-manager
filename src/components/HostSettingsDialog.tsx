@@ -4,6 +4,7 @@ import { backend } from "../ipc/backend";
 import type { AuthMode } from "../ipc/bindings/AuthMode";
 import type { HostConfig } from "../ipc/bindings/HostConfig";
 import { useApp } from "../store/app";
+import { useRedact } from "../store/recording";
 import Modal, { Button } from "./Modal";
 
 type AuthKind = AuthMode["kind"];
@@ -19,6 +20,7 @@ export default function HostSettingsDialog({ host }: { host: string }) {
   const [keyPath, setKeyPath] = useState(existing?.auth.kind === "keyFile" ? existing.auth.path : "");
   const [autoConnect, setAutoConnect] = useState(existing?.autoConnect ?? true);
   const [error, setError] = useState<string | null>(null);
+  const r = useRedact();
 
   if (!existing) return null;
   const tsSsh = (peer?.sshHostKeys.length ?? 0) > 0;
@@ -44,12 +46,12 @@ export default function HostSettingsDialog({ host }: { host: string }) {
 
   return (
     <Modal
-      title={`Connection settings · ${host}`}
+      title={`Connection settings · ${r(host)}`}
       onClose={close}
       width={500}
       footer={
         <>
-          {error && <span className="mr-auto truncate text-[12px] text-rose-400">{error}</span>}
+          {error && <span className="mr-auto truncate text-[12px] text-rose-400">{r(error)}</span>}
           <Button onClick={close}>Cancel</Button>
           <Button kind="primary" onClick={save}>
             Save &amp; connect
@@ -65,7 +67,7 @@ export default function HostSettingsDialog({ host }: { host: string }) {
         </p>
         <div className="grid grid-cols-[1fr_7rem] gap-3">
           <Label text="SSH user">
-            <input value={user} onChange={(e) => setUser(e.target.value)} className={`${input} font-mono`} />
+            <input value={user} onChange={(e) => setUser(e.target.value)} className={`${input} personal font-mono`} />
           </Label>
           <Label text="Port">
             <input value={port} onChange={(e) => setPort(e.target.value)} className={`${input} font-mono`} />
@@ -75,8 +77,8 @@ export default function HostSettingsDialog({ host }: { host: string }) {
           <input
             value={address}
             onChange={(e) => setAddress(e.target.value)}
-            placeholder={peer?.ips[0] ? `Tailnet address: ${peer.ips.find((ip) => !ip.includes(":")) ?? peer.ips[0]}` : "hostname or IP"}
-            className={`${input} font-mono`}
+            placeholder={peer?.ips[0] ? r(`Tailnet address: ${peer.ips.find((ip) => !ip.includes(":")) ?? peer.ips[0]}`) : "hostname or IP"}
+            className={`${input} personal font-mono`}
           />
         </Label>
         <Label text="Authentication">
@@ -110,7 +112,7 @@ export default function HostSettingsDialog({ host }: { host: string }) {
               onChange={(e) => setKeyPath(e.target.value)}
               placeholder="C:\Users\you\.ssh\id_ed25519"
               spellCheck={false}
-              className={`${input} mt-2 font-mono`}
+              className={`${input} personal mt-2 font-mono`}
             />
           )}
         </Label>

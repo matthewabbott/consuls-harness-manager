@@ -2,6 +2,7 @@ import { ExternalLink, KeyRound, ShieldAlert, TriangleAlert, WifiOff } from "luc
 
 import { backend } from "../ipc/backend";
 import { useApp } from "../store/app";
+import { useRedact } from "../store/recording";
 
 function open(url: string) {
   backend().then((b) => b.openExternal(url));
@@ -50,10 +51,11 @@ function Action({ onClick, children, primary }: { onClick: () => void; children:
 export default function Banners() {
   const tailnet = useApp((s) => s.tailnet);
   const hosts = useApp((s) => s.hosts);
+  const r = useRedact();
   const items: React.ReactNode[] = [];
 
   if (tailnet?.error) {
-    items.push(<Banner key="ts-err" tone="rose" icon={<WifiOff className="h-4 w-4" />} title="Can't read Tailscale status" body={tailnet.error} />);
+    items.push(<Banner key="ts-err" tone="rose" icon={<WifiOff className="h-4 w-4" />} title="Can't read Tailscale status" body={r(tailnet.error)} />);
   } else if (tailnet && tailnet.backendState && tailnet.backendState !== "Running") {
     const needsLogin = tailnet.backendState === "NeedsLogin" || tailnet.backendState === "NeedsMachineAuth";
     items.push(
@@ -84,7 +86,7 @@ export default function Banners() {
           icon={<ShieldAlert className="h-4 w-4" />}
           title={
             <>
-              <span className="font-semibold">{h.id}</span> is waiting for Tailscale SSH approval
+              <span className="font-semibold">{r(h.id)}</span> is waiting for Tailscale SSH approval
             </>
           }
           body="Your tailnet policy asks for a quick re-check. Approve it in the browser and Consuls will connect automatically."
@@ -104,16 +106,16 @@ export default function Banners() {
           icon={mismatch ? <KeyRound className="h-4 w-4" /> : <TriangleAlert className="h-4 w-4" />}
           title={
             <>
-              Couldn't connect to <span className="font-semibold">{h.id}</span>
+              Couldn't connect to <span className="font-semibold">{r(h.id)}</span>
             </>
           }
-          body={h.phase.error}
+          body={r(h.phase.error)}
           actions={
             <>
               {mismatch && (
                 <Action
                   onClick={() => {
-                    if (confirm(`Only do this if you know ${h.id}'s host key legitimately changed (e.g. reinstall). Trust the new key?`))
+                    if (confirm(`Only do this if you know ${r(h.id)}'s host key legitimately changed (e.g. reinstall). Trust the new key?`))
                       backend().then(async (b) => {
                         await b.forgetHostKey(h.id);
                         await b.connectHost(h.id);

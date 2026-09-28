@@ -24,6 +24,7 @@ import { hostLabel, shortPath } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
 import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
+import { useRedact } from "../store/recording";
 import { isDirect, paneIdentity, paneWhere } from "../lib/panes";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
 import ResizeHandle from "./ResizeHandle";
@@ -56,6 +57,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const [searching, setSearching] = useState(false);
   const home = hosts[pane.host]?.facts?.home;
   const vscode = useVsCode();
+  const r = useRedact();
   const muted = useApp((s) => s.muted[pane.key] ?? false);
   const toggleMute = () => {
     useApp.getState().setMuted(pane.key, !muted);
@@ -109,11 +111,11 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           </button>
           <HarnessBadge harness={pane.harness} size={26} />
           <div className="min-w-0">
-            <div className="truncate text-[14.5px] font-semibold text-mist-100">{displayTitle(pane)}</div>
+            <div className="truncate text-[14.5px] font-semibold text-mist-100">{r(displayTitle(pane))}</div>
             <div className="truncate font-mono text-[11px] text-mist-500">
-              {harnessLabel(pane.harness)} · {hostLabel(pane.host)} ·{" "}
-              {direct ? <span className="text-rose-300/80">{pane.currentCommand} · no tmux</span> : paneWhere(pane, true)} ·{" "}
-              {shortPath(pane.currentPath, home)} · {pane.width}×{pane.height}
+              {harnessLabel(pane.harness)} · {r(hostLabel(pane.host))} ·{" "}
+              {direct ? <span className="text-rose-300/80">{pane.currentCommand} · no tmux</span> : r(paneWhere(pane, true))} ·{" "}
+              {r(shortPath(pane.currentPath, home))} · {pane.width}×{pane.height}
             </div>
           </div>
           <div className="ml-auto flex items-center gap-1">
@@ -134,7 +136,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
               </HeaderIcon>
             </div>
             {canOpenInVsCode(vscode, pane.host) && pane.currentPath && (
-              <HeaderIcon onClick={() => openInVsCode(pane.host, pane.currentPath)} title={`Open ${shortPath(pane.currentPath, home)} in VS Code`}>
+              <HeaderIcon onClick={() => openInVsCode(pane.host, pane.currentPath)} title={`Open ${r(shortPath(pane.currentPath, home))} in VS Code`}>
                 <SquareCode className="h-3.5 w-3.5" />
               </HeaderIcon>
             )}
@@ -243,7 +245,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           {ended && (
             <div className="sticky top-0 left-0 z-10 mb-2 flex items-center gap-3 rounded-lg bg-rose-950/85 px-3 py-2 text-[12px] text-rose-100 ring-1 ring-rose-500/40 backdrop-blur">
               <span className="min-w-0 flex-1">
-                <span className="font-semibold">Session ended</span> · {pane.ended}. Its output stays readable here; plain shells are never
+                <span className="font-semibold">Session ended</span> · {r(pane.ended ?? "")}. Its output stays readable here; plain shells are never
                 revived.
               </span>
               <button onClick={dismiss} className="shrink-0 rounded-md bg-rose-400/15 px-2.5 py-1 font-medium ring-1 ring-rose-400/40 hover:bg-rose-400/25">

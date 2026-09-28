@@ -22,6 +22,11 @@ export function applyFrames(buf: Uint8Array) {
   for (const key of touched) listeners.get(key)?.forEach((cb) => cb());
 }
 
+/** Every tile paints itself again (e.g. recording mode changed what's masked). */
+export function repaintTiles() {
+  for (const set of listeners.values()) set.forEach((cb) => cb());
+}
+
 export function getTile(key: number): TileSnapshot | undefined {
   return snapshots.get(key);
 }

@@ -9,6 +9,7 @@ import { hostLabel, isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { parentPath } from "../lib/paths";
 import { buffers, useEditor } from "../store/editor";
+import { useRedact } from "../store/recording";
 import { statusOf, useFiles } from "../store/files";
 import FileEditor, { type FileEditorHandle } from "./FileEditor";
 import Modal, { Button } from "./Modal";
@@ -25,6 +26,7 @@ export default function FileView({ id }: { id: string }) {
   const badges = useFiles((s) => s.badges);
   const gitRoot = useFiles((s) => s.git?.root ?? null);
   const vscode = useVsCode();
+  const r = useRedact();
 
   // Watch for outside changes while it's open.
   useEffect(() => {
@@ -51,11 +53,11 @@ export default function FileView({ id }: { id: string }) {
         {file.kind === "image" ? <ImageIcon className="h-5 w-5 text-sky-400/80" /> : <FileText className="h-5 w-5 text-sky-400/80" />}
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[14.5px] font-semibold text-mist-100">
-            <span className="truncate">{file.name}</span>
+            <span className="truncate">{r(file.name)}</span>
             {file.dirty && <span title="Unsaved changes" className="h-2 w-2 shrink-0 rounded-full bg-ember-400" />}
           </div>
-          <div className="truncate font-mono text-[11px] text-mist-500" title={file.path}>
-            {hostLabel(file.host)} · {parentPath(file.path)}
+          <div className="truncate font-mono text-[11px] text-mist-500" title={r(file.path)}>
+            {r(`${hostLabel(file.host)} · ${parentPath(file.path)}`)}
           </div>
         </div>
         <div className="ml-auto flex items-center gap-1">

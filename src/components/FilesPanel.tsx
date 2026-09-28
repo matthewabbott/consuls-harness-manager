@@ -32,6 +32,7 @@ import { joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { startFolder, statusOf, useFiles } from "../store/files";
+import { useRedact } from "../store/recording";
 import FolderNav from "./FolderNav";
 import HideSidebarButton from "./HideSidebarButton";
 import Modal, { Button } from "./Modal";
@@ -85,6 +86,7 @@ export default function FilesPanel() {
   const history = useFiles((s) => s.history);
   const files = useFiles.getState;
   const vscode = useVsCode();
+  const r = useRedact();
 
   const hosts = useApp((s) => s.hosts);
   const expandedPane = useApp((s) => (s.expanded === null ? null : (Object.values(s.panes).flat().find((p) => p.key === s.expanded) ?? null)));
@@ -279,7 +281,7 @@ export default function FilesPanel() {
           {!root && <option value="">Pick a machine</option>}
           {connected.map((h) => (
             <option key={h} value={h}>
-              {hostLabel(h)}
+              {r(hostLabel(h))}
             </option>
           ))}
         </select>
@@ -310,7 +312,7 @@ export default function FilesPanel() {
             onForward={files().forward}
             trailing={
               git?.branch && (
-                <span className="flex items-center gap-1 text-mist-400" title={`git: ${git.root}`}>
+                <span className="flex items-center gap-1 text-mist-400" title={r(`git: ${git.root}`)}>
                   <GitBranch className="h-3 w-3" />
                   {git.branch}
                 </span>
@@ -322,7 +324,7 @@ export default function FilesPanel() {
 
       {error && (
         <div className="mx-2.5 mb-1.5 rounded-md bg-rose-500/10 px-2 py-1.5 text-[11.5px] text-rose-300 ring-1 ring-rose-500/30">
-          {error}
+          {r(error)}
         </div>
       )}
 
@@ -384,7 +386,7 @@ export default function FilesPanel() {
                     files().select(path);
                     setMenu({ x: e.clientX, y: e.clientY, path, isDir: entry.isDir });
                   }}
-                  title={`${entry.name}${entry.isDir ? "" : ` · ${fmtSize(entry.size)}`}${entry.mtime ? ` · ${new Date(entry.mtime * 1000).toLocaleString()}` : ""}${st ? ` · ${st.title}` : ""}`}
+                  title={r(`${entry.name}${entry.isDir ? "" : ` · ${fmtSize(entry.size)}`}${entry.mtime ? ` · ${new Date(entry.mtime * 1000).toLocaleString()}` : ""}${st ? ` · ${st.title}` : ""}`)}
                   className={`absolute inset-x-0 flex cursor-pointer items-center gap-1 pr-2 text-[12.5px] ${
                     selected === path ? "bg-sky-400/15 ring-1 ring-sky-400/30 ring-inset" : "hover:bg-ink-750"
                   }`}
@@ -411,7 +413,7 @@ export default function FilesPanel() {
                         entry.isSymlink ? "italic" : ""
                       }`}
                     >
-                      {entry.name}
+                      {r(entry.name)}
                     </span>
                   )}
                   {st && status !== "ignored" && !renaming &&
@@ -453,7 +455,7 @@ export default function FilesPanel() {
           )}
           {(menu.path === null || menu.isDir) && (
             <MenuItem icon={<Star className="h-3.5 w-3.5" />} onClick={() => files().setDefault(root.host, menu.path ?? root.path)}>
-              Make default folder on {hostLabel(root.host)}
+              Make default folder on {r(hostLabel(root.host))}
             </MenuItem>
           )}
           {(isLocal(root.host) || canOpenInVsCode(vscode, root.host)) && <div className="my-1 h-px bg-ink-700" />}
@@ -495,7 +497,7 @@ export default function FilesPanel() {
 
       {confirmDelete && root && (
         <Modal
-          title={`Delete “${confirmDelete.path.split("/").pop()}”?`}
+          title={`Delete “${r(confirmDelete.path.split("/").pop() ?? "")}”?`}
           onClose={() => setConfirmDelete(null)}
           width={440}
           footer={
@@ -519,15 +521,15 @@ export default function FilesPanel() {
                     : confirmDelete.count === 0
                       ? "(it's empty)"
                       : `and the ${confirmDelete.count > 100_000 ? "100,000+" : confirmDelete.count.toLocaleString()} item${confirmDelete.count === 1 ? "" : "s"} in it`}{" "}
-                on {hostLabel(root.host)}.
+                on {r(hostLabel(root.host))}.
               </>
             ) : (
-              <>This permanently deletes the file on {hostLabel(root.host)}.</>
+              <>This permanently deletes the file on {r(hostLabel(root.host))}.</>
             )}{" "}
             It doesn't go to a trash or recycle bin.
           </p>
-          <p className="mt-2 truncate font-mono text-[11.5px] text-mist-500" title={confirmDelete.path}>
-            {confirmDelete.path}
+          <p className="mt-2 truncate font-mono text-[11.5px] text-mist-500" title={r(confirmDelete.path)}>
+            {r(confirmDelete.path)}
           </p>
         </Modal>
       )}

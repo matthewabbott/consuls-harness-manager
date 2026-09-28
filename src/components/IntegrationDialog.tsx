@@ -5,6 +5,7 @@ import { backend } from "../ipc/backend";
 import type { IntegrationStatus } from "../ipc/bindings/IntegrationStatus";
 import type { ToolStatus } from "../ipc/bindings/ToolStatus";
 import { useApp } from "../store/app";
+import { useRedact } from "../store/recording";
 import HarnessBadge from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
 
@@ -30,6 +31,7 @@ export default function IntegrationDialog({ host }: { host: string }) {
   const [status, setStatus] = useState<IntegrationStatus | null>(null);
   const [busy, setBusy] = useState<"install" | "uninstall" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const r = useRedact();
 
   useEffect(() => {
     backend()
@@ -56,12 +58,12 @@ export default function IntegrationDialog({ host }: { host: string }) {
 
   return (
     <Modal
-      title={`Notifications for agents started outside Consuls · ${host}`}
+      title={`Notifications for agents started outside Consuls · ${r(host)}`}
       onClose={close}
       width={560}
       footer={
         <>
-          {error && <span className="mr-auto truncate text-[12px] text-rose-400">{error}</span>}
+          {error && <span className="mr-auto truncate text-[12px] text-rose-400">{r(error)}</span>}
           {anyInstalled && (
             <Button onClick={() => run("uninstall")} disabled={busy !== null}>
               {busy === "uninstall" && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Remove
@@ -75,7 +77,7 @@ export default function IntegrationDialog({ host }: { host: string }) {
     >
       <p className="text-[13px] leading-relaxed text-mist-300">
         Agents you launch from Consuls always report when they finish or need you. To get the same for sessions you start by hand in
-        tmux, Consuls can add a tiny hook to each harness's config on <span className="font-mono text-mist-100">{host}</span>. The hook
+        tmux, Consuls can add a tiny hook to each harness's config on <span className="font-mono text-mist-100">{r(host)}</span>. The hook
         only records an event when it runs inside tmux, never prints anything, and can be removed here at any time.
       </p>
       <div className="mt-4 space-y-2">
@@ -93,7 +95,7 @@ export default function IntegrationDialog({ host }: { host: string }) {
       {status && status.notes.length > 0 && (
         <ul className="mt-4 space-y-1 rounded-xl bg-ink-900/60 px-3.5 py-2.5 text-[12px] text-mist-300 ring-1 ring-ink-700">
           {status.notes.map((n) => (
-            <li key={n}>• {n}</li>
+            <li key={n}>• {r(n)}</li>
           ))}
         </ul>
       )}

@@ -1,7 +1,8 @@
 // Paints a tile snapshot onto a canvas: the whole terminal scaled to the tile's width,
 // bottom-aligned when it's taller than the tile (the newest output lives at the bottom).
 
-import type { TileSnapshot } from "../ipc/frames";
+import type { TileRun, TileSnapshot } from "../ipc/frames";
+import type { Redactor } from "../lib/redact";
 import { cssColor, theme } from "./palette";
 
 const FONT = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
@@ -36,7 +37,31 @@ export function layoutFor(snap: TileSnapshot, width: number, height: number): Ti
   return { cellW, cellH, fontSize, offsetY: total > height ? height - total : 0 };
 }
 
-export function paintTile(canvas: HTMLCanvasElement, snap: TileSnapshot | undefined, dimmed = false) {
+/** Recording mode: masks each row's text as a whole (so secrets spanning colour runs are
+ *  caught), then hands each run back its own slice. Tile masks keep one character per
+ *  character, so the slices line up; gaps between runs count as spaces. */
+export function redactRow(runs: TileRun[], r: Redactor): TileRun[] {
+  let joined = "";
+  let col = 0;
+  const at: [number, number][] = []; // each run's [offset, length] in code points
+  let cp = 0;
+  for (const run of runs) {
+    const gap = Math.max(0, run.start - col);
+    joined += " ".repeat(gap);
+    cp += gap;
+    const n = Array.from(run.text).length;
+    at.push([cp, n]);
+    joined += run.text;
+    cp += n;
+    col = run.start + run.cells;
+  }
+  const masked = r.text(joined);
+  if (masked === joined) return runs;
+  const chars = Array.from(masked);
+  return runs.map((run, i) => ({ ...run, text: chars.slice(at[i][0], at[i][0] + at[i][1]).join("") }));
+}
+
+export function paintTile(canvas: HTMLCanvasElement, snap: TileSnapshot | undefined, dimmed = false, redactor: Redactor | null = null) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
@@ -61,7 +86,7 @@ export function paintTile(canvas: HTMLCanvasElement, snap: TileSnapshot | undefi
   for (let r = 0; r < snap.lines.length; r++) {
     const y = offsetY + r * cellH;
     if (y + cellH < 0) continue;
-    for (const run of snap.lines[r]) {
+    for (const run of redactor ? redactRow(snap.lines[r], redactor) : snap.lines[r]) {
       const inverse = (run.attrs & 8) !== 0;
       let fg = cssColor(run.fg) ?? theme.foreground;
       let bg = cssColor(run.bg);

@@ -56,7 +56,11 @@ Roughly in order. Each is small-to-medium and self-contained.
   - V3-3/4: Show in File Explorer and Open in VS Code (local, and Remote-SSH).
     - The remote path is only verified up to the launch. The Mac was offline, so a real Remote-SSH
       connection is still to check.
-- Next: recording mode, cwd + OSC 52, local hooks, local tmux (V3-5…V3-8).
+  - V3-5 recording mode:
+    - Masks in UI text, tiles, the expanded terminal and the editor.
+    - Optional machine aliases.
+    - Toasts go generic.
+- Next: cwd + OSC 52, local hooks, local tmux (V3-6…V3-8).
 
 ### 1. Sidebars (done in V3-1)
 - Right sidebar (the filmstrip beside an expanded pane, `ExpandedPane.tsx`): its collapse toggle

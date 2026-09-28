@@ -5,6 +5,7 @@ import { backend } from "../ipc/backend";
 import type { HostConfig } from "../ipc/bindings/HostConfig";
 import { defaultUser, isLocal, machines, phaseInfo, toneText, type Machine } from "../lib/hosts";
 import { useApp } from "../store/app";
+import { useRedact } from "../store/recording";
 import HideSidebarButton from "./HideSidebarButton";
 import LabelsPanel from "./LabelsPanel";
 
@@ -26,6 +27,7 @@ function HostRow({ m }: { m: Machine }) {
   const connected = m.state?.phase.phase === "connected";
   const idle = !m.state || ["disconnected", "failed"].includes(m.state.phase.phase);
   const active = focusHost === m.id;
+  const r = useRedact();
 
   return (
     <div
@@ -38,7 +40,7 @@ function HostRow({ m }: { m: Machine }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <OsIcon os={local ? "windows" : m.peer?.os} className="h-3.5 w-3.5 shrink-0 text-mist-500" />
-          <span className="truncate text-[13px] font-medium text-mist-100">{m.label}</span>
+          <span className="truncate text-[13px] font-medium text-mist-100">{r(m.label)}</span>
         </div>
         <div className={`truncate text-[11px] ${info.tone === "mist" ? "text-mist-500" : toneText[info.tone]}`}>{info.label}</div>
       </div>
@@ -67,6 +69,7 @@ function HostRow({ m }: { m: Machine }) {
 }
 
 function HostActions({ m, idle, connected }: { m: Machine; idle: boolean; connected: boolean }) {
+  const r = useRedact();
   return (
     <>
       {idle ? (
@@ -94,7 +97,7 @@ function HostActions({ m, idle, connected }: { m: Machine; idle: boolean; connec
       <IconButton
         title="Remove machine"
         onClick={() => {
-          if (confirm(`Remove ${m.id} from Consuls? Its tmux sessions keep running.`)) backend().then((b) => b.removeHost(m.id));
+          if (confirm(`Remove ${r(m.id)} from Consuls? Its tmux sessions keep running.`)) backend().then((b) => b.removeHost(m.id));
         }}
       >
         <Trash2 className="h-3.5 w-3.5" />
@@ -121,6 +124,7 @@ function AvailableRow({ m }: { m: Machine }) {
   const [user, setUser] = useState(() => defaultUser(configs));
   const peer = m.peer!;
   const tsSsh = peer.sshHostKeys.length > 0;
+  const r = useRedact();
 
   const add = async () => {
     if (!user.trim()) return;
@@ -134,7 +138,7 @@ function AvailableRow({ m }: { m: Machine }) {
       <div className="group flex cursor-pointer items-center gap-2.5 px-2.5 py-1.5" onClick={() => peer.online && setOpen(!open)}>
         <span className={`h-2 w-2 shrink-0 rounded-full ${peer.online ? "bg-mist-500" : "bg-ink-500"}`} />
         <OsIcon os={peer.os} className="h-3.5 w-3.5 shrink-0 text-mist-500" />
-        <span className={`min-w-0 flex-1 truncate text-[12.5px] ${peer.online ? "text-mist-300" : "text-mist-500"}`}>{m.label}</span>
+        <span className={`min-w-0 flex-1 truncate text-[12.5px] ${peer.online ? "text-mist-300" : "text-mist-500"}`}>{r(m.label)}</span>
         {peer.online ? (
           <Plus className="h-3.5 w-3.5 text-mist-500 opacity-0 transition-opacity group-hover:opacity-100" />
         ) : (
@@ -155,8 +159,8 @@ function AvailableRow({ m }: { m: Machine }) {
               autoFocus
               value={user}
               onChange={(e) => setUser(e.target.value)}
-              placeholder="e.g. consulear"
-              className="mt-1 block w-full rounded-md border border-ink-600 bg-ink-900 px-2 py-1.5 font-mono text-[12px] text-mist-100 outline-none focus:border-sky-400/60"
+              placeholder={r("e.g. consulear")}
+              className="personal mt-1 block w-full rounded-md border border-ink-600 bg-ink-900 px-2 py-1.5 font-mono text-[12px] text-mist-100 outline-none focus:border-sky-400/60"
             />
           </label>
           <p className="text-[10.5px] leading-snug text-mist-500">
@@ -182,6 +186,7 @@ export default function MachinesPanel() {
   const hosts = useApp((s) => s.hosts);
   const { configured, available } = machines(tailnet, config.hosts, hosts);
   const [refreshing, setRefreshing] = useState(false);
+  const r = useRedact();
 
   const refresh = async () => {
     setRefreshing(true);
@@ -234,7 +239,7 @@ export default function MachinesPanel() {
       </div>
       {tailnet?.tailnetName && (
         <div className="truncate border-t border-ink-700/80 px-4 py-2 text-[10.5px] text-mist-500" title="Tailnet">
-          {tailnet.tailnetName}
+          {r(tailnet.tailnetName)}
         </div>
       )}
     </>

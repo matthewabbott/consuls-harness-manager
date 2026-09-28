@@ -16,7 +16,9 @@ import { paneIdentity } from "../lib/panes";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
+import { useRecording } from "../store/recording";
 import { findPaths, resolvePath } from "../term/links";
+import { StreamRedactor } from "../term/redactStream";
 import type React from "react";
 
 const FONT = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
@@ -179,16 +181,21 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     ro.observe(el.parentElement!);
     fit();
 
+    // Recording mode masks personal details before xterm sees them.
+    const redactor = new StreamRedactor(
+      () => useRecording.getState().stream,
+      (bytes) => term.write(bytes),
+    );
     const detach = attachStream(key, {
       reset(cols, rows, bytes) {
         sizeRef.current = { cols, rows };
         term.reset();
         term.resize(cols, rows);
         fit();
-        term.write(bytes, () => term.scrollToBottom());
+        term.write(redactor.all(bytes), () => term.scrollToBottom());
       },
       raw(bytes) {
-        term.write(bytes);
+        term.write(redactor.push(bytes));
       },
     });
 
@@ -196,6 +203,11 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     backend().then((be) => {
       b = be;
       be.streamPane(key, true);
+    });
+    // Recording mode switched: redraw from a fresh snapshot, so what's already on screen is
+    // masked (or shown again).
+    const unRecording = useRecording.subscribe((s, p) => {
+      if (s.on !== p.on) b?.streamPane(key, true);
     });
 
     // Typed text: batch briefly so fast typing becomes few commands.
@@ -299,6 +311,8 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       if (textTimer) window.clearTimeout(textTimer);
       flushText();
       detach();
+      unRecording();
+      redactor.flush(); // drops anything held back (and its timer)
       ro.disconnect();
       b?.streamPane(key, false);
       webgl?.dispose();

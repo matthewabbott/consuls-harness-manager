@@ -9,6 +9,7 @@ import { hostLabel } from "../lib/hosts";
 import { baseName, crumbsOf, isWithin, rootOf, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useFiles } from "../store/files";
+import { useRedact } from "../store/recording";
 
 interface Props {
   host: string;
@@ -24,7 +25,8 @@ interface Props {
 
 export default function FolderNav({ host, path, onGo, canBack, canForward, onBack, onForward, trailing }: Props) {
   const def = useFiles((s) => s.defaults[host] ?? null);
-  const machine = hostLabel(host);
+  const r = useRedact();
+  const machine = r(hostLabel(host));
   const root = path ? rootOf(path) : null;
   // The root crumb is the menu; the rest are plain crumbs.
   const crumbs = path ? crumbsOf(path).filter((c) => !sameFolder(c.path, root!)) : [];
@@ -48,7 +50,7 @@ export default function FolderNav({ host, path, onGo, canBack, canForward, onBac
                 onClick={() => onGo(c.path)}
                 className={`rounded px-0.5 whitespace-nowrap hover:bg-ink-700 hover:text-mist-200 ${i === crumbs.length - 1 ? "text-mist-100" : ""}`}
               >
-                {c.label}
+                {r(c.label)}
               </button>
             </span>
           ))}
@@ -86,6 +88,7 @@ function RootMenu({ host, path, root, onGo }: { host: string; path: string; root
   const drives = useDrives(host) ?? [];
   const def = useFiles((s) => s.defaults[host] ?? null);
   const home = useApp((s) => s.hosts[host]?.facts?.home ?? null);
+  const r = useRedact();
 
   useEffect(() => {
     if (!open) return;
@@ -122,9 +125,9 @@ function RootMenu({ host, path, root, onGo }: { host: string; path: string; root
       {open && (
         <div className="animate-rise absolute top-full left-0 z-40 mt-1 w-56 rounded-xl bg-ink-800 p-1 font-sans shadow-2xl ring-1 ring-ink-600">
           {def && (
-            <Item icon={<Star className="h-3.5 w-3.5 fill-current text-ember-400" />} title={baseName(def)} hint={def} checked={sameFolder(path, def)} onClick={() => go(def)} />
+            <Item icon={<Star className="h-3.5 w-3.5 fill-current text-ember-400" />} title={r(baseName(def))} hint={r(def)} checked={sameFolder(path, def)} onClick={() => go(def)} />
           )}
-          {home && <Item icon={<Home className="h-3.5 w-3.5" />} title="Home" hint={home} checked={sameFolder(path, home)} onClick={() => go(home)} />}
+          {home && <Item icon={<Home className="h-3.5 w-3.5" />} title="Home" hint={r(home)} checked={sameFolder(path, home)} onClick={() => go(home)} />}
           <div className="my-1 h-px bg-ink-700" />
           {drives.length > 0 ? (
             drives.map((d) => (

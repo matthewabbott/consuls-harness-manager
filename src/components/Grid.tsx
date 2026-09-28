@@ -6,6 +6,7 @@ import { hostLabel, isLocal, machines, phaseInfo, toneText } from "../lib/hosts"
 import { groupPanes, sortPanes } from "../lib/organize";
 import { paneIdentity, paneName, paneWhere } from "../lib/panes";
 import { useApp } from "../store/app";
+import { useRedact } from "../store/recording";
 import { useUi } from "../store/ui";
 import { isAgent } from "./HarnessBadge";
 import FileTile from "./FileTile";
@@ -36,6 +37,7 @@ export default function Grid() {
   const groupBy = useUi((s) => s.groupBy);
   const sortBy = useUi((s) => s.sortBy);
   const lastOpened = useUi((s) => s.lastOpened);
+  const r = useRedact();
   const openFiles = useEditor((s) => s.files);
   const fileOrder = useEditor((s) => s.order);
   /** Open files by the pane they came from (null: none, or that pane is gone). */
@@ -89,7 +91,7 @@ export default function Grid() {
           <section key={g.id} className="mb-8">
             <div className="mb-3 flex items-baseline gap-2.5">
               {g.color && <span className="h-2.5 w-2.5 self-center rounded-full" style={{ background: g.color }} />}
-              <h2 className="font-display text-[17px] font-semibold tracking-tight text-mist-100">{g.title}</h2>
+              <h2 className="font-display text-[17px] font-semibold tracking-tight text-mist-100">{r(g.title)}</h2>
               <span className="ml-auto text-[12px] text-mist-500">
                 {g.panes.length} pane{g.panes.length === 1 ? "" : "s"}
               </span>
@@ -133,13 +135,15 @@ export default function Grid() {
         return (
           <section key={m.id} className="mb-8">
             <div className="mb-3 flex items-baseline gap-3">
-              <h2 className="font-display text-[17px] font-semibold tracking-tight text-mist-100">{m.label}</h2>
+              <h2 className="font-display text-[17px] font-semibold tracking-tight text-mist-100">{r(m.label)}</h2>
               <span className={`text-[12px] ${toneText[info.tone]}`}>{info.label}</span>
               {m.state?.facts && (
                 <span className="font-mono text-[11px] text-mist-500">
-                  {local
-                    ? `${m.state.facts.user} · ${m.state.facts.uname}`
-                    : `${m.state.facts.user}@${m.label} · tmux ${m.state.facts.tmuxVersion ?? "missing"}`}
+                  {r(
+                    local
+                      ? `${m.state.facts.user} · ${m.state.facts.uname}`
+                      : `${m.state.facts.user}@${m.label} · tmux ${m.state.facts.tmuxVersion ?? "missing"}`,
+                  )}
                 </span>
               )}
               <span className="ml-auto text-[12px] text-mist-500">
@@ -148,7 +152,7 @@ export default function Grid() {
               {connected && (
                 <button
                   onClick={() => useApp.getState().openNewPane(m.id)}
-                  title={`New pane on ${m.label}`}
+                  title={`New pane on ${r(m.label)}`}
                   className="self-center rounded-md p-1 text-mist-500 transition-colors hover:bg-ink-700 hover:text-mist-100"
                 >
                   <Plus className="h-4 w-4" />

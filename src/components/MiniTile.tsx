@@ -7,6 +7,7 @@ import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { hostLabel, shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { beginTileDrag, consumeJustDragged } from "../store/drag";
+import { useRecording, useRedact } from "../store/recording";
 import { resolveLabels } from "../lib/labels";
 import { isDirect, paneName, paneWhere } from "../lib/panes";
 import { paintTile } from "../term/tilePainter";
@@ -62,6 +63,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
     setExpanded(pane.key);
   };
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const r = useRedact();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -69,7 +71,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
     let frame = 0;
     const paint = () => {
       frame = 0;
-      paintTile(canvas, getTile(pane.key), stale !== null || pane.ended !== null);
+      paintTile(canvas, getTile(pane.key), stale !== null || pane.ended !== null, useRecording.getState().tile);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(paint);
@@ -85,8 +87,8 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
     };
   }, [pane.key, stale, pane.ended]);
 
-  const title = displayTitle(pane);
-  const where = paneWhere(pane);
+  const title = r(displayTitle(pane));
+  const where = r(paneWhere(pane));
   const direct = isDirect(pane);
   const sized = pane.tmux?.sized ?? false;
   // Direct panes don't reconnect: they're either live or ended (never "stale").
@@ -112,7 +114,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
         <HarnessBadge harness={pane.harness} size={compact ? 18 : 22} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <div className="truncate text-[13px] leading-tight font-medium text-mist-100" title={pane.title || title}>
+            <div className="truncate text-[13px] leading-tight font-medium text-mist-100" title={r(pane.title) || title}>
               {title}
             </div>
             {att?.activity === "working" && (
@@ -124,8 +126,8 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
           </div>
           {!compact && (
             <div className="truncate font-mono text-[10.5px] leading-tight text-mist-500">
-              {showHost && <span className="text-mist-400">{hostLabel(pane.host)} · </span>}
-              {shortPath(pane.currentPath, home)}
+              {showHost && <span className="text-mist-400">{r(hostLabel(pane.host))} · </span>}
+              {r(shortPath(pane.currentPath, home))}
             </div>
           )}
         </div>
@@ -202,10 +204,10 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
         {overlay && (
           <div className="absolute inset-0 flex items-center justify-center bg-ink-950/30 backdrop-blur-[1px]">
             <span
-              title={pane.ended ?? undefined}
+              title={pane.ended ? r(pane.ended) : undefined}
               className={`rounded-full px-3 py-1 text-[11px] font-medium ring-1 ${direct ? "bg-rose-950/80 text-rose-200 ring-rose-500/40" : "bg-ink-800/90 text-mist-300 ring-ink-600"}`}
             >
-              {direct ? `Ended · ${pane.ended}` : overlay}
+              {direct ? `Ended · ${r(pane.ended ?? "")}` : overlay}
             </span>
           </div>
         )}
