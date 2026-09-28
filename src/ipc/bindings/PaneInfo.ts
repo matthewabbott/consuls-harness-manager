@@ -24,4 +24,8 @@ windowPanes: number,
 /**
  * Harness Manager has pinned this window's size.
  */
-sized: boolean, };
+sized: boolean, 
+/**
+ * Label ids (see [`LabelDef`]).
+ */
+labels: Array<string>, };

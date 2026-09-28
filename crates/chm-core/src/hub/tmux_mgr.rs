@@ -43,6 +43,8 @@ pub(crate) enum PaneCmd {
     Resize { key: u32, cols: u16, rows: u16, reply: tokio::sync::oneshot::Sender<Result<ResizeOutcome, String>> },
     /// Undo our pin: give the window back to tmux's automatic sizing.
     ReleaseSize { key: u32 },
+    /// Set the pane's labels (stored in tmux as `@chm_labels`, so every device agrees).
+    SetLabels { key: u32, labels: Vec<String> },
     /// Hide/unhide (stored in tmux as `@chm_hidden`, so every device agrees).
     Hide { key: u32, hidden: bool },
     /// Quit the harness gracefully, then close the pane (or kill it outright with `force`).
@@ -53,7 +55,7 @@ const SEP_STR: &str = crate::tmux::formats::SEP;
 
 /// Subscription reporting per-pane fields that change without any other notification.
 const SUB_NAME: &str = "chm";
-const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{pane_title}";
+const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{pane_title}";
 
 struct Client {
     client: Arc<ControlClient>,
@@ -320,6 +322,7 @@ impl TmuxManager {
             hidden: r.chm_hidden,
             window_panes: r.window_panes,
             sized: r.sized,
+            labels: r.labels.clone(),
         }
     }
 
@@ -392,18 +395,26 @@ impl TmuxManager {
                 self.seed(pane, "continue").await;
             }
             ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name == SUB_NAME => {
-                let mut parts = value.splitn(3, crate::tmux::formats::SEP);
+                let mut parts = value.splitn(5, crate::tmux::formats::SEP);
                 let cmd = parts.next().unwrap_or_default().to_string();
                 let alt = parts.next() == Some("1");
+                let hidden = parts.next() == Some("1");
+                let labels = crate::tmux::formats::parse_labels(parts.next().unwrap_or_default());
                 let title = parts.next().unwrap_or_default().to_string();
                 let mut reseed = false;
                 if let Some(p) = self.panes.get_mut(&pane)
-                    && (p.row.current_command != cmd || p.row.title != title || p.row.alternate_on != alt)
+                    && (p.row.current_command != cmd
+                        || p.row.title != title
+                        || p.row.alternate_on != alt
+                        || p.row.chm_hidden != hidden
+                        || p.row.labels != labels)
                 {
                     reseed = p.row.alternate_on != alt;
                     p.row.current_command = cmd;
                     p.row.title = title;
                     p.row.alternate_on = alt;
+                    p.row.chm_hidden = hidden;
+                    p.row.labels = labels;
                     self.publish_due = true;
                 }
                 if reseed {
@@ -834,6 +845,26 @@ impl TmuxManager {
                 if let Err(e) = self.release_size(key).await {
                     self.ctx.notice(Some(&self.host), NoticeLevel::Warning, format!("Couldn't release size: {e}"));
                 }
+            }
+            PaneCmd::SetLabels { key, labels } => {
+                let Some((id, client)) = self.pane_by_key(key) else { return };
+                let target = quote(&format!("%{id}"));
+                let mut seen = std::collections::HashSet::new();
+                let labels: Vec<String> =
+                    labels.into_iter().filter(|l| !l.trim().is_empty() && !l.contains(',') && seen.insert(l.clone())).collect();
+                let line = if labels.is_empty() {
+                    format!("set-option -p -u -t {target} @chm_labels")
+                } else {
+                    format!("set-option -p -t {target} @chm_labels {}", quote(&labels.join(",")))
+                };
+                if let Err(e) = client.command(&line).await {
+                    self.ctx.notice(Some(&self.host), NoticeLevel::Error, format!("Couldn't label pane: {e}"));
+                    return;
+                }
+                if let Some(p) = self.panes.get_mut(&id) {
+                    p.row.labels = labels;
+                }
+                self.publish();
             }
             PaneCmd::Hide { key, hidden } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };

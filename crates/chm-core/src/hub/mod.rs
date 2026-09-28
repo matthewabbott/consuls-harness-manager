@@ -21,8 +21,8 @@ use host::{HostCmd, HostHandle, IntegrationAction};
 use tmux_mgr::PaneCmd;
 
 use crate::model::{
-    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, NewPaneSpec, ResizeOutcome, SoundPrefs,
-    TailnetStatus, TerminateOutcome,
+    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, LabelDef, NewPaneSpec, ResizeOutcome,
+    SoundPrefs, TailnetStatus, TerminateOutcome, label_slug,
 };
 
 /// Loads config.json. A file that exists but can't be parsed is set aside (never silently
@@ -295,6 +295,61 @@ impl Core {
     pub fn set_sound_prefs(&self, prefs: SoundPrefs) {
         self.config.lock().unwrap().sound = prefs;
         self.save_config();
+    }
+
+    /// Creates a label (id derived from the name, made unique) and returns it.
+    pub fn create_label(&self, name: &str, color: &str) -> LabelDef {
+        let label = {
+            let mut config = self.config.lock().unwrap();
+            let base = label_slug(name);
+            let mut id = base.clone();
+            let mut n = 2;
+            while config.labels.iter().any(|l| l.id == id) {
+                id = format!("{base}-{n}");
+                n += 1;
+            }
+            let label = LabelDef { id, name: name.trim().to_string(), color: color.to_string() };
+            config.labels.push(label.clone());
+            label
+        };
+        self.save_config();
+        label
+    }
+
+    /// Renames/recolours a label (its id never changes).
+    pub fn update_label(&self, label: LabelDef) {
+        {
+            let mut config = self.config.lock().unwrap();
+            match config.labels.iter_mut().find(|l| l.id == label.id) {
+                Some(l) => *l = label,
+                None => return,
+            }
+        }
+        self.save_config();
+    }
+
+    /// Deletes a label definition and removes it from every pane that has it (panes on
+    /// offline hosts keep the stale id; the UI shows unknown ids muted).
+    pub fn delete_label(&self, id: &str) {
+        self.config.lock().unwrap().labels.retain(|l| l.id != id);
+        self.save_config();
+        let affected: Vec<(u32, Vec<String>)> = self
+            .ctx
+            .panes
+            .lock()
+            .unwrap()
+            .values()
+            .flatten()
+            .filter(|p| p.labels.iter().any(|l| l == id))
+            .map(|p| (p.key, p.labels.iter().filter(|l| *l != id).cloned().collect()))
+            .collect();
+        for (key, labels) in affected {
+            self.set_pane_labels(key, labels);
+        }
+    }
+
+    pub fn set_pane_labels(&self, key: u32, labels: Vec<String>) {
+        self.pane(key, PaneCmd::SetLabels { key, labels });
     }
 
     /// What the user is looking at (drives ping/toast/ack rules).

@@ -4,6 +4,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import type { GroupBy, SortBy } from "../lib/organize";
+
 export type SidebarTab = "machines" | "files";
 
 interface UiState {
@@ -15,6 +17,10 @@ interface UiState {
   composerHeight: number;
   /** Expanded view fills the window (side panels hidden). */
   maximized: boolean;
+  groupBy: GroupBy;
+  sortBy: SortBy;
+  /** Pane identity → when it was last expanded (for "recently opened" sorting). */
+  lastOpened: Record<string, number>;
 
   setSidebarWidth(w: number): void;
   toggleSidebar(): void;
@@ -23,6 +29,9 @@ interface UiState {
   toggleFilmstrip(): void;
   setComposerHeight(h: number): void;
   setMaximized(m: boolean): void;
+  setGroupBy(g: GroupBy): void;
+  setSortBy(s: SortBy): void;
+  markOpened(identity: string): void;
 }
 
 export const SIDEBAR = { min: 200, max: 480, default: 264 };
@@ -41,6 +50,9 @@ export const useUi = create<UiState>()(
       filmstripCollapsed: false,
       composerHeight: COMPOSER.default,
       maximized: false,
+      groupBy: "machine",
+      sortBy: "attention",
+      lastOpened: {},
 
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, SIDEBAR.min, SIDEBAR.max) }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
@@ -51,6 +63,9 @@ export const useUi = create<UiState>()(
       toggleFilmstrip: () => set((s) => ({ filmstripCollapsed: !s.filmstripCollapsed })),
       setComposerHeight: (h) => set({ composerHeight: clamp(h, COMPOSER.min, Math.max(COMPOSER.min, window.innerHeight * 0.5)) }),
       setMaximized: (maximized) => set({ maximized }),
+      setGroupBy: (groupBy) => set({ groupBy }),
+      setSortBy: (sortBy) => set({ sortBy }),
+      markOpened: (identity) => set((s) => ({ lastOpened: { ...s.lastOpened, [identity]: Date.now() } })),
     }),
     {
       name: "consuls.ui.v1",

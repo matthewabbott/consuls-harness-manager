@@ -1,6 +1,6 @@
 use chm_core::model::{
-    AlertKind, CoreSnapshot, DirListing, FocusState, HostConfig, NewPaneSpec, ResizeOutcome, SoundPrefs, TailnetStatus,
-    TerminateOutcome,
+    AlertKind, CoreSnapshot, DirListing, FocusState, HostConfig, LabelDef, NewPaneSpec, ResizeOutcome, SoundPrefs,
+    TailnetStatus, TerminateOutcome,
 };
 use chm_core::integration::install::IntegrationStatus;
 use tauri::State;
@@ -151,6 +151,29 @@ pub async fn resize_pane(state: State<'_, AppState>, key: u32, cols: u16, rows: 
 #[tauri::command]
 pub fn release_pane_size(state: State<'_, AppState>, key: u32) {
     state.core.release_pane_size(key);
+}
+
+#[tauri::command]
+pub fn create_label(state: State<'_, AppState>, name: String, color: String) -> CmdResult<LabelDef> {
+    if name.trim().is_empty() {
+        return Err("label name is required".into());
+    }
+    Ok(state.core.create_label(&name, &color))
+}
+
+#[tauri::command]
+pub fn update_label(state: State<'_, AppState>, label: LabelDef) {
+    state.core.update_label(label);
+}
+
+#[tauri::command]
+pub fn delete_label(state: State<'_, AppState>, id: String) {
+    state.core.delete_label(&id);
+}
+
+#[tauri::command]
+pub fn set_pane_labels(state: State<'_, AppState>, key: u32, labels: Vec<String>) {
+    state.core.set_pane_labels(key, labels);
 }
 
 #[tauri::command]

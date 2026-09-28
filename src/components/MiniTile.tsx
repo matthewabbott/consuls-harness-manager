@@ -6,6 +6,8 @@ import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
+import { beginTileDrag, consumeJustDragged } from "../store/drag";
+import { resolveLabels } from "../lib/labels";
 import { paintTile } from "../term/tilePainter";
 import { getTile, subscribeTile } from "../term/tiles";
 import HarnessBadge from "./HarnessBadge";
@@ -28,10 +30,14 @@ interface Props {
   home?: string | null;
   /** Smaller variant for the filmstrip beside the expanded view. */
   compact?: boolean;
+  /** Show the machine name (when the grid isn't grouped by machine). */
+  showHost?: boolean;
 }
 
-function MiniTile({ pane, stale, home, compact = false }: Props) {
+function MiniTile({ pane, stale, home, compact = false, showHost = false }: Props) {
   const setExpanded = useApp((s) => s.setExpanded);
+  const labelDefs = useApp((s) => s.config.labels);
+  const labels = resolveLabels(pane.labels, labelDefs);
   const att = useApp((s) => s.attention[pane.key]);
   const [pulsing, setPulsing] = useState(false);
   const lastPulse = useRef(att?.pulse ?? 0);
@@ -45,6 +51,7 @@ function MiniTile({ pane, stale, home, compact = false }: Props) {
   const waiting = att && (att.activity === "idle" || att.activity === "needsInput") && att.attention !== "none";
   const glow = att?.attention === "unacked" ? (att.activity === "needsInput" ? "glow-iris" : "glow-ember") : pulsing ? "pulse" : "";
   const open = () => {
+    if (consumeJustDragged()) return;
     backend().then((b) => b.ackPane(pane.key));
     setExpanded(pane.key);
   };
@@ -78,6 +85,15 @@ function MiniTile({ pane, stale, home, compact = false }: Props) {
   return (
     <article
       onClick={open}
+      onPointerDown={(e) =>
+        beginTileDrag(e, pane.key, title, (labelId) => {
+          if (!pane.labels.includes(labelId)) backend().then((b) => b.setPaneLabels(pane.key, [...pane.labels, labelId]));
+        })
+      }
+      onContextMenu={(e) => {
+        e.preventDefault();
+        useApp.getState().setTileMenu({ pane, x: e.clientX, y: e.clientY });
+      }}
       className={`tile group relative cursor-pointer overflow-hidden rounded-xl border border-ink-700/70 ${glow}`}
     >
       <header className={`flex items-center gap-2.5 ${compact ? "h-8 px-2.5" : "h-10 px-3"}`}>
@@ -94,7 +110,12 @@ function MiniTile({ pane, stale, home, compact = false }: Props) {
               </span>
             )}
           </div>
-          {!compact && <div className="truncate font-mono text-[10.5px] leading-tight text-mist-500">{shortPath(pane.currentPath, home)}</div>}
+          {!compact && (
+            <div className="truncate font-mono text-[10.5px] leading-tight text-mist-500">
+              {showHost && <span className="text-mist-400">{pane.host} · </span>}
+              {shortPath(pane.currentPath, home)}
+            </div>
+          )}
         </div>
         {!compact && (
           <>
@@ -116,6 +137,21 @@ function MiniTile({ pane, stale, home, compact = false }: Props) {
           </>
         )}
       </header>
+      {labels.length > 0 && !compact && (
+        <div className="-mt-0.5 flex flex-wrap gap-1 px-3 pb-1.5">
+          {labels.map((l) => (
+            <span
+              key={l.id}
+              title={l.unknown ? "Unknown label (deleted elsewhere?)" : l.name}
+              className={`flex items-center gap-1 rounded-full px-1.5 py-px text-[10px] font-medium ${l.unknown ? "text-mist-500" : "text-mist-200"}`}
+              style={{ background: `${l.color}22`, boxShadow: `inset 0 0 0 1px ${l.color}55` }}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: l.color }} />
+              {l.name}
+            </span>
+          ))}
+        </div>
+      )}
       <div className={`relative overflow-hidden rounded-lg bg-[#0e1119] ring-1 ring-black/40 ${compact ? "mx-1.5 mb-1.5 aspect-[16/9]" : "mx-2 mb-2 aspect-[16/10]"}`}>
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
         {waiting && !stale && (

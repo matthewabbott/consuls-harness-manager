@@ -11,6 +11,7 @@ import type { TailnetStatus } from "../ipc/bindings/TailnetStatus";
 import { paneIdentity } from "../lib/panes";
 import { renameIdentity } from "./composer";
 import { useViewPrefs } from "./viewPrefs";
+import type { TileMenuState } from "../components/TileMenu";
 
 /** A pane just got a stable @chm_id: carry its drafts, history and view prefs over. */
 function migrateIdentities(before: PaneInfo[] | undefined, after: PaneInfo[]) {
@@ -46,6 +47,8 @@ interface AppStore {
   filter: PaneFilter;
   query: string;
   focusHost: string | null;
+  focusLabel: string | null;
+  tileMenu: TileMenuState | null;
   /** Pane key shown in the expanded view, if any. */
   expanded: number | null;
   /** Host preselected in the new-pane dialog; `undefined` = dialog closed. */
@@ -67,6 +70,8 @@ interface AppStore {
   setFilter(filter: PaneFilter): void;
   setQuery(query: string): void;
   setFocusHost(host: string | null): void;
+  setFocusLabel(label: string | null): void;
+  setTileMenu(menu: TileMenuState | null): void;
   setExpanded(key: number | null): void;
   openNewPane(host: string | null): void;
   closeNewPane(): void;
@@ -82,7 +87,7 @@ let noticeId = 1;
 export const useApp = create<AppStore>((set) => ({
   ready: false,
   tailnet: null,
-  config: { hosts: [], sound: { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true } },
+  config: { hosts: [], labels: [], sound: { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true } },
   hosts: {},
   panes: {},
   attention: {},
@@ -90,6 +95,8 @@ export const useApp = create<AppStore>((set) => ({
   filter: "all",
   query: "",
   focusHost: null,
+  focusLabel: null,
+  tileMenu: null,
   expanded: null,
   newPaneFor: undefined,
   terminating: null,
@@ -144,6 +151,8 @@ export const useApp = create<AppStore>((set) => ({
   setFilter: (filter) => set({ filter }),
   setQuery: (query) => set({ query }),
   setFocusHost: (focusHost) => set({ focusHost }),
+  setFocusLabel: (focusLabel) => set({ focusLabel }),
+  setTileMenu: (tileMenu) => set({ tileMenu }),
   setExpanded: (expanded) => set({ expanded }),
   openNewPane: (host) => set({ newPaneFor: host }),
   closeNewPane: () => set({ newPaneFor: undefined }),

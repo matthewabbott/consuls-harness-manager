@@ -1,42 +1,101 @@
-import { Plus } from "lucide-react";
+import { Plus, Tag } from "lucide-react";
 import { useMemo } from "react";
 
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { machines, phaseInfo, toneText } from "../lib/hosts";
+import { groupPanes, sortPanes } from "../lib/organize";
+import { paneIdentity } from "../lib/panes";
 import { useApp } from "../store/app";
+import { useUi } from "../store/ui";
 import { isAgent } from "./HarnessBadge";
-import MiniTile from "./MiniTile";
+import MiniTile, { displayTitle } from "./MiniTile";
 
-function matches(p: PaneInfo, q: string): boolean {
+function matches(p: PaneInfo, q: string, labelNames: string): boolean {
   if (!q) return true;
-  const hay = `${p.title} ${p.windowName} ${p.sessionName} ${p.currentPath} ${p.currentCommand} ${p.host}`.toLowerCase();
+  const hay = `${p.title} ${p.windowName} ${p.sessionName} ${p.currentPath} ${p.currentCommand} ${p.host} ${labelNames}`.toLowerCase();
   return q
     .toLowerCase()
     .split(/\s+/)
     .every((w) => hay.includes(w));
 }
 
+const GRID_STYLE = { gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))" };
+
 export default function Grid() {
   const tailnet = useApp((s) => s.tailnet);
   const config = useApp((s) => s.config);
   const hosts = useApp((s) => s.hosts);
   const panes = useApp((s) => s.panes);
+  const attention = useApp((s) => s.attention);
   const filter = useApp((s) => s.filter);
   const query = useApp((s) => s.query);
   const focusHost = useApp((s) => s.focusHost);
+  const focusLabel = useApp((s) => s.focusLabel);
+  const groupBy = useUi((s) => s.groupBy);
+  const sortBy = useUi((s) => s.sortBy);
+  const lastOpened = useUi((s) => s.lastOpened);
 
-  const sections = useMemo(() => {
-    const { configured } = machines(tailnet, config.hosts, hosts);
-    return configured
-      .filter((m) => !focusHost || m.id === focusHost)
-      .map((m) => {
-        const list = (panes[m.id] ?? []).filter((p) => !p.hidden && (filter === "all" || isAgent(p.harness)) && matches(p, query));
-        return { m, list };
-      });
-  }, [tailnet, config.hosts, hosts, panes, filter, query, focusHost]);
+  const { configured } = useMemo(() => machines(tailnet, config.hosts, hosts), [tailnet, config.hosts, hosts]);
 
+  const keep = useMemo(() => {
+    const names = (p: PaneInfo) => p.labels.map((id) => config.labels.find((l) => l.id === id)?.name ?? id).join(" ");
+    return (p: PaneInfo) =>
+      !p.hidden &&
+      (filter === "all" || isAgent(p.harness)) &&
+      (!focusHost || p.host === focusHost) &&
+      (!focusLabel || p.labels.includes(focusLabel)) &&
+      matches(p, query, names(p));
+  }, [config.labels, filter, focusHost, focusLabel, query]);
+
+  const sort = (list: PaneInfo[]) => sortPanes(list, sortBy, displayTitle, attention, lastOpened, paneIdentity);
+  const staleFor = (host: string) => {
+    const state = hosts[host];
+    return state?.phase.phase === "connected" ? null : phaseInfo(state?.phase, undefined).label;
+  };
+
+  const focusBanner = focusLabel && (
+    <div className="mb-4 flex items-center gap-2 text-[12.5px] text-mist-400">
+      <Tag className="h-3.5 w-3.5" style={{ color: config.labels.find((l) => l.id === focusLabel)?.color }} />
+      Showing panes labelled <span className="font-medium text-mist-100">{config.labels.find((l) => l.id === focusLabel)?.name ?? focusLabel}</span>
+      <button onClick={() => useApp.getState().setFocusLabel(null)} className="ml-1 text-sky-400 hover:underline">
+        show all
+      </button>
+    </div>
+  );
+
+  if (groupBy !== "machine") {
+    const visible = configured.flatMap((m) => panes[m.id] ?? []).filter(keep);
+    const groups = groupPanes(visible, groupBy, config.labels, attention);
+    return (
+      <div className="scroll-thin flex-1 overflow-y-auto px-6 pt-2 pb-10">
+        {focusBanner}
+        {groups.map((g) => (
+          <section key={g.id} className="mb-8">
+            <div className="mb-3 flex items-baseline gap-2.5">
+              {g.color && <span className="h-2.5 w-2.5 self-center rounded-full" style={{ background: g.color }} />}
+              <h2 className="font-display text-[17px] font-semibold tracking-tight text-mist-100">{g.title}</h2>
+              <span className="ml-auto text-[12px] text-mist-500">
+                {g.panes.length} pane{g.panes.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div className="grid gap-4" style={GRID_STYLE}>
+              {sort(g.panes).map((p) => (
+                <MiniTile key={`${g.id}:${p.key}`} pane={p} stale={staleFor(p.host)} home={hosts[p.host]?.facts?.home} showHost />
+              ))}
+            </div>
+          </section>
+        ))}
+        {groups.length === 0 && (
+          <div className="rounded-xl border border-dashed border-ink-600 px-5 py-8 text-center text-[13px] text-mist-500">No panes match.</div>
+        )}
+      </div>
+    );
+  }
+
+  const sections = configured.filter((m) => !focusHost || m.id === focusHost).map((m) => ({ m, list: sort((panes[m.id] ?? []).filter(keep)) }));
   return (
     <div className="scroll-thin flex-1 overflow-y-auto px-6 pt-2 pb-10">
+      {focusBanner}
       {sections.map(({ m, list }) => {
         const info = phaseInfo(m.state?.phase, m.peer?.online);
         const connected = m.state?.phase.phase === "connected";
@@ -66,7 +125,7 @@ export default function Grid() {
               )}
             </div>
             {list.length > 0 ? (
-              <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))" }}>
+              <div className="grid gap-4" style={GRID_STYLE}>
                 {list.map((p) => (
                   <MiniTile key={p.key} pane={p} stale={stale} home={m.state?.facts?.home} />
                 ))}

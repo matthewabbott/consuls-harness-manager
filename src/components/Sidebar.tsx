@@ -5,6 +5,7 @@ import { backend } from "../ipc/backend";
 import type { HostConfig } from "../ipc/bindings/HostConfig";
 import { defaultUser, machines, phaseInfo, toneText, type Machine } from "../lib/hosts";
 import { useApp } from "../store/app";
+import LabelsPanel from "./LabelsPanel";
 
 function OsIcon({ os, className }: { os: string | undefined; className?: string }) {
   const o = (os ?? "").toLowerCase();
@@ -196,6 +197,10 @@ export default function MachinesPanel() {
             ))}
           </div>
         )}
+
+        <div className="mt-5">
+          <LabelsPanel />
+        </div>
 
         <div className="mt-5 flex items-center justify-between pr-1">
           <SectionLabel>On your tailnet</SectionLabel>

@@ -5,6 +5,27 @@ import { backend } from "../ipc/backend";
 import { displayTitle } from "./MiniTile";
 
 import { useApp, type PaneFilter } from "../store/app";
+import { useUi } from "../store/ui";
+import type { GroupBy, SortBy } from "../lib/organize";
+
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange(v: string): void; options: [string, string][] }) {
+  return (
+    <label className="flex items-center gap-1.5">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-md bg-ink-800 px-1.5 py-1 text-[12px] text-mist-200 ring-1 ring-ink-700 outline-none focus:ring-sky-400/50"
+      >
+        {options.map(([v, l]) => (
+          <option key={v} value={v}>
+            {l}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 export default function TopBar() {
   const filter = useApp((s) => s.filter);
@@ -19,6 +40,8 @@ export default function TopBar() {
     .flat()
     .filter((p) => p.hidden && (!focusHost || p.host === focusHost));
   const [showHidden, setShowHidden] = useState(false);
+  const groupBy = useUi((s) => s.groupBy);
+  const sortBy = useUi((s) => s.sortBy);
 
   const tabs: { id: PaneFilter; label: string; icon: React.ReactNode }[] = [
     { id: "all", label: "All panes", icon: <LayoutGrid className="h-3.5 w-3.5" /> },
@@ -52,6 +75,31 @@ export default function TopBar() {
             {t.label}
           </button>
         ))}
+      </div>
+
+      <div className="flex items-center gap-2 text-[12px] text-mist-500">
+        <Select
+          label="Group"
+          value={groupBy}
+          onChange={(v) => useUi.getState().setGroupBy(v as GroupBy)}
+          options={[
+            ["machine", "Machine"],
+            ["label", "Label"],
+            ["project", "Project"],
+            ["status", "Status"],
+            ["none", "None"],
+          ]}
+        />
+        <Select
+          label="Sort"
+          value={sortBy}
+          onChange={(v) => useUi.getState().setSortBy(v as SortBy)}
+          options={[
+            ["attention", "Needs you first"],
+            ["name", "Name"],
+            ["recent", "Recently opened"],
+          ]}
+        />
       </div>
 
       <div className="relative ml-auto">

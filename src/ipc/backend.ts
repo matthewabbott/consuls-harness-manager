@@ -9,6 +9,7 @@ import type { CoreSnapshot } from "./bindings/CoreSnapshot";
 import type { DirListing } from "./bindings/DirListing";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
+import type { LabelDef } from "./bindings/LabelDef";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
@@ -45,6 +46,10 @@ export interface Backend {
   submitPrompt(key: number, text: string): Promise<void>;
   createPane(spec: NewPaneSpec): Promise<number>;
   setPaneHidden(key: number, hidden: boolean): Promise<void>;
+  createLabel(name: string, color: string): Promise<LabelDef>;
+  updateLabel(label: LabelDef): Promise<void>;
+  deleteLabel(id: string): Promise<void>;
+  setPaneLabels(key: number, labels: string[]): Promise<void>;
   resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
   releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
@@ -101,6 +106,10 @@ async function tauriBackend(): Promise<Backend> {
     submitPrompt: (key, text) => invoke("submit_prompt", { key, text }),
     createPane: (spec) => invoke("create_pane", { spec }),
     setPaneHidden: (key, hidden) => invoke("set_pane_hidden", { key, hidden }),
+    createLabel: (name, color) => invoke("create_label", { name, color }),
+    updateLabel: (label) => invoke("update_label", { label }),
+    deleteLabel: (id) => invoke("delete_label", { id }),
+    setPaneLabels: (key, labels) => invoke("set_pane_labels", { key, labels }),
     resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
     releasePaneSize: (key) => invoke("release_pane_size", { key }),
     terminatePane: (key, force) => invoke("terminate_pane", { key, force }),

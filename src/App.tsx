@@ -6,6 +6,9 @@ import HostSettingsDialog from "./components/HostSettingsDialog";
 import IntegrationDialog from "./components/IntegrationDialog";
 import NewPaneDialog from "./components/NewPaneDialog";
 import SettingsDialog from "./components/SettingsDialog";
+import DragGhost from "./components/DragGhost";
+import TileMenu from "./components/TileMenu";
+import { paneIdentity } from "./lib/panes";
 import TerminateDialog from "./components/TerminateDialog";
 import Grid from "./components/Grid";
 import Notices from "./components/Notices";
@@ -28,10 +31,17 @@ export default function App() {
   const settingsFor = useApp((s) => s.settingsFor);
   const settingsOpen = useApp((s) => s.settingsOpen);
   const maximized = useUi((s) => s.maximized);
+  const tileMenu = useApp((s) => s.tileMenu);
   const expandedPane = useMemo(
     () => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)),
     [expanded, panes],
   );
+
+  // Remember when each pane was last opened (for "recently opened" sorting).
+  useEffect(() => {
+    if (expandedPane) useUi.getState().markOpened(paneIdentity(expandedPane));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedPane?.key]);
 
   // If the expanded pane disappears (closed remotely), fall back to the grid.
   useEffect(() => {
@@ -158,6 +168,8 @@ export default function App() {
       {integrationFor !== null && <IntegrationDialog host={integrationFor} />}
       {settingsFor !== null && <HostSettingsDialog host={settingsFor} />}
       {settingsOpen && <SettingsDialog />}
+      {tileMenu && <TileMenu menu={tileMenu} onClose={() => useApp.getState().setTileMenu(null)} />}
+      <DragGhost />
     </div>
   );
 }

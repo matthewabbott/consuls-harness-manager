@@ -146,6 +146,17 @@ async fn main() -> anyhow::Result<()> {
         let _ = core.terminate_pane(k, true).await;
     }
 
+    // --- labels: stored on the tmux pane, and changes made elsewhere arrive via the subscription
+    let pane_id = pane(key).expect("pane").pane_id;
+    core.set_pane_labels(key, vec!["alpha".into(), "beta".into(), "alpha".into()]);
+    wait_for("labels applied (deduplicated)", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels == ["alpha", "beta"])).await;
+    let stored = core.exec(&host, &format!("tmux -L {socket} show-options -pqv -t '{pane_id}' @chm_labels")).await.map_err(anyhow::Error::msg)?;
+    assert_eq!(stored.stdout_str().trim(), "alpha,beta", "labels stored in @chm_labels");
+    core.exec(&host, &format!("tmux -L {socket} set-option -p -t '{pane_id}' @chm_labels gamma")).await.map_err(anyhow::Error::msg)?;
+    wait_for("label change from another client seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels == ["gamma"])).await;
+    core.set_pane_labels(key, vec![]);
+    wait_for("labels cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels.is_empty())).await;
+
     // Drop the connection: it must come back on its own, with the same pane keys, and the
     // expanded pane must get a fresh RESET without the UI asking again.
     let resets_before = rec.resets.lock().unwrap().get(&key).copied().unwrap_or(0);

@@ -164,6 +164,34 @@ pub struct HostState {
 pub struct AppConfig {
     pub hosts: Vec<HostConfig>,
     pub sound: SoundPrefs,
+    /// Label definitions; panes reference them by `id` (stored in tmux as `@chm_labels`).
+    pub labels: Vec<LabelDef>,
+}
+
+/// A user-defined pane label ("tag"). The id is a slug fixed at creation, so renaming a label
+/// never needs to rewrite options on (possibly offline) hosts.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct LabelDef {
+    pub id: String,
+    pub name: String,
+    /// CSS colour, e.g. `#f5a25d`.
+    pub color: String,
+}
+
+/// Turns a label name into a stable id: lowercase ASCII letters/digits and dashes.
+pub fn label_slug(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    let out = out.trim_end_matches('-').to_string();
+    if out.is_empty() { "label".into() } else { out.chars().take(32).collect() }
 }
 
 /// Notification sound preferences.
@@ -219,6 +247,13 @@ mod config_tests {
     }
 
     #[test]
+    fn slugs() {
+        assert_eq!(label_slug("Terrarium Project"), "terrarium-project");
+        assert_eq!(label_slug("  urgent!! "), "urgent");
+        assert_eq!(label_slug("☕"), "label");
+    }
+
+    #[test]
     fn sparse_and_empty_configs_load() {
         let cfg: AppConfig = serde_json::from_str(r#"{ "hosts": [ { "id": "x" } ], "futureField": 1 }"#).unwrap();
         assert_eq!((cfg.hosts[0].port, cfg.hosts[0].auto_connect), (22, true));
@@ -261,6 +296,8 @@ pub struct PaneInfo {
     pub window_panes: u32,
     /// Harness Manager has pinned this window's size.
     pub sized: bool,
+    /// Label ids (see [`LabelDef`]).
+    pub labels: Vec<String>,
 }
 
 /// Result of a resize request.

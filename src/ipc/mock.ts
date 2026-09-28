@@ -8,6 +8,7 @@ import type { FocusState } from "./bindings/FocusState";
 import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
+import type { LabelDef } from "./bindings/LabelDef";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
@@ -136,6 +137,7 @@ function pane(key: number, host: string, extra: Partial<PaneInfo>, lines: Seg[][
       hidden: false,
       windowPanes: 1,
       sized: false,
+      labels: [],
       ...extra,
     },
     lines,
@@ -166,7 +168,11 @@ export function mockBackend(): Backend {
   const emit = (ev: CoreEvent) => listeners.forEach((l) => l(ev));
   let frameCb: ((b: Uint8Array) => void) | null = null;
 
-  const config: { hosts: HostConfig[] } = {
+  const config: { hosts: HostConfig[]; labels: LabelDef[] } = {
+    labels: [
+      { id: "terrarium", name: "terrarium", color: "#4ade9a" },
+      { id: "urgent", name: "urgent", color: "#ff6b81" },
+    ],
     hosts: [
       { id: "spark-d683", address: null, port: 22, user: "consulear", auth: { kind: "auto" }, autoConnect: true },
       { id: "spark2", address: null, port: 22, user: "consulear", auth: { kind: "auto" }, autoConnect: true },
@@ -177,9 +183,9 @@ export function mockBackend(): Backend {
     { id: "spark2", phase: { phase: "awaitingTailscaleCheck", url: "https://login.tailscale.com/a/example" }, facts: null },
   ];
   const panes: MockPane[] = [
-    pane(1, "spark-d683", { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp", currentCommand: "omp", harness: "omp", title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
+    pane(1, "spark-d683", { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp", currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
     pane(2, "spark-d683", { sessionName: "consuls", windowName: "claude", currentCommand: "claude", harness: "claude", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22 }, claudeLines, [4, 15]),
-    pane(3, "spark-d683", { sessionName: "fix-owui-3", windowName: "codex", currentCommand: "codex", harness: "codex", title: "", currentPath: "/home/consulear/Programming/open-webui", width: 66, height: 18 }, codexLines, [4, 13]),
+    pane(3, "spark-d683", { sessionName: "fix-owui-3", windowName: "codex", currentCommand: "codex", harness: "codex", labels: ["urgent"], title: "", currentPath: "/home/consulear/Programming/open-webui", width: 66, height: 18 }, codexLines, [4, 13]),
     pane(4, "spark-d683", { sessionName: "dual-setup-2", windowName: "bash", currentPath: "/home/consulear/models" }, shellLines, [21, 3]),
   ];
 
@@ -203,12 +209,13 @@ export function mockBackend(): Backend {
 
   const snapshot = (): CoreSnapshot => ({
     tailnet: { backendState: "Running", authUrl: null, selfNode: null, peers, tailnetName: "consulear@example.com", health: [], error: null },
-    config: { hosts: [...config.hosts], sound: mockSound },
+    config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound },
     hosts: [...hosts],
     panes: panes.filter((p) => hosts.find((h) => h.id === p.info.host)?.phase.phase === "connected").map((p) => p.info),
     attention: [...attention.values()],
   });
 
+  const emitConfig = () => emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
   const emitPanes = (host: string) => emit({ type: "panes", host, panes: panes.filter((p) => p.info.host === host).map((p) => p.info) });
 
   let mockIntegration: Omit<IntegrationStatus, "notes"> = { claude: "notInstalled", codex: "absent", omp: "notInstalled" };
@@ -267,7 +274,7 @@ export function mockBackend(): Backend {
     setPaneMuted: async () => {},
     setSoundPrefs: async (prefs) => {
       mockSound = prefs;
-      emit({ type: "config", config: { hosts: [...config.hosts], sound: mockSound } });
+      emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
     },
     testChime: async () => {},
     setWindowTitle: async (title) => {
@@ -282,13 +289,13 @@ export function mockBackend(): Backend {
       if (i >= 0) config.hosts[i] = cfg;
       else config.hosts.push(cfg);
       if (!hosts.find((h) => h.id === cfg.id)) hosts.push({ id: cfg.id, phase: { phase: "connecting" }, facts: null });
-      emit({ type: "config", config: { hosts: [...config.hosts], sound: mockSound } });
+      emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
       emit({ type: "host", state: { ...hosts.find((h) => h.id === cfg.id)! } });
       setTimeout(() => setPhase(cfg.id, { phase: "connected" }), 1200);
     },
     removeHost: async (id) => {
       config.hosts = config.hosts.filter((h) => h.id !== id);
-      emit({ type: "config", config: { hosts: [...config.hosts], sound: mockSound } });
+      emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
       emit({ type: "hostRemoved", id });
     },
     connectHost: async (id) => {
@@ -364,6 +371,31 @@ export function mockBackend(): Backend {
       const p = panes.find((p) => p.info.key === key);
       if (!p) return;
       p.info = { ...p.info, sized: false };
+      emitPanes(p.info.host);
+    },
+    createLabel: async (name, color) => {
+      const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "label";
+      let id = base;
+      for (let n = 2; config.labels.some((l) => l.id === id); n++) id = `${base}-${n}`;
+      const label = { id, name, color };
+      config.labels = [...config.labels, label];
+      emitConfig();
+      return label;
+    },
+    updateLabel: async (label) => {
+      config.labels = config.labels.map((l) => (l.id === label.id ? label : l));
+      emitConfig();
+    },
+    deleteLabel: async (id) => {
+      config.labels = config.labels.filter((l) => l.id !== id);
+      emitConfig();
+      for (const p of panes) if (p.info.labels.includes(id)) p.info = { ...p.info, labels: p.info.labels.filter((l) => l !== id) };
+      new Set(panes.map((p) => p.info.host)).forEach(emitPanes);
+    },
+    setPaneLabels: async (key, labels) => {
+      const p = panes.find((p) => p.info.key === key);
+      if (!p) return;
+      p.info = { ...p.info, labels };
       emitPanes(p.info.host);
     },
     setPaneHidden: async (key, hidden) => {

@@ -11,6 +11,9 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
 - **Attention**: when an agent finishes its turn or needs permission, you get a ping (and a
   toast if Consuls isn't focused); its tile glows until you look, then shows "Waiting on you".
   Ctrl+Shift+Space jumps to the next waiting pane.
+- **Labels**: tag panes (right-click a tile, or drag it onto a label in the sidebar), then
+  group the grid by label, project, status or machine and sort by attention, name or recency.
+  Labels are stored on the tmux pane (`@chm_labels`), so every device sees the same tags.
 - **Lifecycle**: start a new agent in any directory (remote folder browser), hide a pane
   without stopping it, or quit an agent gracefully and close its tmux pane.
 - **Resilient**: one SSH connection per machine, keepalives, automatic reconnect with backoff,
