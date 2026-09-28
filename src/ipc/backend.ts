@@ -11,6 +11,8 @@ import type { HostConfig } from "./bindings/HostConfig";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { LabelDef } from "./bindings/LabelDef";
 import type { LocalShell } from "./bindings/LocalShell";
+import type { FsOp } from "./bindings/FsOp";
+import type { GitStatus } from "./bindings/GitStatus";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
@@ -63,6 +65,10 @@ export interface Backend {
   releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
   listDir(host: string, path: string): Promise<DirListing>;
+  fsOp(host: string, op: FsOp): Promise<void>;
+  /** Items a delete of `path` would remove (capped at 100,000 + 1). */
+  fsCount(host: string, path: string): Promise<number>;
+  gitStatus(host: string, dir: string): Promise<GitStatus | null>;
   integrationStatus(host: string): Promise<IntegrationStatus>;
   installIntegration(host: string): Promise<IntegrationStatus>;
   uninstallIntegration(host: string): Promise<IntegrationStatus>;
@@ -128,6 +134,9 @@ async function tauriBackend(): Promise<Backend> {
     releasePaneSize: (key) => invoke("release_pane_size", { key }),
     terminatePane: (key, force) => invoke("terminate_pane", { key, force }),
     listDir: (host, path) => invoke("list_dir", { host, path }),
+    fsOp: (host, op) => invoke("fs_op", { host, op }),
+    fsCount: (host, path) => invoke("fs_count", { host, path }),
+    gitStatus: (host, dir) => invoke("git_status", { host, dir }),
     integrationStatus: (host) => invoke("integration_status", { host }),
     installIntegration: (host) => invoke("install_integration", { host }),
     uninstallIntegration: (host) => invoke("uninstall_integration", { host }),

@@ -10,7 +10,10 @@ use tracing::{debug, info};
 use super::ctx::Ctx;
 use super::direct::{self, DirectSpec};
 use super::tmux_mgr::{PaneCmd, TmuxManager};
-use crate::model::{DirEntryInfo, DirListing, HostConfig, HostErrorKind, HostFacts, HostPhase, NewPaneSpec, NoticeLevel};
+use crate::fs::FsOp;
+use crate::fs::git::GitStatus;
+use crate::fs::remote::{self as rfs, SftpPool};
+use crate::model::{DirListing, HostConfig, HostErrorKind, HostFacts, HostPhase, NewPaneSpec, NoticeLevel};
 use crate::ssh::exec::{self, ExecOutput};
 use crate::ssh::{ConnectParams, SshConnection, SshError, SshNotice};
 use crate::integration::events::{self, TailMsg};
@@ -32,8 +35,28 @@ pub(crate) enum HostCmd {
     CreatePane { spec: NewPaneSpec, reply: oneshot::Sender<Result<u32, String>> },
     Integration { action: IntegrationAction, reply: oneshot::Sender<Result<IntegrationStatus, String>> },
     ListDir { path: String, reply: oneshot::Sender<Result<DirListing, String>> },
+    Fs { op: FsOp, reply: oneshot::Sender<Result<(), String>> },
+    FsCount { path: String, reply: oneshot::Sender<Result<u64, String>> },
+    Git { dir: String, reply: oneshot::Sender<Result<Option<GitStatus>, String>> },
     Exec { script: String, reply: oneshot::Sender<Result<ExecOutput, String>> },
     Shutdown,
+}
+
+impl HostCmd {
+    /// Answers a request that can't be served right now (not connected); drops the rest.
+    fn refuse(self, why: &str) {
+        let why = why.to_string();
+        match self {
+            HostCmd::CreatePane { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::Integration { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::ListDir { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::Fs { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::FsCount { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::Git { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::Exec { reply, .. } => drop(reply.send(Err(why))),
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -102,19 +125,7 @@ async fn run(mut cfg: HostConfig, ctx: Arc<Ctx>, mut rx: mpsc::UnboundedReceiver
                     attempt = 0;
                 }
                 Some(HostCmd::Reconfigure(c)) => cfg = c,
-                Some(HostCmd::Exec { reply, .. }) => {
-                    let _ = reply.send(Err("not connected".into()));
-                }
-                Some(HostCmd::CreatePane { reply, .. }) => {
-                    let _ = reply.send(Err("not connected".into()));
-                }
-                Some(HostCmd::ListDir { reply, .. }) => {
-                    let _ = reply.send(Err("not connected".into()));
-                }
-                Some(HostCmd::Integration { reply, .. }) => {
-                    let _ = reply.send(Err("not connected".into()));
-                }
-                Some(_) => {}
+                Some(other) => other.refuse("not connected"),
             }
             continue;
         }
@@ -172,11 +183,7 @@ async fn run(mut cfg: HostConfig, ctx: Arc<Ctx>, mut rx: mpsc::UnboundedReceiver
                     Some(HostCmd::Connect | HostCmd::Probe | HostCmd::Reconnect) => break,
                     Some(HostCmd::Disconnect) => { want = false; break }
                     Some(HostCmd::Reconfigure(c)) => cfg = c,
-                    Some(HostCmd::Exec { reply, .. }) => { let _ = reply.send(Err("not connected".into())); }
-                    Some(HostCmd::ResendTiles | HostCmd::Pane(_)) => {}
-                    Some(HostCmd::CreatePane { reply, .. }) => { let _ = reply.send(Err("not connected".into())); }
-                    Some(HostCmd::ListDir { reply, .. }) => { let _ = reply.send(Err("not connected".into())); }
-                    Some(HostCmd::Integration { reply, .. }) => { let _ = reply.send(Err("not connected".into())); }
+                    Some(other) => other.refuse("not connected"),
                 },
             }
         }
@@ -233,11 +240,7 @@ async fn connect_phase(
                 None | Some(HostCmd::Shutdown) => return ConnectResult::Shutdown,
                 Some(HostCmd::Disconnect) => return ConnectResult::Cancelled,
                 Some(HostCmd::Reconfigure(c)) => *cfg = c,
-                Some(HostCmd::Exec { reply, .. }) => { let _ = reply.send(Err("still connecting".into())); }
-                Some(HostCmd::CreatePane { reply, .. }) => { let _ = reply.send(Err("still connecting".into())); }
-                Some(HostCmd::ListDir { reply, .. }) => { let _ = reply.send(Err("still connecting".into())); }
-                Some(HostCmd::Integration { reply, .. }) => { let _ = reply.send(Err("still connecting".into())); }
-                Some(_) => {}
+                Some(other) => other.refuse("still connecting"),
             },
         }
     }
@@ -259,41 +262,6 @@ async fn gather_facts(conn: &SshConnection) -> Result<HostFacts, String> {
         }
     }
     Ok(facts)
-}
-
-/// Lists a remote directory over SFTP (dirs first). `~` expands to the user's home.
-async fn list_dir(conn: &SshConnection, home: &str, path: &str) -> Result<DirListing, String> {
-    let path = if path.is_empty() || path == "~" {
-        home.to_string()
-    } else if let Some(rest) = path.strip_prefix("~/") {
-        format!("{}/{rest}", home.trim_end_matches('/'))
-    } else {
-        path.to_string()
-    };
-    let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
-    let result = async {
-        let canonical = sftp.canonicalize(path.clone()).await.map_err(|e| format!("{path}: {e}"))?;
-        let mut entries = Vec::new();
-        for entry in sftp.read_dir(canonical.clone()).await.map_err(|e| format!("{canonical}: {e}"))? {
-            let name = entry.file_name();
-            if name == "." || name == ".." {
-                continue;
-            }
-            let meta = entry.metadata();
-            let is_dir = if meta.is_symlink() {
-                let full = format!("{}/{name}", canonical.trim_end_matches('/'));
-                sftp.metadata(full).await.map(|m| m.is_dir()).unwrap_or(false)
-            } else {
-                meta.is_dir()
-            };
-            entries.push(DirEntryInfo { name, is_dir });
-        }
-        entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-        Ok(DirListing { path: canonical, home: home.to_string(), entries })
-    }
-    .await;
-    let _ = sftp.close().await;
-    result
 }
 
 /// tmux ≥ 3.2 is needed for `refresh-client -f/-A/-B` and `%extended-output`.
@@ -347,6 +315,7 @@ async fn connected_phase(
             None
         }
     };
+    let sftp = SftpPool::default();
     let replaying_since = std::time::Instant::now();
     let mut missed = 0usize;
     let mut last_missed_at: Option<std::time::Instant> = None;
@@ -359,6 +328,7 @@ async fn connected_phase(
             cmd = rx.recv() => match cmd {
                 None | Some(HostCmd::Shutdown) => {
                     mgr.shutdown().await;
+                    sftp.close().await;
                     conn.disconnect().await;
                     return Outcome::Shutdown;
                 }
@@ -404,10 +374,28 @@ async fn connected_phase(
                     });
                 }
                 Some(HostCmd::ListDir { path, reply }) => {
-                    let conn = conn.clone();
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
                     let home = facts.as_ref().map(|f| f.home.clone()).unwrap_or_default();
                     tokio::spawn(async move {
-                        let _ = reply.send(list_dir(&conn, &home, &path).await);
+                        let _ = reply.send(rfs::list_dir(&conn, &sftp, &home, &path).await);
+                    });
+                }
+                Some(HostCmd::Fs { op, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::op(&conn, &sftp, op).await);
+                    });
+                }
+                Some(HostCmd::FsCount { path, reply }) => {
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::count(&conn, &path).await);
+                    });
+                }
+                Some(HostCmd::Git { dir, reply }) => {
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::git_status(&conn, &dir).await);
                     });
                 }
                 Some(HostCmd::Probe) => {

@@ -28,6 +28,9 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   Git Bash, cmd (or WSL) there, optionally with Claude Code / Codex / omp launched in it, with the
   same tiles, notifications and composer as remote panes. Local shells end when the app quits
   (it asks first); closing the window keeps them running in the tray.
+- **Files**: a VS Code–style explorer in the left sidebar, following the open pane's folder (or
+  pinned anywhere on any machine): lazy tree, git status badges rolled up to folders, new file /
+  folder, rename, delete (with an item count first), copy path, and "new pane here".
 - **Lifecycle**: start a new agent in any directory (remote folder browser), hide a pane
   without stopping it, or quit an agent gracefully and close its tmux pane.
 - **Resilient**: one SSH connection per machine, keepalives, automatic reconnect with backoff,

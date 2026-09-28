@@ -93,6 +93,21 @@ pub fn paste_text(state: State<'_, AppState>, key: u32, text: String) {
     state.core.paste_text(key, text);
 }
 
+#[tauri::command]
+pub async fn fs_op(state: State<'_, AppState>, host: String, op: chm_core::fs::FsOp) -> CmdResult<()> {
+    state.core.fs_op(&host, op).await
+}
+
+#[tauri::command]
+pub async fn fs_count(state: State<'_, AppState>, host: String, path: String) -> CmdResult<u64> {
+    state.core.fs_count(&host, &path).await
+}
+
+#[tauri::command]
+pub async fn git_status(state: State<'_, AppState>, host: String, dir: String) -> CmdResult<Option<chm_core::fs::git::GitStatus>> {
+    state.core.git_status(&host, &dir).await
+}
+
 /// Ping (or not) on the pane's terminal bell; `null` = default for what's running.
 #[tauri::command]
 pub fn set_pane_bell(state: State<'_, AppState>, key: u32, bell: Option<bool>) {

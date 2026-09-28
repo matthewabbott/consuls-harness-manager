@@ -1,6 +1,7 @@
 import { SIDEBAR, useUi } from "../store/ui";
 import ActivityBar from "./ActivityBar";
 import ResizeHandle from "./ResizeHandle";
+import FilesPanel from "./FilesPanel";
 import MachinesPanel from "./Sidebar";
 
 export default function LeftSidebar() {
@@ -16,6 +17,7 @@ export default function LeftSidebar() {
         <>
           <aside style={{ width }} className="flex shrink-0 flex-col border-r border-ink-700/80 bg-ink-950/40">
             {tab === "machines" && <MachinesPanel />}
+            {tab === "files" && <FilesPanel />}
           </aside>
           <ResizeHandle axis="x" size={width} direction={1} onResize={setWidth} resetTo={SIDEBAR.default} className="-ml-1.5" />
         </>

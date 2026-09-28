@@ -53,6 +53,15 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Local hooks run through Git for Windows' `sh.exe`; `CHM_STATE_DIR` tells `chm-hook.sh` where
   the events file is (the core polls it). Templates use `__RUN__`/`__SH__` placeholders.
 
+## Files
+
+- `fs/` serves the explorer: `remote.rs` over one pooled SFTP session per connection (sshd caps
+  channels per connection; `rm -rf`/`find` via exec for what SFTP can't do), `local.rs` via
+  `std::fs`. Create never overwrites and rename never replaces, on both.
+- `git status --porcelain=v2 -z --ignored=matching` from the repo root (`fs/git.rs`);
+  `Core::git_status` shares one run between concurrent callers. The UI rolls statuses up to
+  folders (`store/files.ts`), except ignored, which instead dims everything beneath.
+
 ## Bells
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
@@ -69,7 +78,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

@@ -46,8 +46,13 @@ fn load_config(path: &std::path::Path) -> AppConfig {
 use crate::ssh::exec::ExecOutput;
 use crate::ssh::hostkeys::KnownHosts;
 
+type GitResult = Result<Option<crate::fs::git::GitStatus>, String>;
+type GitFuture = futures::future::Shared<futures::future::BoxFuture<'static, GitResult>>;
+
 pub struct Core {
     ctx: Arc<Ctx>,
+    /// In-flight `git status` per (host, dir): concurrent callers share one run.
+    git_inflight: Mutex<HashMap<(HostId, String), GitFuture>>,
     data_dir: PathBuf,
     config: Mutex<AppConfig>,
     hosts: Mutex<HashMap<HostId, HostHandle>>,
@@ -64,6 +69,7 @@ impl Core {
         let config = load_config(&data_dir.join("config.json"));
         Arc::new(Self {
             ctx: Arc::new(Ctx::new(sink, known_hosts)),
+            git_inflight: Mutex::new(HashMap::new()),
             data_dir,
             config: Mutex::new(config),
             hosts: Mutex::new(HashMap::new()),
@@ -531,6 +537,55 @@ impl Core {
         let (tx, rx) = oneshot::channel();
         self.send(host, HostCmd::ListDir { path: path.to_string(), reply: tx });
         rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// Creates, renames or deletes files (explorer actions).
+    pub async fn fs_op(&self, host: &str, op: crate::fs::FsOp) -> Result<(), String> {
+        if host == LOCAL_HOST {
+            return tokio::task::spawn_blocking(move || crate::fs::local::op(op)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::Fs { op, reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// How many items a delete of `path` would remove (capped; for the confirmation).
+    pub async fn fs_count(&self, host: &str, path: &str) -> Result<u64, String> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || crate::fs::local::count(&path)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::FsCount { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// `git status` of the repository containing `dir` (None when it isn't in one).
+    /// Concurrent requests for the same folder share one run.
+    pub async fn git_status(&self, host: &str, dir: &str) -> GitResult {
+        use futures::FutureExt;
+        let key = (host.to_string(), dir.to_string());
+        let fut = {
+            let mut inflight = self.git_inflight.lock().unwrap();
+            if let Some(f) = inflight.get(&key) {
+                f.clone()
+            } else {
+                let fut: futures::future::BoxFuture<'static, GitResult> = if host == LOCAL_HOST {
+                    let dir = dir.to_string();
+                    async move { tokio::task::spawn_blocking(move || crate::fs::local::git_status(&dir)).await.map_err(|e| e.to_string())? }.boxed()
+                } else {
+                    let (tx, rx) = oneshot::channel();
+                    self.send(host, HostCmd::Git { dir: dir.to_string(), reply: tx });
+                    async move { rx.await.map_err(|_| "host not found".to_string())? }.boxed()
+                };
+                let shared = fut.shared();
+                inflight.insert(key.clone(), shared.clone());
+                shared
+            }
+        };
+        let result = fut.await;
+        self.git_inflight.lock().unwrap().remove(&key);
+        result
     }
 
     pub async fn exec(&self, id: &str, script: &str) -> Result<ExecOutput, String> {

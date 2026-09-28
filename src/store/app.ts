@@ -53,6 +53,8 @@ interface AppStore {
   expanded: number | null;
   /** Host preselected in the new-pane dialog; `undefined` = dialog closed. */
   newPaneFor: string | null | undefined;
+  /** Folder to start the new-pane dialog in (e.g. "open a shell here" from the explorer). */
+  newPaneCwd: string | null;
   /** Pane pending termination confirmation. */
   terminating: number | null;
   /** Host whose integration dialog is open. */
@@ -73,7 +75,7 @@ interface AppStore {
   setFocusLabel(label: string | null): void;
   setTileMenu(menu: TileMenuState | null): void;
   setExpanded(key: number | null): void;
-  openNewPane(host: string | null): void;
+  openNewPane(host: string | null, cwd?: string): void;
   closeNewPane(): void;
   setTerminating(key: number | null): void;
   setIntegrationFor(host: string | null): void;
@@ -99,6 +101,7 @@ export const useApp = create<AppStore>((set) => ({
   tileMenu: null,
   expanded: null,
   newPaneFor: undefined,
+  newPaneCwd: null,
   terminating: null,
   integrationFor: null,
   muted: {},
@@ -154,8 +157,8 @@ export const useApp = create<AppStore>((set) => ({
   setFocusLabel: (focusLabel) => set({ focusLabel }),
   setTileMenu: (tileMenu) => set({ tileMenu }),
   setExpanded: (expanded) => set({ expanded }),
-  openNewPane: (host) => set({ newPaneFor: host }),
-  closeNewPane: () => set({ newPaneFor: undefined }),
+  openNewPane: (host, cwd) => set({ newPaneFor: host, newPaneCwd: cwd ?? null }),
+  closeNewPane: () => set({ newPaneFor: undefined, newPaneCwd: null }),
   setTerminating: (terminating) => set({ terminating }),
   setIntegrationFor: (integrationFor) => set({ integrationFor }),
   setMuted: (key, muted) => set((st) => ({ muted: { ...st.muted, [key]: muted } })),

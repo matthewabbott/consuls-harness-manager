@@ -1,4 +1,4 @@
-import { Server, Settings } from "lucide-react";
+import { Files, Server, Settings } from "lucide-react";
 
 import { useApp } from "../store/app";
 import { useUi, type SidebarTab } from "../store/ui";
@@ -17,7 +17,10 @@ export default function ActivityBar() {
   const show = useUi((s) => s.showSidebarTab);
   const waiting = useApp((s) => Object.values(s.attention).filter((a) => a.attention === "unacked").length);
 
-  const tabs: Tab[] = [{ id: "machines", label: "Machines & panes", icon: <Server className="h-[18px] w-[18px]" />, badge: waiting }];
+  const tabs: Tab[] = [
+    { id: "machines", label: "Machines & panes", icon: <Server className="h-[18px] w-[18px]" />, badge: waiting },
+    { id: "files", label: "Files", icon: <Files className="h-[18px] w-[18px]" /> },
+  ];
 
   return (
     <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-ink-700/80 bg-ink-950/70 py-2.5">

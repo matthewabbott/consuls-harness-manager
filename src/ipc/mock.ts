@@ -9,6 +9,7 @@ import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { LabelDef } from "./bindings/LabelDef";
+import { mockFsCount, mockFsOp, mockGitStatus, mockListDir } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
@@ -460,15 +461,10 @@ export function mockBackend(): Backend {
       mockIntegration = { claude: "notInstalled", codex: "notInstalled", omp: "notInstalled" };
       return { ...mockIntegration, notes: ["Claude Code: hooks removed."] };
     },
-    listDir: async (host, path) => {
-      if (host === "@local") {
-        const p = path === "~" || !path ? "C:/Users/consul" : path;
-        return { path: p, home: "C:/Users/consul", entries: [{ name: "code", isDir: true }, { name: "Documents", isDir: true }, { name: "notes.txt", isDir: false }] };
-      }
-      const p = path === "~" || !path ? "/home/consulear" : path;
-      const dirs = p === "/home/consulear" ? ["Programming", "models", "notes", ".config"] : p.endsWith("Programming") ? ["consuls", "terrarium-annotator", "terrarium-agent", "open-webui"] : ["src", "docs", "tests"];
-      return { path: p, home: "/home/consulear", entries: [...dirs.map((name) => ({ name, isDir: true })), { name: "README.md", isDir: false }] };
-    },
+    listDir: async (host, path) => mockListDir(host, path),
+    fsOp: async (host, op) => mockFsOp(host, op),
+    fsCount: async (host, path) => mockFsCount(host, path),
+    gitStatus: async (host, dir) => mockGitStatus(host, dir),
     sendInput: async (key, data) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(data === "\r" ? "\r\n" : data)));
     },

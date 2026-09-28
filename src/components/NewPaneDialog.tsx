@@ -35,6 +35,7 @@ function loadLastHarness(): Harness {
 
 export default function NewPaneDialog() {
   const preselect = useApp((s) => s.newPaneFor);
+  const startIn = useApp((s) => s.newPaneCwd);
   const close = useApp((s) => s.closeNewPane);
   const hosts = useApp((s) => s.hosts);
   const panes = useApp((s) => s.panes);
@@ -95,7 +96,7 @@ export default function NewPaneDialog() {
   useEffect(() => {
     setListing(null);
     setSession("");
-    if (host) void open(recent[0] ?? "~");
+    if (host) void open(host === preselect && startIn ? startIn : (recent[0] ?? "~"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host]);
 

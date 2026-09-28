@@ -389,7 +389,14 @@ pub enum TerminateOutcome {
 #[ts(export)]
 pub struct DirEntryInfo {
     pub name: String,
+    /// A directory (or a symlink to one).
     pub is_dir: bool,
+    pub is_symlink: bool,
+    #[ts(type = "number")]
+    pub size: u64,
+    /// Modification time, unix seconds.
+    #[ts(type = "number")]
+    pub mtime: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

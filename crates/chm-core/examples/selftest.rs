@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chm_core::fs::FsOp;
+use chm_core::fs::git::GitFileStatus;
 use chm_core::harness::Harness;
 use chm_core::model::{Activity, Alert, AlertKind, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome};
 use chm_core::{Core, Sink};
@@ -247,6 +249,44 @@ async fn main() -> anyhow::Result<()> {
     .await;
     core.terminate_pane(dkey, true).await.map_err(anyhow::Error::msg)?;
     wait_for("dismissed direct pane removed", Duration::from_secs(5), || pane(dkey).is_none()).await;
+
+    // --- files: explorer operations and git status, in a scratch dir
+    let tmp = core.exec(&host, "mktemp -d /tmp/chm-fs-XXXXXX").await.map_err(anyhow::Error::msg)?.stdout_str().trim().to_string();
+    assert!(tmp.starts_with("/tmp/chm-fs-"), "mktemp: {tmp}");
+    core.fs_op(&host, FsOp::Mkdir { path: format!("{tmp}/src") }).await.map_err(anyhow::Error::msg)?;
+    core.fs_op(&host, FsOp::CreateFile { path: format!("{tmp}/src/a.rs") }).await.map_err(anyhow::Error::msg)?;
+    assert!(core.fs_op(&host, FsOp::CreateFile { path: format!("{tmp}/src/a.rs") }).await.is_err(), "create never overwrites");
+    core.fs_op(&host, FsOp::CreateFile { path: format!("{tmp}/notes.txt") }).await.map_err(anyhow::Error::msg)?;
+    assert!(
+        core.fs_op(&host, FsOp::Rename { from: format!("{tmp}/notes.txt"), to: format!("{tmp}/src/a.rs") }).await.is_err(),
+        "rename never replaces"
+    );
+    core.fs_op(&host, FsOp::Rename { from: format!("{tmp}/notes.txt"), to: format!("{tmp}/README.md") }).await.map_err(anyhow::Error::msg)?;
+    let listing = core.list_dir(&host, &tmp).await.map_err(anyhow::Error::msg)?;
+    let names: Vec<(String, bool)> = listing.entries.iter().map(|e| (e.name.clone(), e.is_dir)).collect();
+    assert_eq!(names, vec![("src".to_string(), true), ("README.md".to_string(), false)], "dirs first");
+    assert_eq!(core.fs_count(&host, &tmp).await.map_err(anyhow::Error::msg)?, 3);
+    println!("ok   fs: mkdir, create (no overwrite), rename (no replace), list, count");
+    assert!(core.git_status(&host, &tmp).await.map_err(anyhow::Error::msg)?.is_none(), "not a repo yet");
+    let setup = format!(
+        "cd {tmp} && git init -q && printf 'target/\\n' > .gitignore && mkdir target && echo x > target/out && git add .gitignore src/a.rs && git -c user.name=t -c user.email=t@t commit -qm init && echo changed > src/a.rs"
+    );
+    let out = core.exec(&host, &setup).await.map_err(anyhow::Error::msg)?;
+    assert!(out.success(), "git setup: {}", out.stderr_str());
+    let src = format!("{tmp}/src");
+    let (a, b) = tokio::join!(core.git_status(&host, &src), core.git_status(&host, &src));
+    let st = a.map_err(anyhow::Error::msg)?.expect("a repo");
+    assert_eq!(b.map_err(anyhow::Error::msg)?, Some(st.clone()), "concurrent callers share one run");
+    assert_eq!(st.root, tmp);
+    let status = |p: &str| st.entries.iter().find(|e| e.path == p).map(|e| e.status);
+    assert_eq!(status("src/a.rs"), Some(GitFileStatus::Modified));
+    assert_eq!(status("README.md"), Some(GitFileStatus::Untracked));
+    assert_eq!(status("target/"), Some(GitFileStatus::Ignored));
+    println!("ok   git status: root {}, branch {:?}, {} entries", st.root, st.branch, st.entries.len());
+    core.fs_op(&host, FsOp::Remove { path: format!("{tmp}/src") }).await.map_err(anyhow::Error::msg)?;
+    core.fs_op(&host, FsOp::Remove { path: tmp.clone() }).await.map_err(anyhow::Error::msg)?;
+    assert!(core.list_dir(&host, &tmp).await.is_err(), "scratch dir removed");
+    println!("ok   fs: recursive remove");
 
     // --- lifecycle: list dir, create, hide, terminate
     let listing = core.list_dir(&host, "~").await.map_err(anyhow::Error::msg)?;

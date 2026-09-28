@@ -209,9 +209,16 @@ pub fn list_dir(path: &str) -> Result<DirListing, String> {
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&canonical).map_err(|e| format!("{path}: {e}"))?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
+        let is_symlink = entry.file_type().is_ok_and(|t| t.is_symlink());
         // Follows symlinks/junctions, like the remote listing.
-        let is_dir = entry.path().is_dir();
-        entries.push(DirEntryInfo { name, is_dir });
+        let meta = std::fs::metadata(entry.path()).or_else(|_| entry.metadata()).ok();
+        let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+        let size = meta.as_ref().map_or(0, |m| m.len());
+        let mtime = meta
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
+        entries.push(DirEntryInfo { name, is_dir, is_symlink, size, mtime });
     }
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     let mut shown = to_slash(&canonical);
