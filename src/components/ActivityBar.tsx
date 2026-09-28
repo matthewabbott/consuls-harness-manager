@@ -1,6 +1,7 @@
 import { Files, Server, Settings, Video } from "lucide-react";
 
 import { useApp } from "../store/app";
+import { updateUiPrefs } from "../store/prefs";
 import { useUi, type SidebarTab } from "../store/ui";
 
 interface Tab {
@@ -15,7 +16,7 @@ export default function ActivityBar() {
   const tab = useUi((s) => s.sidebarTab);
   const collapsed = useUi((s) => s.sidebarCollapsed || s.maximized);
   const show = useUi((s) => s.showSidebarTab);
-  const recording = useUi((s) => s.recording);
+  const recording = useApp((s) => s.config.ui.recording);
   const waiting = useApp((s) => Object.values(s.attention).filter((a) => a.attention === "unacked").length);
 
   const tabs: Tab[] = [
@@ -55,7 +56,7 @@ export default function ActivityBar() {
       })}
       <div className="flex-1" />
       <button
-        onClick={() => useUi.getState().setRecording(!recording)}
+        onClick={() => updateUiPrefs({ recording: !recording })}
         title={
           recording
             ? "Recording mode is on: your e-mail, IPs, user names and PC name are hidden (click to show them)"

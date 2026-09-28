@@ -2,9 +2,10 @@
 import type { HostConfig } from "./HostConfig";
 import type { LabelDef } from "./LabelDef";
 import type { SoundPrefs } from "./SoundPrefs";
+import type { UiPrefs } from "./UiPrefs";
 
 export type AppConfig = { hosts: Array<HostConfig>, sound: SoundPrefs, 
 /**
  * Label definitions; panes reference them by `id` (stored in tmux as `@chm_labels`).
  */
-labels: Array<LabelDef>, };
+labels: Array<LabelDef>, ui: UiPrefs, };

@@ -26,11 +26,10 @@ export default async function ({ js, text, key, sleep, log }) {
   const has = async (s) => (await lines()).some((l) => l.includes(s));
   const invoke = (cmd, args) => js(`return await window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args ?? {})})`);
   const mod = (name) => `(await import(performance.getEntriesByType("resource").map((e) => e.name).filter((u) => u.includes("/src/store/${name}.ts")).pop() ?? "/src/store/${name}.ts"))`;
-  const ui = `${mod("ui")}.useUi`;
   const app = `${mod("app")}.useApp`;
-  const setRecording = (on) => js(`${ui}.getState().setRecording(${on}); return true`);
+  const setRecording = (on) => js(`(${mod("prefs")}).updateUiPrefs({ recording: ${on} }); return true`);
 
-  const before = await js(`return ${ui}.getState().recording`);
+  const before = await js(`return ${app}.getState().config.ui.recording`);
   const user = await js(`return ${app}.getState().hosts["@local"].facts.user`);
   const home = await js(`return ${app}.getState().hosts["@local"].facts.home`);
   const IP = "100.101.2.3";

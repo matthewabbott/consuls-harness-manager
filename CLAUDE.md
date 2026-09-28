@@ -71,8 +71,8 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - The explorer keys its tree by the root's *listed* path: asking for `~`, `D:` or another case
   re-keys the root to `listing.path` (`files.load`). Drive roots are `D:/`, never `D:` (that's
   "the current folder on D:"). Drives come from `local::drives()` (`GetLogicalDrives` +
-  `GetDriveTypeW`, which never touch the disks). Default folders per machine live in
-  localStorage (`consuls.files.v1`), used by the explorer and the new-pane dialog, which share
+  `GetDriveTypeW`, which never touch the disks). Default folders per machine live in the core's
+  config (`AppConfig.ui`, via `store/prefs.ts`), used by the explorer and the new-pane dialog, which share
   `PlacesBar` (chips) and `FolderNav` (back/forward via `lib/history.ts`, drive menu, crumbs, ☆).
 
 ## Opening things outside the app
@@ -97,7 +97,10 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   pass through, text between them is matched, and only a tail that could still become a secret
   is held back (≤ 30 ms). Toggling the mode re-requests a RESET (`streamPane(key, true)`).
 - The editor draws masks with replace decorations (`editor/redaction.ts`); toasts go generic
-  via `set_recording`. E2E: `scripts/e2e/recording.mjs`.
+  (the shell reads `config.ui.recording` from Config events). E2E: `scripts/e2e/recording.mjs`.
+- **Preferences that must survive go in `config.json` (`AppConfig.ui`, `store/prefs.ts`), not
+  localStorage**: the release app once lost everything it had in WebView2's localStorage.
+  localStorage is for conveniences (layout, zoom, composer history) only.
 
 ## Editor
 

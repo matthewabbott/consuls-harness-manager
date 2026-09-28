@@ -25,7 +25,7 @@ use crate::harness::Harness;
 use crate::local::{self, LOCAL_HOST, LocalShell};
 use crate::model::{
     AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, HostPhase, LabelDef, NewPaneSpec, NoticeLevel,
-    ResizeOutcome, SoundPrefs, TailnetStatus, TerminateOutcome, label_slug,
+    ResizeOutcome, SoundPrefs, TailnetStatus, TerminateOutcome, UiPrefs, label_slug,
 };
 
 /// Loads config.json. A file that exists but can't be parsed is set aside (never silently
@@ -336,6 +336,16 @@ impl Core {
     /// Updates notification sound preferences (persisted; emitted as a Config event).
     pub fn set_sound_prefs(&self, prefs: SoundPrefs) {
         self.config.lock().unwrap().sound = prefs;
+        self.save_config();
+    }
+
+    pub fn ui_prefs(&self) -> UiPrefs {
+        self.config.lock().unwrap().ui.clone()
+    }
+
+    /// Updates the UI preferences kept in the config (persisted at once; emitted as Config).
+    pub fn set_ui_prefs(&self, prefs: UiPrefs) {
+        self.config.lock().unwrap().ui = prefs;
         self.save_config();
     }
 

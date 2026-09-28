@@ -23,6 +23,8 @@ export default async function ({ js, sleep, log }) {
   const mod = (name) => `(await import(performance.getEntriesByType("resource").map((e) => e.name).filter((u) => u.includes("/src/store/${name}.ts")).pop() ?? "/src/store/${name}.ts"))`;
   const files = `${mod("files")}.useFiles`;
   const app = `${mod("app")}.useApp`;
+  const defaultOf = (host) => js(`return ${app}.getState().config.ui.defaultFolders[${JSON.stringify(host)}] ?? null`);
+  const savedDefault = async (host) => (await invoke("get_snapshot")).config.ui.defaultFolders[host] ?? null;
   const root = () => js(`return ${files}.getState().root?.path ?? null`);
   const chip = (label) => `[...document.querySelectorAll("aside button")].find((b) => b.textContent.trim() === ${JSON.stringify(label)})`;
 
@@ -31,7 +33,7 @@ export default async function ({ js, sleep, log }) {
   log(`     drives: ${drives.map((d) => `${d.label} ${d.kind}${d.volume ? ` "${d.volume}"` : ""}`).join(", ")}`);
   if (!drives.some((d) => d.label === drive)) throw new Error(`${drive} isn't a drive here`);
 
-  const before = await js(`return ${files}.getState().defaults["@local"] ?? null`);
+  const before = await defaultOf("@local");
   await js(`${app}.getState().setExpanded(null); return true`);
   await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside select")) b.click(); return true`);
   await until("Files panel", () => js(`return !!document.querySelector("aside select")`));
@@ -65,11 +67,11 @@ export default async function ({ js, sleep, log }) {
     await js(`${files}.getState().setRoot({ host: "@local", path: ${JSON.stringify(FOLDER)} }, { follow: false }); return true`);
     await until(`browsing ${FOLDER}`, async () => (await root())?.toLowerCase() === FOLDER.toLowerCase());
     await js(`document.querySelector('aside button[title^="Make this folder the default"]').click(); return true`);
-    const def = await until("star makes it the default", () => js(`return ${files}.getState().defaults["@local"]`));
+    const def = await until("star makes it the default", () => defaultOf("@local"));
     await until("default chip shown and lit", () =>
       js(`const b = document.querySelector('aside button[title^="Default folder on This PC"]'); return !!b && b.className.includes("bg-sky-400/15")`),
     );
-    await until("default persisted", () => js(`return (localStorage.getItem("consuls.files.v1") ?? "").includes(${JSON.stringify(def)})`));
+    await until("default saved in the core's config.json", async () => (await savedDefault("@local")) === def);
 
     // Like a fresh start: nothing to follow, no root → the explorer opens at the default.
     await js(`${chip("C:")}.click(); return true`);
@@ -84,9 +86,9 @@ export default async function ({ js, sleep, log }) {
 
     // The star clears it again.
     await js(`document.querySelector('aside button[title^="This is the default folder"]').click(); return true`);
-    await until("star clears the default", () => js(`return !${files}.getState().defaults["@local"]`));
+    await until("star clears the default", async () => !(await defaultOf("@local")) && !(await savedDefault("@local")));
   } finally {
-    await js(`${files}.getState().setDefault("@local", ${JSON.stringify(before)}); return true`);
+    await js(`(${mod("prefs")}).setDefaultFolder("@local", ${JSON.stringify(before)}); return true`);
     log(`     restored This PC's default folder (${before ?? "none"})`);
   }
   log("all places e2e checks passed");

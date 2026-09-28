@@ -4,12 +4,10 @@
 
 import { create } from "zustand";
 
-import { backend } from "../ipc/backend";
 import { makeRedactor, type Redactor, type Secrets } from "../lib/redact";
 import { baseName } from "../lib/paths";
 import { repaintTiles } from "../term/tiles";
 import { useApp } from "./app";
-import { useUi } from "./ui";
 
 interface RecordingState {
   on: boolean;
@@ -64,7 +62,7 @@ export function collectSecrets(app: ReturnType<typeof useApp.getState>, hideMach
 }
 
 function rebuild() {
-  const { recording, hideMachineNames } = useUi.getState();
+  const { recording, hideMachineNames } = useApp.getState().config.ui;
   const prev = useRecording.getState();
   if (!recording) {
     if (prev.on) useRecording.setState({ on: false, ui: identity, tile: null, stream: null });
@@ -75,7 +73,6 @@ function rebuild() {
   }
   repaintTiles();
   document.documentElement.classList.toggle("recording", recording);
-  if (prev.on !== recording) void backend().then((b) => b.setRecording(recording)).catch(() => {});
 }
 
 let started = false;
@@ -85,12 +82,8 @@ export function startRecordingMode() {
   if (started) return;
   started = true;
   rebuild();
-  // Toasts must know even when recording was already on at launch.
-  void backend().then((b) => b.setRecording(useUi.getState().recording)).catch(() => {});
-  useUi.subscribe((s, p) => {
-    if (s.recording !== p.recording || s.hideMachineNames !== p.hideMachineNames) rebuild();
-  });
   useApp.subscribe((s, p) => {
-    if (useUi.getState().recording && (s.tailnet !== p.tailnet || s.hosts !== p.hosts || s.config !== p.config)) rebuild();
+    const flags = s.config.ui.recording !== p.config.ui.recording || s.config.ui.hideMachineNames !== p.config.ui.hideMachineNames;
+    if (flags || (s.config.ui.recording && (s.tailnet !== p.tailnet || s.hosts !== p.hosts || s.config !== p.config))) rebuild();
   });
 }

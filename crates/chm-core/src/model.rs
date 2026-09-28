@@ -168,6 +168,21 @@ pub struct AppConfig {
     pub sound: SoundPrefs,
     /// Label definitions; panes reference them by `id` (stored in tmux as `@chm_labels`).
     pub labels: Vec<LabelDef>,
+    pub ui: UiPrefs,
+}
+
+/// UI preferences that must survive anything (a quit, a crash, a wiped WebView profile), so
+/// the core keeps them in `config.json` instead of the webview's storage.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct UiPrefs {
+    /// Machine id → the folder the Files explorer and the new-pane dialog start in.
+    pub default_folders: std::collections::BTreeMap<String, String>,
+    /// Recording mode: personal details are masked everywhere, toasts name nothing.
+    pub recording: bool,
+    /// …machine names too.
+    pub hide_machine_names: bool,
 }
 
 /// A user-defined pane label ("tag"). The id is a slug fixed at creation, so renaming a label
@@ -247,6 +262,17 @@ mod config_tests {
         assert_eq!(cfg.hosts.len(), 2);
         assert_eq!(cfg.hosts[1].user, "matthewabbott");
         assert_eq!(cfg.sound, SoundPrefs::default());
+        assert_eq!(cfg.ui, UiPrefs::default());
+    }
+
+    #[test]
+    fn ui_prefs_round_trip() {
+        let mut cfg = AppConfig::default();
+        cfg.ui.default_folders.insert("@local".into(), "D:/a/programming".into());
+        cfg.ui.recording = true;
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains(r#""ui":{"defaultFolders":{"@local":"D:/a/programming"},"recording":true,"hideMachineNames":false}"#), "{json}");
+        assert_eq!(serde_json::from_str::<AppConfig>(&json).unwrap(), cfg);
     }
 
     #[test]

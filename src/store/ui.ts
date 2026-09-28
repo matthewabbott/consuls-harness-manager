@@ -22,10 +22,6 @@ interface UiState {
   sortBy: SortBy;
   /** Pane identity → when it was last expanded (for "recently opened" sorting). */
   lastOpened: Record<string, number>;
-  /** Recording mode: personal details are masked everywhere (see store/recording.ts). */
-  recording: boolean;
-  /** …including machine names. */
-  hideMachineNames: boolean;
 
   setSidebarWidth(w: number): void;
   toggleSidebar(): void;
@@ -37,8 +33,6 @@ interface UiState {
   setGroupBy(g: GroupBy): void;
   setSortBy(s: SortBy): void;
   markOpened(identity: string): void;
-  setRecording(on: boolean): void;
-  setHideMachineNames(on: boolean): void;
 }
 
 export const SIDEBAR = { min: 200, max: 480, default: 264 };
@@ -60,11 +54,6 @@ export const useUi = create<UiState>()(
       groupBy: "machine",
       sortBy: "attention",
       lastOpened: {},
-      recording: false,
-      hideMachineNames: false,
-
-      setRecording: (recording) => set({ recording }),
-      setHideMachineNames: (hideMachineNames) => set({ hideMachineNames }),
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, SIDEBAR.min, SIDEBAR.max) }),
       // While maximized the panel is hidden whatever its state, so asking for it ends maximize.
       toggleSidebar: () => set((s) => (s.maximized ? { maximized: false, sidebarCollapsed: false } : { sidebarCollapsed: !s.sidebarCollapsed })),

@@ -130,6 +130,8 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 ## Not yet
 
 Next up (small):
+- Rename panes from the app (tile menu / pane header); for tmux panes this renames the tmux
+  window too (`rename-window`), so other clients see the new name.
 - Local tmux on This PC (macOS/Linux, or WSL/MSYS2 on Windows).
 
 Bigger: the iPhone app and push notifications, a transcript-backed conversation view, image

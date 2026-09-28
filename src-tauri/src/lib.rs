@@ -25,6 +25,7 @@ impl Sink for AppSink {
     fn event(&self, event: CoreEvent) {
         if let CoreEvent::Config { config } = &event {
             self.alerter.set_prefs(config.sound.clone());
+            self.alerter.set_recording(config.ui.recording);
         }
         let _ = self.app.emit("core-event", event);
     }
@@ -99,6 +100,7 @@ pub fn run() {
             });
             let core = Core::new(data_dir, sink.clone());
             sink.alerter.set_prefs(core.sound_prefs());
+            sink.alerter.set_recording(core.ui_prefs().recording);
             app.manage(AppState { core: core.clone(), sink: sink.clone() });
 
             tauri::async_runtime::spawn(async move {
@@ -126,7 +128,7 @@ pub fn run() {
             commands::reveal_path,
             commands::vscode_status,
             commands::open_in_vscode,
-            commands::set_recording,
+            commands::set_ui_prefs,
             commands::set_visible_panes,
             commands::stream_pane,
             commands::send_keys,

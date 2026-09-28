@@ -60,7 +60,13 @@ Roughly in order. Each is small-to-medium and self-contained.
     - Masks in UI text, tiles, the expanded terminal and the editor.
     - Optional machine aliases.
     - Toasts go generic.
+  - Default folders and recording mode moved into `config.json` (`AppConfig.ui`). The release app's
+    WebView2 localStorage turned out to lose data.
 - Next: cwd + OSC 52, local hooks, local tmux (V3-6…V3-8).
+- Roadmap (minor, added 2026-09-28): rename panes from the app.
+  - For tmux panes, also run `rename-window` (or `select-pane -T` for a split pane's title) on the
+    host, so it shows everywhere.
+  - Plain shells keep the name in the registry.
 
 ### 1. Sidebars (done in V3-1)
 - Right sidebar (the filmstrip beside an expanded pane, `ExpandedPane.tsx`): its collapse toggle

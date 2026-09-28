@@ -7,6 +7,7 @@ import type { CoreSnapshot } from "./bindings/CoreSnapshot";
 import type { FocusState } from "./bindings/FocusState";
 import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
+import type { UiPrefs } from "./bindings/UiPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { LabelDef } from "./bindings/LabelDef";
 import { MOCK_DRIVES, mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
@@ -227,19 +228,21 @@ export function mockBackend(): Backend {
     if (frameCb) frameCb(encodeFrame(FRAME_TILE, p.info.key, encodeTile(screen(p.info.width, p.info.height, p.lines, p.cursor))));
   }, 1000);
 
+  const fullConfig = () => ({ hosts: [...config.hosts], labels: [...config.labels], sound: mockSound, ui: mockUi });
   const snapshot = (): CoreSnapshot => ({
     tailnet: { backendState: "Running", authUrl: null, selfNode: null, peers, tailnetName: "consulear@example.com", health: [], error: null },
-    config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound },
+    config: fullConfig(),
     hosts: [...hosts],
     panes: panes.filter((p) => hosts.find((h) => h.id === p.info.host)?.phase.phase === "connected").map((p) => p.info),
     attention: [...attention.values()],
   });
 
-  const emitConfig = () => emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
+  const emitConfig = () => emit({ type: "config", config: fullConfig() });
   const emitPanes = (host: string) => emit({ type: "panes", host, panes: panes.filter((p) => p.info.host === host).map((p) => p.info) });
 
   let mockIntegration: Omit<IntegrationStatus, "notes"> = { claude: "notInstalled", codex: "absent", omp: "notInstalled" };
   let mockSound: SoundPrefs = { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true };
+  let mockUi: UiPrefs = { defaultFolders: {}, recording: false, hideMachineNames: false };
   const attention = new Map<number, PaneAttention>();
   let mockFocus: FocusState = { expanded: null, windowFocused: true };
   const setAttention = (st: PaneAttention) => {
@@ -294,7 +297,7 @@ export function mockBackend(): Backend {
     setPaneMuted: async () => {},
     setSoundPrefs: async (prefs) => {
       mockSound = prefs;
-      emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
+      emit({ type: "config", config: fullConfig() });
     },
     testChime: async () => {},
     setWindowTitle: async (title) => {
@@ -309,13 +312,13 @@ export function mockBackend(): Backend {
       if (i >= 0) config.hosts[i] = cfg;
       else config.hosts.push(cfg);
       if (!hosts.find((h) => h.id === cfg.id)) hosts.push({ id: cfg.id, phase: { phase: "connecting" }, facts: null });
-      emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
+      emit({ type: "config", config: fullConfig() });
       emit({ type: "host", state: { ...hosts.find((h) => h.id === cfg.id)! } });
       setTimeout(() => setPhase(cfg.id, { phase: "connected" }), 1200);
     },
     removeHost: async (id) => {
       config.hosts = config.hosts.filter((h) => h.id !== id);
-      emit({ type: "config", config: { hosts: [...config.hosts], labels: [...config.labels], sound: mockSound } });
+      emit({ type: "config", config: fullConfig() });
       emit({ type: "hostRemoved", id });
     },
     connectHost: async (id) => {
@@ -336,10 +339,13 @@ export function mockBackend(): Backend {
       window.open(url, "_blank", "noopener");
       if (url.includes("tailscale.com")) setTimeout(() => setPhase("spark2", { phase: "connected" }), 1500);
     },
+    setUiPrefs: async (prefs) => {
+      mockUi = prefs;
+      emitConfig();
+    },
     revealPath: async (host, path) => console.info("[mock] reveal", host, path),
     vscodeStatus: async () => ({ installed: true, remoteSsh: true }),
     openInVscode: async (host, path, line, col) => console.info("[mock] open in VS Code", host, path, line, col),
-    setRecording: async () => {},
     setVisiblePanes: async () => {},
     streamPane: async (key, on) => {
       const p = panes.find((p) => p.info.key === key);

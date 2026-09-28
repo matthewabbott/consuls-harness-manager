@@ -6,9 +6,8 @@ import type { AlertKind } from "../ipc/bindings/AlertKind";
 import type { SoundPrefs } from "../ipc/bindings/SoundPrefs";
 import { hostLabel } from "../lib/hosts";
 import { useApp } from "../store/app";
-import { useFiles } from "../store/files";
+import { setDefaultFolder, updateUiPrefs } from "../store/prefs";
 import { useRedact } from "../store/recording";
-import { useUi } from "../store/ui";
 import Modal, { Button } from "./Modal";
 
 const KINDS: { key: keyof SoundPrefs; kind: AlertKind; label: string; hint: string }[] = [
@@ -22,9 +21,7 @@ export default function SettingsDialog() {
   const close = () => useApp.getState().setSettingsOpen(false);
   const saved = useApp((s) => s.config.sound);
   const [prefs, setPrefs] = useState<SoundPrefs>(saved);
-  const defaults = useFiles((s) => s.defaults);
-  const recording = useUi((s) => s.recording);
-  const hideMachineNames = useUi((s) => s.hideMachineNames);
+  const { defaultFolders: defaults, recording, hideMachineNames } = useApp((s) => s.config.ui);
   const r = useRedact();
   const first = useRef(true);
 
@@ -105,14 +102,14 @@ export default function SettingsDialog() {
                 notifications stop naming panes. Also on the camera button in the left rail.
               </div>
             </div>
-            <Toggle on={recording} onChange={(v) => useUi.getState().setRecording(v)} />
+            <Toggle on={recording} onChange={(v) => updateUiPrefs({ recording: v })} />
           </label>
           <label className="mt-2 flex items-center justify-between gap-3 rounded-xl bg-ink-850 px-3.5 py-2.5 ring-1 ring-ink-700">
             <div>
               <div className="text-[13px] text-mist-100">Also hide machine names</div>
               <div className="text-[11px] text-mist-500">Shown as “machine 1”, “machine 2”… (masked in terminal text).</div>
             </div>
-            <Toggle on={hideMachineNames} onChange={(v) => useUi.getState().setHideMachineNames(v)} />
+            <Toggle on={hideMachineNames} onChange={(v) => updateUiPrefs({ hideMachineNames: v })} />
           </label>
         </section>
 
@@ -132,7 +129,7 @@ export default function SettingsDialog() {
                     {r(path)}
                   </span>
                   <button
-                    onClick={() => useFiles.getState().setDefault(host, null)}
+                    onClick={() => setDefaultFolder(host, null)}
                     className="rounded-lg px-2 py-1 text-[11.5px] text-mist-400 hover:bg-ink-700 hover:text-mist-100"
                   >
                     Clear

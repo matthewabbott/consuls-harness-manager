@@ -1,6 +1,6 @@
 use chm_core::model::{
     AlertKind, CoreSnapshot, DirListing, FocusState, HostConfig, LabelDef, NewPaneSpec, ResizeOutcome, SoundPrefs,
-    TailnetStatus, TerminateOutcome,
+    TailnetStatus, TerminateOutcome, UiPrefs,
 };
 use chm_core::integration::install::IntegrationStatus;
 use tauri::State;
@@ -102,10 +102,11 @@ pub fn reveal_path(app: tauri::AppHandle, host: String, path: String) -> CmdResu
     app.opener().reveal_item_in_dir(local_path(&path)?).map_err(|e| e.to_string())
 }
 
-/// Recording mode: toasts stop naming panes and machines.
+/// Default folders and recording mode, kept in config.json (the alerter follows the Config
+/// event for recording mode).
 #[tauri::command]
-pub fn set_recording(state: State<'_, AppState>, on: bool) {
-    state.sink.alerter.set_recording(on);
+pub fn set_ui_prefs(state: State<'_, AppState>, prefs: UiPrefs) {
+    state.core.set_ui_prefs(prefs);
 }
 
 /// Whether VS Code (and its Remote-SSH extension) is installed; checked on each call, so

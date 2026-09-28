@@ -32,6 +32,7 @@ import { joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { startFolder, statusOf, useFiles } from "../store/files";
+import { setDefaultFolder } from "../store/prefs";
 import { useRedact } from "../store/recording";
 import FolderNav from "./FolderNav";
 import HideSidebarButton from "./HideSidebarButton";
@@ -454,7 +455,7 @@ export default function FilesPanel() {
             </MenuItem>
           )}
           {(menu.path === null || menu.isDir) && (
-            <MenuItem icon={<Star className="h-3.5 w-3.5" />} onClick={() => files().setDefault(root.host, menu.path ?? root.path)}>
+            <MenuItem icon={<Star className="h-3.5 w-3.5" />} onClick={() => setDefaultFolder(root.host, menu.path ?? root.path)}>
               Make default folder on {r(hostLabel(root.host))}
             </MenuItem>
           )}

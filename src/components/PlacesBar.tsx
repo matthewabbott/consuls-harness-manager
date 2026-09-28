@@ -7,11 +7,11 @@ import { useDrives, driveName } from "../lib/drives";
 import { hostLabel } from "../lib/hosts";
 import { baseName, isWithin, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
-import { useFiles } from "../store/files";
+import { useDefaultFolder } from "../store/prefs";
 import { useRedact } from "../store/recording";
 
 export default function PlacesBar({ host, path, onGo }: { host: string; path: string | null; onGo(path: string): void }) {
-  const def = useFiles((s) => s.defaults[host] ?? null);
+  const def = useDefaultFolder(host);
   const home = useApp((s) => s.hosts[host]?.facts?.home ?? null);
   const known = useDrives(host);
   const r = useRedact();

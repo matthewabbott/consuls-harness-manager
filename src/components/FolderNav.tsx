@@ -8,7 +8,7 @@ import { driveName, useDrives } from "../lib/drives";
 import { hostLabel } from "../lib/hosts";
 import { baseName, crumbsOf, isWithin, rootOf, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
-import { useFiles } from "../store/files";
+import { setDefaultFolder, useDefaultFolder } from "../store/prefs";
 import { useRedact } from "../store/recording";
 
 interface Props {
@@ -24,7 +24,7 @@ interface Props {
 }
 
 export default function FolderNav({ host, path, onGo, canBack, canForward, onBack, onForward, trailing }: Props) {
-  const def = useFiles((s) => s.defaults[host] ?? null);
+  const def = useDefaultFolder(host);
   const r = useRedact();
   const machine = r(hostLabel(host));
   const root = path ? rootOf(path) : null;
@@ -55,7 +55,7 @@ export default function FolderNav({ host, path, onGo, canBack, canForward, onBac
             </span>
           ))}
           <button
-            onClick={() => useFiles.getState().setDefault(host, isDefault ? null : path)}
+            onClick={() => setDefaultFolder(host, isDefault ? null : path)}
             title={isDefault ? `This is the default folder on ${machine} (click to clear)` : `Make this folder the default on ${machine}`}
             className={`ml-0.5 rounded p-0.5 transition-colors hover:bg-ink-700 ${isDefault ? "text-ember-400" : "text-mist-400 hover:text-ember-300"}`}
           >
@@ -86,7 +86,7 @@ function RootMenu({ host, path, root, onGo }: { host: string; path: string; root
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const drives = useDrives(host) ?? [];
-  const def = useFiles((s) => s.defaults[host] ?? null);
+  const def = useDefaultFolder(host);
   const home = useApp((s) => s.hosts[host]?.facts?.home ?? null);
   const r = useRedact();
 

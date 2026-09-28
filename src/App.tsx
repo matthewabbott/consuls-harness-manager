@@ -17,6 +17,7 @@ import LeftSidebar from "./components/LeftSidebar";
 import TopBar from "./components/TopBar";
 import { backend } from "./ipc/backend";
 import { useApp } from "./store/app";
+import { migrateLocalDefaults } from "./store/prefs";
 import { startRecordingMode } from "./store/recording";
 import { useUi } from "./store/ui";
 import { applyFrames } from "./term/tiles";
@@ -172,6 +173,7 @@ export default function App() {
       const snapshot = await b.getSnapshot();
       if (cancelled) return;
       useApp.getState().init(snapshot);
+      migrateLocalDefaults();
       // Unsaved editor buffers from last time.
       void useEditor.getState().restoreDrafts();
       await b.subscribeFrames(applyFrames);

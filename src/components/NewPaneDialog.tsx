@@ -9,7 +9,6 @@ import { canBack, canForward, emptyHistory, pushHistory, stepHistory } from "../
 import { hostLabel, isLocal, shortPath } from "../lib/hosts";
 import { isRoot, joinPath, parentPath, sameFolder } from "../lib/paths";
 import { useApp } from "../store/app";
-import { useFiles } from "../store/files";
 import { useRedact } from "../store/recording";
 import FolderNav from "./FolderNav";
 import HarnessBadge from "./HarnessBadge";
@@ -114,7 +113,7 @@ export default function NewPaneDialog() {
     setListing(null);
     setHistory(emptyHistory());
     setSession("");
-    if (host) void open(host === preselect && startIn ? startIn : (useFiles.getState().defaults[host] ?? recent[0] ?? "~"));
+    if (host) void open(host === preselect && startIn ? startIn : (useApp.getState().config.ui.defaultFolders[host] ?? recent[0] ?? "~"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [host]);
 
