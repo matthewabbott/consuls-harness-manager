@@ -129,6 +129,7 @@ pub fn run() {
             commands::paste_text,
             commands::send_input,
             commands::local_shells,
+            commands::set_pane_bell,
             commands::quit_app,
             commands::submit_prompt,
             commands::set_focus,

@@ -72,6 +72,8 @@ pub(crate) fn spawn(ctx: &Arc<Ctx>, rt: &tokio::runtime::Handle, spec: DirectSpe
         hidden: false,
         labels: Vec::new(),
         ended: None,
+        bell: None,
+        bell_pings: false,
     };
     let (tx, rx) = mpsc::unbounded_channel();
     ctx.direct.lock().unwrap().insert(key, DirectHandle { info: info.clone(), tx });
@@ -205,8 +207,12 @@ impl Direct {
                     self.info.title.clear();
                     self.publish_due = true;
                 }
-                // Bells and OSC 52 clipboard writes are handled in later milestones; clipboard
-                // reads are never answered (a remote program shouldn't read the clipboard).
+                Event::Bell if crate::harness::bell_pings(self.info.bell, &self.info.current_command) => {
+                    let sig = Signal { event: "Bell".into(), detail: String::new(), ts: 0, heuristic: false };
+                    self.ctx.signal(self.key, &sig, &self.label(), false);
+                }
+                // OSC 52 clipboard writes are handled later; clipboard reads are never answered
+                // (a remote program shouldn't read the clipboard).
                 _ => {}
             }
         }
@@ -290,6 +296,11 @@ impl Direct {
             }
             PaneCmd::Hide { hidden, .. } => {
                 self.info.hidden = hidden;
+                self.publish();
+            }
+            PaneCmd::SetBell { bell, .. } => {
+                self.info.bell = bell;
+                self.info.bell_pings = crate::harness::bell_pings(bell, &self.info.current_command);
                 self.publish();
             }
             PaneCmd::Terminate { reply, .. } => {

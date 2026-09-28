@@ -94,6 +94,17 @@ impl Harness {
     }
 }
 
+/// Programs whose bell means "someone wants you" (IRC/chat clients). Shells beep on failed
+/// tab completion, so bells elsewhere only ping when the user turns it on for the pane.
+pub fn bell_pings_by_default(current_command: &str) -> bool {
+    matches!(current_command, "irssi" | "weechat" | "senpai" | "catgirl" | "profanity" | "finch" | "gomuks")
+}
+
+/// Effective bell setting for a pane.
+pub fn bell_pings(explicit: Option<bool>, current_command: &str) -> bool {
+    explicit.unwrap_or_else(|| bell_pings_by_default(current_command))
+}
+
 /// How to quote one argument for the shell a command is typed into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Quoting {

@@ -17,7 +17,7 @@ use crate::integration::assets::{self, Assets};
 use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc};
 use crate::ssh::SshConnection;
 use crate::ssh::exec;
-use crate::term::TileTerm;
+use crate::term::{Collector, TileTerm};
 use crate::tmux::formats::{PANE_FORMAT, PaneRow, SESSION_FORMAT, SessionRow, parse_pane_row, parse_session_row};
 use crate::tmux::quote::quote;
 use crate::tmux::seed::{parse_seed, seed_command};
@@ -47,6 +47,8 @@ pub(crate) enum PaneCmd {
     ReleaseSize { key: u32 },
     /// Set the pane's labels (stored in tmux as `@chm_labels`, so every device agrees).
     SetLabels { key: u32, labels: Vec<String> },
+    /// Ping (or not) on the terminal bell; `None` = the default for what's running.
+    SetBell { key: u32, bell: Option<bool> },
     /// Hide/unhide (stored in tmux as `@chm_hidden`, so every device agrees).
     Hide { key: u32, hidden: bool },
     /// Quit the harness gracefully, then close the pane (or kill it outright with `force`).
@@ -57,7 +59,7 @@ const SEP_STR: &str = crate::tmux::formats::SEP;
 
 /// Subscription reporting per-pane fields that change without any other notification.
 const SUB_NAME: &str = "chm";
-const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{pane_title}";
+const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{pane_title}";
 
 struct Client {
     client: Arc<ControlClient>,
@@ -68,7 +70,9 @@ struct Pane {
     key: u32,
     row: PaneRow,
     client: ClientKey,
-    term: TileTerm,
+    term: TileTerm<Collector>,
+    /// The terminal's events (only bells matter here: tmux answers queries itself).
+    events: Collector,
     /// Tag of an in-flight seed; output is dropped until it lands (it's in the capture).
     seeding: Option<u64>,
     dirty: bool,
@@ -248,9 +252,23 @@ impl TmuxManager {
                 }
                 None => {
                     let key = self.ctx.pane_key(&self.host, self.server_start, id);
-                    let term = TileTerm::new(row.width, row.height);
+                    let events = Collector::default();
+                    let term = TileTerm::with_listener(row.width, row.height, 0, events.clone());
                     let streaming = self.ctx.streaming.lock().unwrap().contains(&key);
-                    self.panes.insert(id, Pane { key, row, client, term, seeding: None, dirty: true, streaming, last_output: None, burst_start: None, heuristic_working: false });
+                    let pane = Pane {
+                        key,
+                        row,
+                        client,
+                        term,
+                        events,
+                        seeding: None,
+                        dirty: true,
+                        streaming,
+                        last_output: None,
+                        burst_start: None,
+                        heuristic_working: false,
+                    };
+                    self.panes.insert(id, pane);
                     to_seed.push(id);
                 }
             }
@@ -329,6 +347,8 @@ impl TmuxManager {
             hidden: r.chm_hidden,
             labels: r.labels.clone(),
             ended: None,
+            bell: r.bell,
+            bell_pings: crate::harness::bell_pings(r.bell, &r.current_command),
         }
     }
 
@@ -348,6 +368,13 @@ impl TmuxManager {
                 Some(p) if p.seeding.is_none() => {
                     p.term.feed(&data);
                     p.dirty = true;
+                    let rang = p.events.drain().iter().any(|e| matches!(e, alacritty_terminal::event::Event::Bell));
+                    if rang && crate::harness::bell_pings(p.row.bell, &p.row.current_command) {
+                        let sig = Signal { event: "Bell".into(), detail: String::new(), ts: 0, heuristic: false };
+                        let (key, label) = (p.key, self.label(&self.panes[&pane]));
+                        self.ctx.signal(key, &sig, &label, false);
+                    }
+                    let Some(p) = self.panes.get_mut(&pane) else { return };
                     let now = Instant::now();
                     match p.last_output {
                         Some(t) if now.duration_since(t) < Duration::from_millis(1500) => {}
@@ -401,11 +428,12 @@ impl TmuxManager {
                 self.seed(pane, "continue").await;
             }
             ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name == SUB_NAME => {
-                let mut parts = value.splitn(5, crate::tmux::formats::SEP);
+                let mut parts = value.splitn(6, crate::tmux::formats::SEP);
                 let cmd = parts.next().unwrap_or_default().to_string();
                 let alt = parts.next() == Some("1");
                 let hidden = parts.next() == Some("1");
                 let labels = crate::tmux::formats::parse_labels(parts.next().unwrap_or_default());
+                let bell = crate::tmux::formats::parse_bell(parts.next().unwrap_or_default());
                 let title = parts.next().unwrap_or_default().to_string();
                 let mut reseed = false;
                 if let Some(p) = self.panes.get_mut(&pane)
@@ -413,7 +441,8 @@ impl TmuxManager {
                         || p.row.title != title
                         || p.row.alternate_on != alt
                         || p.row.chm_hidden != hidden
-                        || p.row.labels != labels)
+                        || p.row.labels != labels
+                        || p.row.bell != bell)
                 {
                     reseed = p.row.alternate_on != alt;
                     p.row.current_command = cmd;
@@ -421,6 +450,7 @@ impl TmuxManager {
                     p.row.alternate_on = alt;
                     p.row.chm_hidden = hidden;
                     p.row.labels = labels;
+                    p.row.bell = bell;
                     self.publish_due = true;
                 }
                 if reseed {
@@ -880,6 +910,22 @@ impl TmuxManager {
                 }
                 if let Some(p) = self.panes.get_mut(&id) {
                     p.row.labels = labels;
+                }
+                self.publish();
+            }
+            PaneCmd::SetBell { key, bell } => {
+                let Some((id, client)) = self.pane_by_key(key) else { return };
+                let target = quote(&format!("%{id}"));
+                let line = match bell {
+                    Some(on) => format!("set-option -p -t {target} @chm_bell {}", if on { 1 } else { 0 }),
+                    None => format!("set-option -p -u -t {target} @chm_bell"),
+                };
+                if let Err(e) = client.command(&line).await {
+                    self.ctx.notice(Some(&self.host), NoticeLevel::Error, format!("Couldn't update pane: {e}"));
+                    return;
+                }
+                if let Some(p) = self.panes.get_mut(&id) {
+                    p.row.bell = bell;
                 }
                 self.publish();
             }

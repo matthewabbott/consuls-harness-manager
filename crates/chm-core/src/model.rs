@@ -225,6 +225,7 @@ impl SoundPrefs {
                 AlertKind::Finished | AlertKind::Summary => self.finished,
                 AlertKind::NeedsInput => self.needs_input,
                 AlertKind::Subtask => self.subtask,
+                AlertKind::Bell => self.bell,
             }
     }
 }
@@ -323,6 +324,10 @@ pub struct PaneInfo {
     pub labels: Vec<String>,
     /// Direct panes: why the session ended. The pane stays readable until dismissed.
     pub ended: Option<String>,
+    /// The user's choice to ping (or not) when this pane rings the terminal bell.
+    pub bell: Option<bool>,
+    /// Whether a bell pings: the user's choice, else on for chat clients (irssi, weechat, …).
+    pub bell_pings: bool,
 }
 
 /// Result of a resize request.
@@ -473,6 +478,8 @@ pub enum AlertKind {
     NeedsInput,
     Subtask,
     Summary,
+    /// A program rang the terminal bell (e.g. an IRC highlight).
+    Bell,
 }
 
 /// A notification the shell should surface (sound / toast / taskbar flash).

@@ -11,6 +11,7 @@ const KINDS: { key: keyof SoundPrefs; kind: AlertKind; label: string; hint: stri
   { key: "finished", kind: "finished", label: "Agent finished", hint: "A turn is done and it's your move" },
   { key: "needsInput", kind: "needsInput", label: "Needs your input", hint: "Permission prompts and questions" },
   { key: "subtask", kind: "subtask", label: "Subtask finished", hint: "A subagent completed (quiet tick)" },
+  { key: "bell", kind: "bell", label: "Terminal bell", hint: "IRC highlights and other bells, in panes that ping on bell" },
 ];
 
 export default function SettingsDialog() {

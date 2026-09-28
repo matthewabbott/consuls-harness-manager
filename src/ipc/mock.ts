@@ -150,6 +150,8 @@ function pane(key: number, host: string, extra: PaneExtra, lines: Seg[][], curso
       hidden: false,
       labels: [],
       ended: null,
+      bell: null,
+      bellPings: rest.currentCommand === "irssi",
       ...rest,
     },
     lines,
@@ -419,6 +421,12 @@ export function mockBackend(): Backend {
       emitConfig();
       for (const p of panes) if (p.info.labels.includes(id)) p.info = { ...p.info, labels: p.info.labels.filter((l) => l !== id) };
       new Set(panes.map((p) => p.info.host)).forEach(emitPanes);
+    },
+    setPaneBell: async (key, bell) => {
+      const p = panes.find((p) => p.info.key === key);
+      if (!p) return;
+      p.info = { ...p.info, bell, bellPings: bell ?? p.info.currentCommand === "irssi" };
+      emitPanes(p.info.host);
     },
     setPaneLabels: async (key, labels) => {
       const p = panes.find((p) => p.info.key === key);

@@ -53,6 +53,13 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Local hooks run through Git for Windows' `sh.exe`; `CHM_STATE_DIR` tells `chm-hook.sh` where
   the events file is (the core polls it). Templates use `__RUN__`/`__SH__` placeholders.
 
+## Bells
+
+- tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
+  (alacritty doesn't count a BEL that terminates an OSC string). Whether it pings is
+  `harness::bell_pings(@chm_bell, current_command)`; attention rate-limits to one per 15 s and
+  never marks the pane as hooked.
+
 ## Testing
 
 - Core end-to-end: `cargo run -p chm-core --example selftest -- <host> <user>` (private tmux
@@ -62,7 +69,8 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell). The driver evaluates JS in
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`). Tiles carry `data-pane=<key>`. The
+  driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 
 ## Windows dev gotchas

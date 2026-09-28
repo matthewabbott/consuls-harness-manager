@@ -1,4 +1,4 @@
-import { Check, EyeOff, Maximize2, Plus, Power, Tag } from "lucide-react";
+import { BellRing, Check, EyeOff, Maximize2, Plus, Power, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -62,6 +62,10 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
           </MenuItem>
         )}
         <div className="my-1 h-px bg-ink-700" />
+        <MenuItem icon={<BellRing className="h-3.5 w-3.5" />} onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}>
+          <span className="flex-1">Ping on terminal bell</span>
+          {pane.bellPings && <Check className="h-3.5 w-3.5 text-sky-400" />}
+        </MenuItem>
         <MenuItem icon={<EyeOff className="h-3.5 w-3.5" />} onClick={() => { backend().then((b) => b.setPaneHidden(pane.key, true)); onClose(); }}>
           Hide (keeps running)
         </MenuItem>

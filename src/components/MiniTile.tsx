@@ -1,4 +1,4 @@
-import { EyeOff, Lock, Power, X } from "lucide-react";
+import { BellRing, EyeOff, Lock, Power, X } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -53,7 +53,9 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
     return () => clearTimeout(t);
   }, [att?.pulse, att]);
   const waiting = att && (att.activity === "idle" || att.activity === "needsInput") && att.attention !== "none";
-  const glow = att?.attention === "unacked" ? (att.activity === "needsInput" ? "glow-iris" : "glow-ember") : pulsing ? "pulse" : "";
+  const belled = att?.attention === "unacked" && att.reason === "Rang the bell";
+  const glow =
+    att?.attention === "unacked" ? (belled ? "glow-sky" : att.activity === "needsInput" ? "glow-iris" : "glow-ember") : pulsing ? "pulse" : "";
   const open = () => {
     if (consumeJustDragged()) return;
     backend().then((b) => b.ackPane(pane.key));
@@ -93,6 +95,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
 
   return (
     <article
+      data-pane={pane.key}
       onClick={open}
       onPointerDown={(e) =>
         beginTileDrag(e, pane.key, title, (labelId) => {
@@ -175,7 +178,14 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
       )}
       <div className={`relative overflow-hidden rounded-lg bg-[#0e1119] ring-1 ring-black/40 ${compact ? "mx-1.5 mb-1.5 aspect-[16/9]" : "mx-2 mb-2 aspect-[16/10]"}`}>
         <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
-        {waiting && !overlay && (
+        {belled && !overlay && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-ink-950/85 to-transparent px-2 pt-6 pb-2">
+            <span className="flex items-center gap-1.5 rounded-full bg-sky-400/15 px-2.5 py-1 text-[11px] font-semibold text-sky-300 ring-1 ring-sky-400/40 backdrop-blur">
+              <BellRing className="h-3 w-3" /> Rang the bell
+            </span>
+          </div>
+        )}
+        {waiting && !belled && !overlay && (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-ink-950/85 to-transparent px-2 pt-6 pb-2">
             <span
               className={`flex max-w-full items-center gap-1.5 truncate rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 backdrop-blur ${

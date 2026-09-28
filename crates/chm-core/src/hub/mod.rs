@@ -388,6 +388,12 @@ impl Core {
         self.pane(key, PaneCmd::SetLabels { key, labels });
     }
 
+    /// Ping (or not) when the pane rings the terminal bell; `None` restores the default (on for
+    /// chat clients such as irssi).
+    pub fn set_pane_bell(&self, key: u32, bell: Option<bool>) {
+        self.pane(key, PaneCmd::SetBell { key, bell });
+    }
+
     /// What the user is looking at (drives ping/toast/ack rules).
     pub fn set_focus(&self, focus: FocusState) {
         self.ctx.set_focus(focus);

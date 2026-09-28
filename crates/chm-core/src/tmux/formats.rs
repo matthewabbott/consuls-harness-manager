@@ -7,7 +7,7 @@ use super::parser::{PaneId, SessionId, WindowId};
 pub const SEP: &str = "|~|";
 
 /// `pane_title` is last because it's the only free-form field likely to contain `SEP`.
-pub const PANE_FORMAT: &str = "#{pane_id}|~|#{window_id}|~|#{session_id}|~|#{session_name}|~|#{window_index}|~|#{window_name}|~|#{pane_index}|~|#{pane_width}|~|#{pane_height}|~|#{pane_current_command}|~|#{pane_current_path}|~|#{pane_pid}|~|#{pane_dead}|~|#{alternate_on}|~|#{window_active}|~|#{pane_active}|~|#{@chm_id}|~|#{@chm_harness}|~|#{@chm_hidden}|~|#{session_group}|~|#{window_panes}|~|#{window_width}|~|#{window_height}|~|#{@chm_sized}|~|#{@chm_labels}|~|#{pane_title}";
+pub const PANE_FORMAT: &str = "#{pane_id}|~|#{window_id}|~|#{session_id}|~|#{session_name}|~|#{window_index}|~|#{window_name}|~|#{pane_index}|~|#{pane_width}|~|#{pane_height}|~|#{pane_current_command}|~|#{pane_current_path}|~|#{pane_pid}|~|#{pane_dead}|~|#{alternate_on}|~|#{window_active}|~|#{pane_active}|~|#{@chm_id}|~|#{@chm_harness}|~|#{@chm_hidden}|~|#{session_group}|~|#{window_panes}|~|#{window_width}|~|#{window_height}|~|#{@chm_sized}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{pane_title}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneRow {
@@ -38,7 +38,18 @@ pub struct PaneRow {
     pub sized: bool,
     /// Label ids from `@chm_labels` (comma-separated slugs).
     pub labels: Vec<String>,
+    /// `@chm_bell`: the user's bell-ping choice for this pane.
+    pub bell: Option<bool>,
     pub title: String,
+}
+
+/// Parses a `@chm_bell` value (`1`, `0`, or unset).
+pub fn parse_bell(s: &str) -> Option<bool> {
+    match s {
+        "1" => Some(true),
+        "0" => Some(false),
+        _ => None,
+    }
 }
 
 /// Parses a comma-separated `@chm_labels` value.
@@ -55,8 +66,8 @@ fn opt(s: &str) -> Option<String> {
 }
 
 pub fn parse_pane_row(line: &str) -> Option<PaneRow> {
-    let f: Vec<&str> = line.splitn(26, SEP).collect();
-    if f.len() < 26 {
+    let f: Vec<&str> = line.splitn(27, SEP).collect();
+    if f.len() < 27 {
         return None;
     }
     Some(PaneRow {
@@ -85,7 +96,8 @@ pub fn parse_pane_row(line: &str) -> Option<PaneRow> {
         window_height: f[22].parse().unwrap_or(0),
         sized: f[23] == "1",
         labels: parse_labels(f[24]),
-        title: f[25].to_string(),
+        bell: parse_bell(f[25]),
+        title: f[26].to_string(),
     })
 }
 
@@ -177,7 +189,7 @@ mod tests {
 
     #[test]
     fn pane_row() {
-        let line = "%1|~|@1|~|$1|~|annotator-omp-1|~|1|~|bash|~|1|~|68|~|22|~|omp|~|/home/c/proj|~|401604|~|0|~|0|~|1|~|1|~||~||~||~|annotator-omp|~|2|~|137|~|22|~|1|~|terrarium,urgent|~|_ > Hysteresis|~|benchmark";
+        let line = "%1|~|@1|~|$1|~|annotator-omp-1|~|1|~|bash|~|1|~|68|~|22|~|omp|~|/home/c/proj|~|401604|~|0|~|0|~|1|~|1|~||~||~||~|annotator-omp|~|2|~|137|~|22|~|1|~|terrarium,urgent|~|0|~|_ > Hysteresis|~|benchmark";
         let row = parse_pane_row(line).unwrap();
         assert_eq!((row.pane, row.window, row.session), (1, 1, 1));
         assert_eq!((row.width, row.height), (68, 22));
@@ -187,6 +199,7 @@ mod tests {
         assert_eq!(row.title, "_ > Hysteresis|~|benchmark");
         assert_eq!((row.window_panes, row.window_width, row.window_height, row.sized), (2, 137, 22, true));
         assert_eq!(row.labels, vec!["terrarium", "urgent"]);
+        assert_eq!(row.bell, Some(false));
     }
 
     #[test]

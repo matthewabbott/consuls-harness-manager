@@ -18,6 +18,12 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   handy for `tmux attach` / `Ctrl+b d` hopping or a quick look around. They have a red border,
   are lost if the connection drops (the pane then shows why, stays readable, and is never
   revived), and keep their own scrollback.
+- **Bells**: a pane can ping when its program rings the terminal bell (e.g. an IRC highlight) —
+  on by default for irssi and weechat, off for shells (they beep on failed tab completion), and
+  toggled per pane with the ringing-bell button or the tile's right-click menu. irssi rings for
+  the levels in `beep_msg_level` (e.g. `/set beep_msg_level MSGS HILIGHT DCCMSGS`; add
+  `/set beep_when_window_active ON` to hear it for the window you're in); weechat's built-in
+  `beep` trigger rings on highlights and private messages.
 - **This PC**: the machine Harness Manager runs on is always listed first. Start PowerShell,
   Git Bash, cmd (or WSL) there, optionally with Claude Code / Codex / omp launched in it, with the
   same tiles, notifications and composer as remote panes. Local shells end when the app quits

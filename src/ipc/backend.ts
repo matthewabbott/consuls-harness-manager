@@ -57,6 +57,8 @@ export interface Backend {
   updateLabel(label: LabelDef): Promise<void>;
   deleteLabel(id: string): Promise<void>;
   setPaneLabels(key: number, labels: string[]): Promise<void>;
+  /** Ping on the pane's terminal bell; null = default (on for irssi, weechat, …). */
+  setPaneBell(key: number, bell: boolean | null): Promise<void>;
   resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
   releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
@@ -121,6 +123,7 @@ async function tauriBackend(): Promise<Backend> {
     updateLabel: (label) => invoke("update_label", { label }),
     deleteLabel: (id) => invoke("delete_label", { id }),
     setPaneLabels: (key, labels) => invoke("set_pane_labels", { key, labels }),
+    setPaneBell: (key, bell) => invoke("set_pane_bell", { key, bell }),
     resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
     releasePaneSize: (key) => invoke("release_pane_size", { key }),
     terminatePane: (key, force) => invoke("terminate_pane", { key, force }),

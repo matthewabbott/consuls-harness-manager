@@ -32,8 +32,13 @@ pub struct PaneLabel {
 enum Effect {
     State(Activity, Option<AlertKind>, String),
     Pulse,
+    /// Terminal bell: flag the pane without touching its activity.
+    Bell,
     Ignore,
 }
+
+/// At most one bell ping per pane in this many seconds (chat clients can ring in bursts).
+const BELL_EVERY: f64 = 15.0;
 
 fn classify(event: &str, detail: &str, current: Activity) -> Effect {
     match event {
@@ -57,6 +62,7 @@ fn classify(event: &str, detail: &str, current: Activity) -> Effect {
             _ => Effect::Ignore,
         },
         "SubagentStop" => Effect::Pulse,
+        "Bell" => Effect::Bell,
         "SessionEnd" => Effect::State(Activity::Unknown, None, "Session ended".into()),
         "HeuristicWorking" => Effect::State(Activity::Working, None, "Working".into()),
         "HeuristicIdle" if current == Activity::Working => {
@@ -72,6 +78,8 @@ pub struct AttentionBook {
     /// Panes that have reported at least one real hook event (heuristics are ignored for them).
     hooked: HashSet<u32>,
     muted: HashSet<u32>,
+    /// When each pane last pinged for a bell.
+    bells: HashMap<u32, f64>,
     pub focus: FocusState,
 }
 
@@ -106,7 +114,8 @@ impl AttentionBook {
         if sig.heuristic && self.hooked.contains(&key) {
             return Outcome { changed: None, alert: None };
         }
-        if !sig.heuristic {
+        // Bells aren't hooks: they say nothing about whether the agent reports its turns.
+        if !sig.heuristic && sig.event != "Bell" {
             self.hooked.insert(key);
         }
         let entry = self.panes.entry(key).or_insert_with(|| PaneAttention { key, source: "hook".into(), ..Default::default() });
@@ -117,6 +126,28 @@ impl AttentionBook {
 
         match classify(&sig.event, &sig.detail, entry.activity) {
             Effect::Ignore => Outcome { changed: None, alert: None },
+            Effect::Bell => {
+                if looking || self.bells.get(&key).is_some_and(|t| now - t < BELL_EVERY) {
+                    return Outcome { changed: None, alert: None };
+                }
+                self.bells.insert(key, now);
+                if !expanded {
+                    entry.attention = AttentionLevel::Unacked;
+                }
+                entry.reason = Some("Rang the bell".into());
+                entry.since = now;
+                let unfocused = !self.focus.window_focused;
+                let alert = (!stale && !muted).then(|| Alert {
+                    key: Some(key),
+                    kind: AlertKind::Bell,
+                    title: format!("{} rang the bell", label.title),
+                    body: format!("{} on {}", label.harness, label.host),
+                    sound: true,
+                    toast: unfocused,
+                    flash: unfocused,
+                });
+                Outcome { changed: Some(entry.clone()), alert }
+            }
             Effect::Pulse => {
                 entry.pulse += 1;
                 let alert = (!stale && !looking && !muted).then(|| Alert {
@@ -186,6 +217,7 @@ impl AttentionBook {
     pub fn retain(&mut self, alive: &HashSet<u32>) {
         self.panes.retain(|k, _| alive.contains(k));
         self.hooked.retain(|k| alive.contains(k));
+        self.bells.retain(|k, _| alive.contains(k));
     }
 }
 
@@ -259,6 +291,28 @@ mod tests {
         assert_eq!(out.changed.unwrap().attention, AttentionLevel::Unacked);
         b.set_muted(2, true);
         assert!(b.apply(2, &sig("Stop"), &label(), 1.0, false).alert.is_none());
+    }
+
+    #[test]
+    fn bells_glow_once_per_window_and_leave_activity_alone() {
+        let mut b = AttentionBook::default();
+        let bell = sig("Bell");
+        b.apply(1, &sig("UserPromptSubmit"), &label(), 0.0, false);
+        let o = b.apply(1, &bell, &label(), 10.0, false);
+        let st = o.changed.unwrap();
+        assert_eq!((st.activity, st.attention), (Activity::Working, AttentionLevel::Unacked));
+        assert_eq!(o.alert.unwrap().kind, AlertKind::Bell);
+        // A burst within 15 s stays quiet.
+        let o = b.apply(1, &bell, &label(), 20.0, false);
+        assert!(o.alert.is_none() && o.changed.is_none());
+        assert!(b.apply(1, &bell, &label(), 26.0, false).alert.is_some());
+        // Looking right at it: nothing.
+        b.set_focus(FocusState { expanded: Some(2), window_focused: true });
+        assert!(b.apply(2, &bell, &label(), 30.0, false).alert.is_none());
+        // Bells don't count as hooks (heuristics keep working).
+        assert!(!b.has_hooks(3));
+        b.apply(3, &bell, &label(), 0.0, false);
+        assert!(!b.has_hooks(3));
     }
 
     #[test]

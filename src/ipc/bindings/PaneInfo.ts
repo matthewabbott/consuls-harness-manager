@@ -27,4 +27,12 @@ labels: Array<string>,
 /**
  * Direct panes: why the session ended. The pane stays readable until dismissed.
  */
-ended: string | null, };
+ended: string | null, 
+/**
+ * The user's choice to ping (or not) when this pane rings the terminal bell.
+ */
+bell: boolean | null, 
+/**
+ * Whether a bell pings: the user's choice, else on for chat clients (irssi, weechat, …).
+ */
+bellPings: boolean, };

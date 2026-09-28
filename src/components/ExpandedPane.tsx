@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, BellOff, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, BellRing, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search, X, ZoomIn, ZoomOut } from "lucide-react";
 
 import { backend } from "../ipc/backend";
 import { useMemo, useRef, useState } from "react";
@@ -131,6 +131,17 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
                 </span>
               </HeaderIcon>
             )}
+            <button
+              onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}
+              title={
+                pane.bellPings
+                  ? "Pinging when this pane rings the terminal bell (click to stop)"
+                  : "Ping when this pane rings the terminal bell — e.g. IRC highlights (on by default for irssi and weechat)"
+              }
+              className={`rounded-lg p-1.5 transition-colors hover:bg-ink-700 ${pane.bellPings ? "text-sky-400" : "text-mist-500 hover:text-mist-100"}`}
+            >
+              <BellRing className="h-3.5 w-3.5" />
+            </button>
             <button
               onClick={toggleMute}
               title={muted ? "Unmute pings for this pane" : "Mute pings for this pane (it will still glow)"}

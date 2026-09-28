@@ -44,6 +44,8 @@ fn chime(kind: AlertKind) -> Vec<f32> {
         ]),
         // Barely-there tick: a subagent finished.
         AlertKind::Subtask => render(&[Note(740.0, 0.22, 0.0, 0.08)]),
+        // A single clear bell: somebody pinged you (IRC highlight, …).
+        AlertKind::Bell => render(&[Note(1568.0, 0.6, 0.0, 0.15), Note(2349.3, 0.4, 0.0, 0.05)]),
     }
 }
 
@@ -158,7 +160,7 @@ mod tests {
 
     #[test]
     fn chimes_are_short_and_bounded() {
-        for kind in [AlertKind::Finished, AlertKind::NeedsInput, AlertKind::Subtask, AlertKind::Summary] {
+        for kind in [AlertKind::Finished, AlertKind::NeedsInput, AlertKind::Subtask, AlertKind::Summary, AlertKind::Bell] {
             let s = chime(kind);
             assert!(s.len() < RATE as usize, "{kind:?} under a second");
             assert!(s.iter().all(|x| (x * gain(1.0)).abs() <= 1.0), "{kind:?} doesn't clip at full volume");

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chm_core::harness::Harness;
-use chm_core::model::{Activity, Alert, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome};
+use chm_core::model::{Activity, Alert, AlertKind, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome};
 use chm_core::{Core, Sink};
 
 #[derive(Default)]
@@ -158,6 +158,29 @@ async fn main() -> anyhow::Result<()> {
     wait_for("label change from another client seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels == ["gamma"])).await;
     core.set_pane_labels(key, vec![]);
     wait_for("labels cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels.is_empty())).await;
+
+    // --- bells: off by default for a shell; once on, a real BEL pings (a BEL that only ends
+    // an OSC title doesn't)
+    let bell_alerts = || rec.alerts.lock().unwrap().iter().filter(|a| a.kind == AlertKind::Bell && a.key == Some(key)).count();
+    core.stream_pane(key, false);
+    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.send_text(key, r"printf '\a'".into());
+    core.send_keys(key, vec!["Enter".into()]);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(bell_alerts(), 0, "a shell's bell doesn't ping by default");
+    core.set_pane_bell(key, Some(true));
+    wait_for("bell pings turned on (@chm_bell)", Duration::from_secs(5), || pane(key).is_some_and(|p| p.bell == Some(true) && p.bell_pings)).await;
+    core.send_text(key, r"printf '\033]0;chm-title\007'".into());
+    core.send_keys(key, vec!["Enter".into()]);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    assert_eq!(bell_alerts(), 0, "BEL terminating an OSC title isn't a bell");
+    core.send_text(key, r"printf '\a'".into());
+    core.send_keys(key, vec!["Enter".into()]);
+    wait_for("a real bell pings once", Duration::from_secs(5), || bell_alerts() == 1).await;
+    core.ack_pane(key);
+    core.set_pane_bell(key, None);
+    wait_for("bell setting cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.bell.is_none() && !p.bell_pings)).await;
+    core.stream_pane(key, true);
 
     // --- direct shell: a plain PTY session with no tmux; the core answers terminal queries
     let spec = NewPaneSpec {

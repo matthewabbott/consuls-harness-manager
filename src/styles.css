@@ -107,6 +107,10 @@ textarea {
   0%, 100% { box-shadow: 0 0 0 1px rgb(161 146 255 / 0.55), 0 0 16px 1px rgb(161 146 255 / 0.2); }
   50% { box-shadow: 0 0 0 1px rgb(161 146 255 / 0.95), 0 0 26px 4px rgb(161 146 255 / 0.42); }
 }
+@keyframes tile-glow-sky {
+  0%, 100% { box-shadow: 0 0 0 1px rgb(106 169 255 / 0.55), 0 0 16px 1px rgb(106 169 255 / 0.2); }
+  50% { box-shadow: 0 0 0 1px rgb(106 169 255 / 0.95), 0 0 26px 4px rgb(106 169 255 / 0.4); }
+}
 @keyframes tile-pulse {
   0% { box-shadow: 0 0 0 1px rgb(106 169 255 / 0.9), 0 0 18px 3px rgb(106 169 255 / 0.35); }
   100% { box-shadow: 0 0 0 1px rgb(255 255 255 / 0.04) inset; }
@@ -119,11 +123,15 @@ textarea {
   border-color: rgb(161 146 255 / 0.65);
   animation: tile-glow-iris 1.8s ease-in-out infinite;
 }
+.tile.glow-sky {
+  border-color: rgb(106 169 255 / 0.65);
+  animation: tile-glow-sky 2.4s ease-in-out infinite;
+}
 .tile.pulse {
   animation: tile-pulse 1.1s ease-out 1;
 }
 @media (prefers-reduced-motion: reduce) {
-  .tile.glow-ember, .tile.glow-iris, .tile.pulse { animation: none; }
+  .tile.glow-ember, .tile.glow-iris, .tile.glow-sky, .tile.pulse { animation: none; }
 }
 
 .status-dot {

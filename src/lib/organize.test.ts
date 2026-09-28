@@ -34,6 +34,8 @@ const pane = (key: number, extra: Partial<PaneInfo> = {}): PaneInfo => ({
   hidden: false,
   labels: [],
   ended: null,
+  bell: null,
+  bellPings: false,
   ...extra,
 });
 

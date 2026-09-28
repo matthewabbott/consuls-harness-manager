@@ -93,6 +93,12 @@ pub fn paste_text(state: State<'_, AppState>, key: u32, text: String) {
     state.core.paste_text(key, text);
 }
 
+/// Ping (or not) on the pane's terminal bell; `null` = default for what's running.
+#[tauri::command]
+pub fn set_pane_bell(state: State<'_, AppState>, key: u32, bell: Option<bool>) {
+    state.core.set_pane_bell(key, bell);
+}
+
 /// Shells that can be started on this machine ("This PC").
 #[tauri::command]
 pub fn local_shells(state: State<'_, AppState>) -> Vec<chm_core::local::LocalShell> {
