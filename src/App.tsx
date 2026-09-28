@@ -33,7 +33,6 @@ export default function App() {
   const integrationFor = useApp((s) => s.integrationFor);
   const settingsFor = useApp((s) => s.settingsFor);
   const settingsOpen = useApp((s) => s.settingsOpen);
-  const maximized = useUi((s) => s.maximized);
   const tileMenu = useApp((s) => s.tileMenu);
   const activeFile = useEditor((s) => s.active);
   const [quitAsk, setQuitAsk] = useState<number | null>(null);
@@ -64,6 +63,12 @@ export default function App() {
   useEffect(() => {
     if (expanded !== null && ready && !expandedPane) useApp.getState().setExpanded(null);
   }, [expanded, expandedPane, ready]);
+
+  // Maximize belongs to the pane on screen: a file opened over it, or the grid, ends it.
+  const paneShowing = !!expandedPane && !activeFile;
+  useEffect(() => {
+    if (!paneShowing && useUi.getState().maximized) useUi.getState().setMaximized(false);
+  }, [paneShowing]);
 
   // Tell the core what the user is looking at: it decides ping/toast/ack from this.
   useEffect(() => {
@@ -178,7 +183,7 @@ export default function App() {
 
   return (
     <div className="app-backdrop flex h-full">
-      {!(maximized && expandedPane) && <LeftSidebar />}
+      <LeftSidebar />
       <main className="flex min-w-0 flex-1 flex-col">
         {!expandedPane && !activeFile && <TopBar />}
         <Banners />

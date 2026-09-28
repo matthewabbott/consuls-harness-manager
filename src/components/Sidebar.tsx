@@ -5,6 +5,7 @@ import { backend } from "../ipc/backend";
 import type { HostConfig } from "../ipc/bindings/HostConfig";
 import { defaultUser, isLocal, machines, phaseInfo, toneText, type Machine } from "../lib/hosts";
 import { useApp } from "../store/app";
+import HideSidebarButton from "./HideSidebarButton";
 import LabelsPanel from "./LabelsPanel";
 
 function OsIcon({ os, className }: { os: string | undefined; className?: string }) {
@@ -194,11 +195,12 @@ export default function MachinesPanel() {
 
   return (
     <>
-      <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
-        <div className="min-w-0 leading-tight">
+      <div className="flex items-start gap-2.5 pt-4 pr-2.5 pb-3 pl-4">
+        <div className="min-w-0 flex-1 leading-tight">
           <div className="text-[9.5px] font-semibold tracking-[0.14em] text-ember-400/80 uppercase">Consul's</div>
           <div className="font-display text-[15px] font-semibold tracking-tight text-mist-100">Harness Manager</div>
         </div>
+        <HideSidebarButton />
       </div>
 
       <div className="scroll-thin flex-1 overflow-y-auto px-2 pb-4">

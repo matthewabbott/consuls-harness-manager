@@ -6,6 +6,7 @@ import MachinesPanel from "./Sidebar";
 
 export default function LeftSidebar() {
   const collapsed = useUi((s) => s.sidebarCollapsed);
+  const maximized = useUi((s) => s.maximized);
   const width = useUi((s) => s.sidebarWidth);
   const setWidth = useUi((s) => s.setSidebarWidth);
   const tab = useUi((s) => s.sidebarTab);
@@ -13,7 +14,7 @@ export default function LeftSidebar() {
   return (
     <div className="flex h-full shrink-0">
       <ActivityBar />
-      {!collapsed && (
+      {!collapsed && !maximized && (
         <>
           <aside style={{ width }} className="flex shrink-0 flex-col border-r border-ink-700/80 bg-ink-950/40">
             {tab === "machines" && <MachinesPanel />}

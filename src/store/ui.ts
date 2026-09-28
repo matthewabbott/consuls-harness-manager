@@ -15,7 +15,8 @@ interface UiState {
   filmstripWidth: number;
   filmstripCollapsed: boolean;
   composerHeight: number;
-  /** Expanded view fills the window (side panels hidden). */
+  /** Expanded pane fills the window: side panels hidden, only the activity rail stays. Only
+   *  ever true while a pane is showing (App clears it otherwise). */
   maximized: boolean;
   groupBy: GroupBy;
   sortBy: SortBy;
@@ -55,10 +56,17 @@ export const useUi = create<UiState>()(
       lastOpened: {},
 
       setSidebarWidth: (w) => set({ sidebarWidth: clamp(w, SIDEBAR.min, SIDEBAR.max) }),
-      toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      // While maximized the panel is hidden whatever its state, so asking for it ends maximize.
+      toggleSidebar: () => set((s) => (s.maximized ? { maximized: false, sidebarCollapsed: false } : { sidebarCollapsed: !s.sidebarCollapsed })),
       // Clicking the active tab collapses the sidebar (VS Code style); another tab opens it.
       showSidebarTab: (tab) =>
-        set((s) => (s.sidebarTab === tab && !s.sidebarCollapsed ? { sidebarCollapsed: true } : { sidebarTab: tab, sidebarCollapsed: false })),
+        set((s) =>
+          s.maximized
+            ? { maximized: false, sidebarTab: tab, sidebarCollapsed: false }
+            : s.sidebarTab === tab && !s.sidebarCollapsed
+              ? { sidebarCollapsed: true }
+              : { sidebarTab: tab, sidebarCollapsed: false },
+        ),
       setFilmstripWidth: (w) => set({ filmstripWidth: clamp(w, FILMSTRIP.min, FILMSTRIP.max) }),
       toggleFilmstrip: () => set((s) => ({ filmstripCollapsed: !s.filmstripCollapsed })),
       setComposerHeight: (h) => set({ composerHeight: clamp(h, COMPOSER.min, Math.max(COMPOSER.min, window.innerHeight * 0.5)) }),

@@ -13,7 +13,7 @@ interface Tab {
 /** VS Code–style rail: switches (or collapses) the left sidebar's panel. */
 export default function ActivityBar() {
   const tab = useUi((s) => s.sidebarTab);
-  const collapsed = useUi((s) => s.sidebarCollapsed);
+  const collapsed = useUi((s) => s.sidebarCollapsed || s.maximized);
   const show = useUi((s) => s.showSidebarTab);
   const waiting = useApp((s) => Object.values(s.attention).filter((a) => a.attention === "unacked").length);
 

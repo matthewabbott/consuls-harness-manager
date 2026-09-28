@@ -121,16 +121,6 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             >
               {maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
             </HeaderIcon>
-            {others.length > 0 && !maximized && (
-              <HeaderIcon onClick={() => ui().toggleFilmstrip()} title={filmstripCollapsed ? "Show other panes" : "Hide other panes"}>
-                <span className="relative">
-                  {filmstripCollapsed ? <PanelRightOpen className="h-3.5 w-3.5" /> : <PanelRightClose className="h-3.5 w-3.5" />}
-                  {filmstripCollapsed && waitingElsewhere > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 h-2 w-2 rounded-full bg-ember-400 ring-2 ring-ink-900" />
-                  )}
-                </span>
-              </HeaderIcon>
-            )}
             <button
               onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}
               title={
@@ -278,19 +268,40 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
         />
       )}
       {showFilmstrip && (
-        <aside
-          style={{ width: filmstripWidth }}
-          className="scroll-thin shrink-0 space-y-3 overflow-y-auto border-l border-ink-700/80 p-3"
-        >
-          {others.map((p) => (
-            <MiniTile
-              key={p.key}
-              pane={p}
-              compact
-              stale={hosts[p.host]?.phase.phase === "connected" ? null : "Offline"}
-              home={hosts[p.host]?.facts?.home}
-            />
-          ))}
+        <aside style={{ width: filmstripWidth }} className="flex shrink-0 flex-col border-l border-ink-700/80">
+          <div className="flex h-12 shrink-0 items-center gap-1.5 px-2">
+            <HeaderIcon onClick={() => ui().toggleFilmstrip()} title="Hide other panes">
+              <PanelRightClose className="h-3.5 w-3.5" />
+            </HeaderIcon>
+            <span className="text-[10.5px] font-semibold tracking-[0.08em] text-mist-500 uppercase">Other panes</span>
+            <span className="font-mono text-[10.5px] text-mist-600">{others.length}</span>
+          </div>
+          <div className="scroll-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-3 pb-3">
+            {others.map((p) => (
+              <MiniTile
+                key={p.key}
+                pane={p}
+                compact
+                stale={hosts[p.host]?.phase.phase === "connected" ? null : "Offline"}
+                home={hosts[p.host]?.facts?.home}
+              />
+            ))}
+          </div>
+        </aside>
+      )}
+      {others.length > 0 && filmstripCollapsed && !maximized && (
+        <aside className="flex w-10 shrink-0 justify-center border-l border-ink-700/80">
+          <div className="flex h-12 items-center">
+            <HeaderIcon
+              onClick={() => ui().toggleFilmstrip()}
+              title={waitingElsewhere > 0 ? `Show other panes (${waitingElsewhere} waiting)` : "Show other panes"}
+            >
+              <span className="relative block">
+                <PanelRightOpen className="h-3.5 w-3.5" />
+                {waitingElsewhere > 0 && <span className="absolute -top-1.5 -right-1.5 h-2 w-2 rounded-full bg-ember-400 ring-2 ring-ink-900" />}
+              </span>
+            </HeaderIcon>
+          </div>
         </aside>
       )}
     </div>

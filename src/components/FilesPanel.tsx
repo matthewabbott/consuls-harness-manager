@@ -27,6 +27,7 @@ import { crumbsOf, joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { statusOf, useFiles } from "../store/files";
+import HideSidebarButton from "./HideSidebarButton";
 import Modal, { Button } from "./Modal";
 
 const ROW_H = 22;
@@ -239,6 +240,7 @@ export default function FilesPanel() {
         <HeaderButton title="Collapse folders" disabled={!root} onClick={() => files().collapseAll()}>
           <ChevronsDownUp className="h-3.5 w-3.5" />
         </HeaderButton>
+        <HideSidebarButton />
       </div>
 
       <div className="flex items-center gap-1.5 px-2.5 pb-1.5">
