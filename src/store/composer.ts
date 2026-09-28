@@ -26,11 +26,6 @@ const drafts: Record<string, string> = load(DRAFTS, {});
 const history: Record<string, string[]> = load(HISTORY, {});
 let saveTimer = 0;
 
-/** Stable identity for a pane across app restarts: host + tmux ids (or our @chm_id). */
-export function paneIdentity(p: { host: string; chmId: string | null; sessionName: string; windowIndex: number; paneIndex: number }): string {
-  return p.chmId ? `${p.host}#${p.chmId}` : `${p.host}:${p.sessionName}:${p.windowIndex}.${p.paneIndex}`;
-}
-
 export function getDraft(id: string): string {
   return drafts[id] ?? "";
 }

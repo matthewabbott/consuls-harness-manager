@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, BellOff, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search } from "lucide-react";
+import { ArrowLeft, Bell, BellOff, EyeOff, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Power, Search, ZoomIn, ZoomOut } from "lucide-react";
 
 import { backend } from "../ipc/backend";
 import { useMemo, useRef, useState } from "react";
@@ -7,6 +7,8 @@ import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { shortPath } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
+import { paneIdentity } from "../lib/panes";
+import { useViewPrefs, zoom } from "../store/viewPrefs";
 import ResizeHandle from "./ResizeHandle";
 import Composer, { type ComposerHandle } from "./Composer";
 import HarnessBadge, { harnessLabel, isAgent } from "./HarnessBadge";
@@ -43,6 +45,9 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const maximized = useUi((s) => s.maximized);
   const composerHeight = useUi((s) => s.composerHeight);
   const ui = useUi.getState;
+  const id = paneIdentity(pane);
+  const fontPref = useViewPrefs((s) => s.prefs[id]?.fontSize);
+  const currentFont = () => termRef.current?.term?.options.fontSize ?? fontPref ?? 13;
   const waitingElsewhere = useApp(
     (s) => Object.values(s.attention).filter((a) => a.key !== pane.key && a.attention === "unacked").length,
   );
@@ -81,6 +86,21 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             </div>
           </div>
           <div className="ml-auto flex items-center gap-1">
+            <div className="mr-1 flex items-center rounded-lg ring-1 ring-ink-700">
+              <HeaderIcon onClick={() => zoom(id, currentFont(), -1)} title="Smaller text (Ctrl+−, Ctrl+wheel)">
+                <ZoomOut className="h-3.5 w-3.5" />
+              </HeaderIcon>
+              <button
+                onClick={() => useViewPrefs.getState().setFontSize(id, null)}
+                title={fontPref ? "Reset to auto-fit (Ctrl+0)" : "Text size fits the pane width"}
+                className="min-w-10 px-1 text-center font-mono text-[11px] text-mist-400 hover:text-mist-100"
+              >
+                {fontPref ? `${fontPref}px` : "auto"}
+              </button>
+              <HeaderIcon onClick={() => zoom(id, currentFont(), 1)} title="Larger text (Ctrl+=, Ctrl+wheel)">
+                <ZoomIn className="h-3.5 w-3.5" />
+              </HeaderIcon>
+            </div>
             <HeaderIcon
               onClick={() => ui().setMaximized(!maximized)}
               title={maximized ? "Restore side panels" : "Maximize (hide side panels)"}

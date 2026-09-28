@@ -67,6 +67,28 @@ export default function App() {
     backend().then((b) => b.setWindowTitle(title).catch(() => {}));
   }, [attention]);
 
+  // The page itself must never zoom, reload or print (those keys belong to the terminal/app).
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+    };
+    // Runs after the terminal/composer have handled the key (bubbling), so it only stops the
+    // WebView's own zoom / print / reload, never the keystroke itself.
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      if (mod && ["=", "+", "-", "_", "0", "p"].includes(k)) e.preventDefault();
+      // Reload stays available while developing.
+      if (!import.meta.env.DEV && ((mod && k === "r") || e.key === "F5")) e.preventDefault();
+    };
+    window.addEventListener("wheel", onWheel, { passive: false });
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("wheel", onWheel);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   // Global shortcuts: Ctrl+Shift+G back to grid, Ctrl+Shift+Space jump to the next waiting pane.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

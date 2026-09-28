@@ -6,7 +6,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
-import { getDraft, getHistory, paneIdentity, pushHistory, setDraft } from "../store/composer";
+import { paneIdentity } from "../lib/panes";
+import { getDraft, getHistory, pushHistory, setDraft } from "../store/composer";
 import { harnessLabel } from "./HarnessBadge";
 
 export interface ComposerHandle {

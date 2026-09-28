@@ -11,6 +11,8 @@ import { tmuxKey } from "../term/keymap";
 import { theme } from "../term/palette";
 import { rawCopy, selectionRows, smartCopy } from "../term/smartCopy";
 import { attachStream } from "../term/streams";
+import { paneIdentity } from "../lib/panes";
+import { useViewPrefs, zoom } from "../store/viewPrefs";
 
 const FONT = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
 
@@ -51,6 +53,15 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ p
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const sizeRef = useRef({ cols: pane.width, rows: pane.height });
+  const id = paneIdentity(pane);
+  const fontPref = useViewPrefs((s) => s.prefs[id]?.fontSize);
+  // Read by the (long-lived) terminal callbacks without rebuilding the terminal.
+  const fontPrefRef = useRef(fontPref);
+  const fitRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    fontPrefRef.current = fontPref;
+    fitRef.current();
+  }, [fontPref]);
 
   useImperativeHandle(ref, () => ({
     get term() {
@@ -109,14 +120,26 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ p
     termRef.current = term;
     searchRef.current = search;
 
-    // Fit the font so the pane's columns fill the available width.
+    // The user's zoom if they set one; otherwise fit the font so the pane's columns fill the
+    // available width (a zoomed-in terminal wider than the view scrolls horizontally).
     const fit = () => {
       const wrap = el.parentElement;
       if (!wrap) return;
       const avail = wrap.clientWidth - 24;
-      const size = Math.max(8, Math.min(15, Math.floor((avail / (sizeRef.current.cols * measureCharRatio())) * 4) / 4));
+      const auto = Math.max(8, Math.min(15, Math.floor((avail / (sizeRef.current.cols * measureCharRatio())) * 4) / 4));
+      const size = fontPrefRef.current ?? auto;
       if (term.options.fontSize !== size) term.options.fontSize = size;
     };
+    fitRef.current = fit;
+    const zoomBy = (dir: 1 | -1) => zoom(id, term.options.fontSize ?? 13, dir);
+
+    // Ctrl+wheel zooms the terminal (never the page).
+    term.attachCustomWheelEventHandler((ev) => {
+      if (!ev.ctrlKey) return true;
+      ev.preventDefault();
+      zoomBy(ev.deltaY < 0 ? 1 : -1);
+      return false;
+    });
     const ro = new ResizeObserver(fit);
     ro.observe(el.parentElement!);
     fit();
@@ -165,6 +188,13 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ p
       if (mod && e.shiftKey && e.key.toLowerCase() === "g") {
         e.preventDefault();
         onBack();
+        return false;
+      }
+      // Ctrl+= / Ctrl+- / Ctrl+0: text zoom (handled here so they never reach the pane).
+      if (mod && !e.altKey && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "_" || e.key === "0")) {
+        e.preventDefault();
+        if (e.key === "0") useViewPrefs.getState().setFontSize(id, null);
+        else zoomBy(e.key === "-" || e.key === "_" ? -1 : 1);
         return false;
       }
       if (mod && (e.key.toLowerCase() === "c" || e.key === "Insert") && (e.shiftKey || term.hasSelection())) {
