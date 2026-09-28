@@ -1,0 +1,6 @@
+# Everything is authored with LF. remote-assets/ are embedded into the binary and run on
+# Linux/macOS hosts, so they must never get CRLF on a Windows checkout.
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.icns binary
