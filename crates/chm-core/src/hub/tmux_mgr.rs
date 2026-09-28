@@ -23,6 +23,9 @@ use crate::tmux::quote::quote;
 use crate::tmux::seed::{parse_seed, seed_command};
 use crate::tmux::{ClientEvent, ClientKey, ControlClient, Event, PaneId, TmuxServer};
 
+const IDLE_POLL_MIN: Duration = Duration::from_millis(1500);
+const IDLE_POLL_MAX: Duration = Duration::from_secs(30);
+
 /// Scrollback lines captured when a pane is opened in the expanded view.
 const STREAM_HISTORY: u32 = 5000;
 
@@ -102,6 +105,9 @@ pub(crate) struct TmuxManager {
     discover_due: Option<Instant>,
     publish_due: bool,
     last_discover: Instant,
+    /// How often to look for sessions while there are none (each look is an SSH exec, which on
+    /// some hosts is a whole login session): 3 s, doubling to 30 s.
+    idle_poll: Duration,
     home: Option<String>,
     assets: Option<Assets>,
     /// Last hook event per pane, to drop duplicates (per-launch + global hooks both firing).
@@ -133,6 +139,7 @@ impl TmuxManager {
             discover_due: None,
             publish_due: false,
             last_discover: Instant::now(),
+            idle_poll: IDLE_POLL_MIN,
             home: None,
             assets: None,
             last_hook: HashMap::new(),
@@ -172,6 +179,7 @@ impl TmuxManager {
     /// sessions are gone.
     pub async fn discover(&mut self) {
         self.last_discover = Instant::now();
+        self.idle_poll = if self.clients.is_empty() { (self.idle_poll * 2).min(IDLE_POLL_MAX) } else { IDLE_POLL_MIN };
         self.discover_due = None;
         let sessions = match self.list_sessions().await {
             Ok(s) => s,
@@ -274,24 +282,24 @@ impl TmuxManager {
             }
         }
         for id in to_seed {
-            self.seed(id, "on").await;
+            self.seed(id).await;
         }
         self.publish();
     }
 
-    async fn seed(&mut self, id: PaneId, resume: &str) {
-        self.seed_after(id, resume, None).await;
+    async fn seed(&mut self, id: PaneId) {
+        self.seed_after(id, None).await;
     }
 
     /// Seeds the pane, optionally running `prefix` (a command line of `n` commands) first in
     /// the same line, so nothing happens between e.g. a resize and the capture.
-    async fn seed_after(&mut self, id: PaneId, resume: &str, prefix: Option<(String, usize)>) {
+    async fn seed_after(&mut self, id: PaneId, prefix: Option<(String, usize)>) {
         let tag = self.next_tag;
         self.next_tag += 1;
         let Some(pane) = self.panes.get_mut(&id) else { return };
         let Some(client) = self.clients.get(&pane.client).map(|c| c.client.clone()) else { return };
         let history = if pane.streaming { STREAM_HISTORY } else { 0 };
-        let (mut cmd, mut replies) = seed_command(id, history, resume);
+        let (mut cmd, mut replies) = seed_command(id, history);
         let skip = prefix.as_ref().map_or(0, |(_, n)| *n);
         if let Some((pre, n)) = prefix {
             cmd = format!("{pre} ; {cmd}");
@@ -425,7 +433,7 @@ impl TmuxManager {
             }
             ClientEvent::Tmux(Event::Pause { pane }) => {
                 debug!(host = %self.host, "pane %{pane} paused (client fell behind); re-seeding");
-                self.seed(pane, "continue").await;
+                self.seed(pane).await;
             }
             ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name == SUB_NAME => {
                 let mut parts = value.splitn(6, crate::tmux::formats::SEP);
@@ -455,7 +463,7 @@ impl TmuxManager {
                 }
                 if reseed {
                     // Our tile terminal only has the screen tmux showed us; re-capture.
-                    self.seed(pane, "on").await;
+                    self.seed(pane).await;
                 }
             }
             ClientEvent::Tmux(
@@ -493,7 +501,7 @@ impl TmuxManager {
         let now = Instant::now();
         if self.discover_due.is_some_and(|d| d <= now)
             // With no control client there are no %sessions-changed notifications; poll.
-            || (self.clients.is_empty() && now.duration_since(self.last_discover) > Duration::from_secs(3))
+            || (self.clients.is_empty() && now.duration_since(self.last_discover) > self.idle_poll)
         {
             self.discover().await;
         } else if self.relist_due.is_some_and(|d| d <= now) {
@@ -769,7 +777,7 @@ impl TmuxManager {
         }
         // Resize and re-capture in one line: the streaming view gets a RESET at the new size
         // and never sees output drawn for the old width.
-        self.seed_after(id, "on", Some((prefix, n))).await;
+        self.seed_after(id, Some((prefix, n))).await;
         self.schedule_relist();
         Ok(ResizeOutcome { other_clients: others })
     }
@@ -840,7 +848,7 @@ impl TmuxManager {
                 }
                 if on {
                     // Always (re)seed: the UI needs a RESET to (re)build its terminal.
-                    self.seed(id, "on").await;
+                    self.seed(id).await;
                 }
             }
             PaneCmd::Keys { key, keys } => {

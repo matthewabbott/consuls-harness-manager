@@ -1,8 +1,14 @@
 //! Rebuilding a pane's screen (and optionally its scrollback) from `capture-pane`.
 //!
-//! The seed runs as one command line so nothing happens in between: turn the pane's output
-//! off for this client, capture, read the mode flags, turn output back on. Turning output
-//! back on resumes from "now", so no byte is applied twice or lost (verified live under load).
+//! The seed runs as one command line so nothing happens in between: pause the pane's output
+//! for this client, capture, read the mode flags, continue. Continuing resumes from "now", so
+//! no byte is applied twice or lost (verified live under load).
+//!
+//! Pause/continue, not off/on: in tmux ≤ 3.6 `off` keeps the client's queued output blocks
+//! while `on` moves the read position to "now", so the next queued block points at data that
+//! is gone and the server dies with `fatal: not enough data` (control.c; fixed after 3.6).
+//! `pause` discards the queue first. Its `%pause`/`%continue` lines arrive inside the
+//! commands' own reply blocks, so they aren't mistaken for tmux pausing a slow client.
 
 use super::formats::{MODES_FORMAT, PaneModes, parse_modes};
 use super::parser::{PaneId, Reply};
@@ -12,11 +18,11 @@ use super::quote::quote;
 ///
 /// With `history > 0` the scrollback is captured separately with `-J` (wrapped lines joined,
 /// so they re-wrap naturally and copy as one line) and the visible screen without it (so each
-/// row lands exactly where it was). `resume` is `on` for a fresh seed or `continue` after `%pause`.
-pub fn seed_command(pane: PaneId, history: u32, resume: &str) -> (String, usize) {
+/// row lands exactly where it was). Also the way to resume a pane tmux paused (`%pause`).
+pub fn seed_command(pane: PaneId, history: u32) -> (String, usize) {
     let target = quote(&format!("%{pane}"));
-    let off = quote(&format!("%{pane}:off"));
-    let on = quote(&format!("%{pane}:{resume}"));
+    let off = quote(&format!("%{pane}:pause"));
+    let on = quote(&format!("%{pane}:continue"));
     let modes = format!("display-message -p -t {target} {}", quote(MODES_FORMAT));
     if history > 0 {
         (
@@ -118,11 +124,11 @@ mod tests {
 
     #[test]
     fn command_shape() {
-        let (cmd, n) = seed_command(3, 0, "on");
+        let (cmd, n) = seed_command(3, 0);
         assert_eq!(n, 4);
-        assert!(cmd.starts_with("refresh-client -A '%3:off' ; capture-pane -p -e -t '%3' ; display-message -p -t '%3' '#{cursor_x}"));
-        assert!(cmd.ends_with("; refresh-client -A '%3:on'"));
-        let (cmd, n) = seed_command(3, 500, "continue");
+        assert!(cmd.starts_with("refresh-client -A '%3:pause' ; capture-pane -p -e -t '%3' ; display-message -p -t '%3' '#{cursor_x}"));
+        assert!(cmd.ends_with("; refresh-client -A '%3:continue'"));
+        let (cmd, n) = seed_command(3, 500);
         assert_eq!(n, 5);
         assert!(cmd.contains("capture-pane -p -e -J -t '%3' -S -500 -E -1 ; capture-pane -p -e -t '%3' ;"));
         assert!(cmd.ends_with("'%3:continue'"));

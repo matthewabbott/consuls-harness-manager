@@ -115,5 +115,14 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 
 ## Not yet
 
-Transcript-backed conversation view, file manager/editor, image paste, sub-agent panes,
-per-harness expandable regions, the iPhone app and push notifications. See the plan for the roadmap.
+Next up (small):
+- "Show in File Explorer" / "Reveal in Finder" for files and folders on This PC.
+- "Open in VS Code" for files and folders — local, and remote via VS Code's Remote-SSH (opening
+  a connection to that machine). Only shown when VS Code is installed.
+- Recording mode: hide personal details (email, tailnet IPs, …) for screenshots and videos.
+- Sidebars: the right sidebar's collapse button in its top-left corner; the left sidebar collapses
+  down to its icon rail (Machines & panes, Files), and clicking an icon opens it again.
+- Local tmux on This PC (macOS/Linux, or WSL/MSYS2 on Windows).
+
+Bigger: the iPhone app and push notifications, a transcript-backed conversation view, image
+paste, sub-agent panes, per-harness expandable regions.

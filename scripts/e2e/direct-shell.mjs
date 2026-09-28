@@ -82,7 +82,8 @@ export default async function ({ js, text, key, sleep, log }) {
   await key("b", { ctrl: true });
   await text("d");
   await until("Ctrl+b d detaches", () => has("[detached"));
-  await text("tmux -L chm-e2e kill-server; rm -f /tmp/chm-e2e-*.txt; echo cleaned");
+  // Also stop an ssh-agent the login shell's rc files may have started (it would outlive us).
+  await text('tmux -L chm-e2e kill-server; rm -f /tmp/chm-e2e-*.txt /tmp/tmux-$(id -u)/chm-e2e; [ -n "$SSH_AGENT_PID" ] && kill $SSH_AGENT_PID; echo cleaned');
   await key("Enter");
   await until("cleanup", () => has("cleaned"));
 

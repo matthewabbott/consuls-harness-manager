@@ -74,7 +74,7 @@ async fn seed_is_exact_under_load() {
 
     let mut term = TileTerm::new(60, 12);
     // Initial seed.
-    let (seed_cmd, n) = seed_command(pane, 0, "on");
+    let (seed_cmd, n) = seed_command(pane, 0);
     client.send_tagged(&seed_cmd, n, 1).await.unwrap();
     // Start a noisy loop, then re-seed repeatedly while it runs.
     let script = "i=0; while [ $i -lt 600 ]; do echo \"line $i $(printf '%*s' $((i % 40)) '' | tr ' ' x)\"; i=$((i+1)); done; echo DONE";
@@ -109,7 +109,7 @@ async fn seed_is_exact_under_load() {
                 if seeds < 8 {
                     seeds += 1;
                     seeding = true;
-                    let (seed_cmd, n) = seed_command(pane, 0, "on");
+                    let (seed_cmd, n) = seed_command(pane, 0);
                     client.send_tagged(&seed_cmd, n, seeds).await.unwrap();
                 }
             }

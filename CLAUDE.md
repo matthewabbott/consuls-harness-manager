@@ -34,6 +34,13 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - `capture-pane -S -N -E -1` with no history returns visible line 0 → check `history_size`.
 - Control clients get `%output` only for windows in their session; grouped sessions share
   windows, so attach one client per `session_group`.
+- **Never use `refresh-client -A %N:off` / `:on`.** In tmux ≤ 3.6 `off` keeps the client's
+  queued output while `on` jumps to "now", and the server dies with `fatal: not enough data`.
+  Seeding uses `:pause` / `:continue` (pause discards the queue); their `%pause`/`%continue`
+  lines arrive inside those commands' reply blocks. Stress test:
+  `cargo run -p chm-core --example crashhunt` (private server, see its header).
+- Panes (and plain shells) start the user's login shell: rc files may start daemons (e.g.
+  `ssh-agent`) that outlive the pane. Tests use bare shells or clean up after themselves.
 - Claude Code only runs hooks in folders it trusts (the trust prompt blocks them).
 
 ## Direct panes (no tmux)

@@ -103,6 +103,9 @@ async fn main() -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
     assert!(created, "never connected");
+    // New panes run a bare bash: a login shell would run the user's rc files, and processes they
+    // start (an ssh-agent, say) outlive the test.
+    core.exec(&host, &format!("{tmux} -L {socket} set -g default-command 'bash --norc --noprofile'")).await.map_err(anyhow::Error::msg)?;
     println!("ok   scratch session created on -L {socket}");
 
     wait_for("pane discovered", Duration::from_secs(20), || !rec.panes.lock().unwrap().is_empty()).await;
@@ -219,7 +222,8 @@ async fn main() -> anyhow::Result<()> {
         pane(dkey).is_some_and(|p| (p.width, p.height) == (100, 30)) && rec.resets.lock().unwrap().get(&dkey).copied().unwrap_or(0) > resets_before
     })
     .await;
-    core.send_text(dkey, "stty size".into());
+    // The direct shell is a login shell; stop an ssh-agent its rc files may have started.
+    core.send_text(dkey, "[ -n \"$SSH_AGENT_PID\" ] && kill $SSH_AGENT_PID; stty size".into());
     core.send_keys(dkey, vec!["Enter".into()]);
     wait_for("the shell sees the new size", Duration::from_secs(5), || draw(dkey).contains("30 100")).await;
     core.set_focus(FocusState { expanded: None, window_focused: false });
@@ -375,7 +379,8 @@ async fn main() -> anyhow::Result<()> {
     wait_for("pane removed", Duration::from_secs(10), || find(new_key).is_none()).await;
     println!("all checks passed");
 
-    let _ = core.exec(&host, &format!("{tmux} -L {socket} kill-server")).await;
+    // kill-server leaves the socket file behind.
+    let _ = core.exec(&host, &format!("p=$({tmux} -L {socket} display -p '#{{socket_path}}'); {tmux} -L {socket} kill-server; rm -f \"$p\"")).await;
     core.disconnect(&host);
     tokio::time::sleep(Duration::from_millis(300)).await;
     let _ = std::fs::remove_dir_all(dir);
