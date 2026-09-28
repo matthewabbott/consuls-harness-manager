@@ -10,7 +10,7 @@ use tracing::{debug, info};
 use super::ctx::Ctx;
 use super::direct::{self, DirectSpec};
 use super::tmux_mgr::{PaneCmd, TmuxManager};
-use crate::fs::FsOp;
+use crate::fs::{FileContent, FileStamp, FsOp, SaveError};
 use crate::fs::git::GitStatus;
 use crate::fs::remote::{self as rfs, SftpPool};
 use crate::model::{DirListing, HostConfig, HostErrorKind, HostFacts, HostPhase, NewPaneSpec, NoticeLevel};
@@ -38,6 +38,10 @@ pub(crate) enum HostCmd {
     Fs { op: FsOp, reply: oneshot::Sender<Result<(), String>> },
     FsCount { path: String, reply: oneshot::Sender<Result<u64, String>> },
     Git { dir: String, reply: oneshot::Sender<Result<Option<GitStatus>, String>> },
+    ReadFile { path: String, reply: oneshot::Sender<Result<FileContent, String>> },
+    ReadBytes { path: String, reply: oneshot::Sender<Result<Vec<u8>, String>> },
+    StatFile { path: String, reply: oneshot::Sender<Result<Option<FileStamp>, String>> },
+    WriteFile { path: String, text: String, bom: bool, expect: Option<FileStamp>, reply: oneshot::Sender<Result<FileStamp, SaveError>> },
     Exec { script: String, reply: oneshot::Sender<Result<ExecOutput, String>> },
     Shutdown,
 }
@@ -53,6 +57,10 @@ impl HostCmd {
             HostCmd::Fs { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::FsCount { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::Git { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::ReadFile { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::ReadBytes { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::StatFile { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::WriteFile { reply, .. } => drop(reply.send(Err(SaveError::Failed { message: why }))),
             HostCmd::Exec { reply, .. } => drop(reply.send(Err(why))),
             _ => {}
         }
@@ -390,6 +398,30 @@ async fn connected_phase(
                     let conn = conn.clone();
                     tokio::spawn(async move {
                         let _ = reply.send(rfs::count(&conn, &path).await);
+                    });
+                }
+                Some(HostCmd::ReadFile { path, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::read(&conn, &sftp, &path).await);
+                    });
+                }
+                Some(HostCmd::ReadBytes { path, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::read_bytes(&conn, &sftp, &path).await);
+                    });
+                }
+                Some(HostCmd::StatFile { path, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::stat(&conn, &sftp, &path).await);
+                    });
+                }
+                Some(HostCmd::WriteFile { path, text, bom, expect, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::write(&conn, &sftp, &path, &text, bom, expect).await);
                     });
                 }
                 Some(HostCmd::Git { dir, reply }) => {

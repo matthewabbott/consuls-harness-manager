@@ -9,6 +9,7 @@ interface Node {
   dir: boolean;
   size: number;
   mtime: number;
+  text?: string;
 }
 
 const now = Math.floor(Date.now() / 1000);
@@ -32,6 +33,62 @@ for (const f of ["src/App.tsx", "src/main.tsx", "src/components/Grid.tsx", "src/
 // A big folder, for scrolling.
 for (let i = 0; i < 5000; i++) add("spark-d683", `/home/consulear/models/checkpoints/step-${String(i).padStart(5, "0")}.pt`, false, 4096);
 for (const f of ["code/notes.txt", "Documents/todo.md"]) add("@local", `C:/Users/consul/${f}`, false, 300);
+
+const SAMPLE: Record<string, string> = {
+  "App.tsx": [
+    'import { useState } from "react";',
+    "",
+    "export default function App() {",
+    "  const [n, setN] = useState(0);",
+    "  return <button onClick={() => setN(n + 1)}>clicked {n} times</button>;",
+    "}",
+    "",
+  ].join("\n"),
+  "README.md": ["# consuls", "", "A dashboard for the agents on your tailnet.", "", "- live tiles", "- notifications", ""].join("\n"),
+  "lib.rs": ["//! chm-core", "", "pub mod fs;", "", "pub fn answer() -> u32 {", "    42", "}", ""].join("\n"),
+  "notes.txt": ["buy milk", "call mom", ""].join("\r\n"),
+};
+
+function textOf(path: string): string {
+  const name = path.split("/").pop() ?? "";
+  return SAMPLE[name] ?? `// ${name}\n`;
+}
+
+export function mockReadFile(host: string, path: string) {
+  const n = nodes.get(k(host, path));
+  if (!n || n.dir) throw new Error(`${path.split("/").pop()}: No such file`);
+  const text = n.text ?? textOf(path);
+  n.text = text;
+  n.size = new TextEncoder().encode(text).length;
+  return { kind: "text" as const, text, bom: false, stamp: { size: n.size, mtime: n.mtime, hash: null } };
+}
+
+export function mockStat(host: string, path: string) {
+  const n = nodes.get(k(host, path));
+  return n ? { size: n.size, mtime: n.mtime, hash: null } : null;
+}
+
+export function mockWriteFile(host: string, path: string, text: string, expect: { size: number; mtime: number } | null) {
+  const n = nodes.get(k(host, path));
+  if (expect && (!n || n.size !== expect.size || n.mtime !== expect.mtime)) {
+    throw { kind: "conflict", current: n ? { size: n.size, mtime: n.mtime, hash: null } : null };
+  }
+  const node = n ?? { dir: false, size: 0, mtime: 0 };
+  node.text = text;
+  node.size = new TextEncoder().encode(text).length;
+  node.mtime = Math.floor(Date.now() / 1000);
+  nodes.set(k(host, path), node);
+  return { size: node.size, mtime: node.mtime, hash: null };
+}
+
+/** Simulates another program editing a file (for trying the conflict flow in the browser). */
+export function mockTouch(host: string, path: string, text: string) {
+  const n = nodes.get(k(host, path));
+  if (!n) return;
+  n.text = text;
+  n.size = new TextEncoder().encode(text).length;
+  n.mtime += 1;
+}
 
 export function mockListDir(host: string, path: string): DirListing {
   const home = host === "@local" ? "C:/Users/consul" : "/home/consulear";

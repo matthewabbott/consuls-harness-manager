@@ -13,6 +13,8 @@ import type { LabelDef } from "./bindings/LabelDef";
 import type { LocalShell } from "./bindings/LocalShell";
 import type { FsOp } from "./bindings/FsOp";
 import type { GitStatus } from "./bindings/GitStatus";
+import type { FileContent } from "./bindings/FileContent";
+import type { FileStamp } from "./bindings/FileStamp";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
@@ -69,6 +71,12 @@ export interface Backend {
   /** Items a delete of `path` would remove (capped at 100,000 + 1). */
   fsCount(host: string, path: string): Promise<number>;
   gitStatus(host: string, dir: string): Promise<GitStatus | null>;
+  readFile(host: string, path: string): Promise<FileContent>;
+  /** Raw bytes (image preview, up to 20 MB). */
+  readBytes(host: string, path: string): Promise<ArrayBuffer>;
+  statFile(host: string, path: string): Promise<FileStamp | null>;
+  /** Rejects with a SaveError ({ kind: "conflict" | "failed" }). `expect: null` overwrites. */
+  writeFile(host: string, path: string, text: string, bom: boolean, expect: FileStamp | null): Promise<FileStamp>;
   integrationStatus(host: string): Promise<IntegrationStatus>;
   installIntegration(host: string): Promise<IntegrationStatus>;
   uninstallIntegration(host: string): Promise<IntegrationStatus>;
@@ -137,6 +145,10 @@ async function tauriBackend(): Promise<Backend> {
     fsOp: (host, op) => invoke("fs_op", { host, op }),
     fsCount: (host, path) => invoke("fs_count", { host, path }),
     gitStatus: (host, dir) => invoke("git_status", { host, dir }),
+    readFile: (host, path) => invoke("read_file", { host, path }),
+    readBytes: (host, path) => invoke("read_bytes", { host, path }),
+    statFile: (host, path) => invoke("stat_file", { host, path }),
+    writeFile: (host, path, text, bom, expect) => invoke("write_file", { host, path, text, bom, expect }),
     integrationStatus: (host) => invoke("integration_status", { host }),
     installIntegration: (host) => invoke("install_integration", { host }),
     uninstallIntegration: (host) => invoke("uninstall_integration", { host }),

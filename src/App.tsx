@@ -19,6 +19,8 @@ import { backend } from "./ipc/backend";
 import { useApp } from "./store/app";
 import { useUi } from "./store/ui";
 import { applyFrames } from "./term/tiles";
+import FileView from "./components/FileView";
+import { useEditor } from "./store/editor";
 
 export const APP_TITLE = "Consul's Harness Manager";
 
@@ -33,11 +35,24 @@ export default function App() {
   const settingsOpen = useApp((s) => s.settingsOpen);
   const maximized = useUi((s) => s.maximized);
   const tileMenu = useApp((s) => s.tileMenu);
+  const activeFile = useEditor((s) => s.active);
   const [quitAsk, setQuitAsk] = useState<number | null>(null);
   const expandedPane = useMemo(
     () => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)),
     [expanded, panes],
   );
+
+  // Opening a pane takes over from an open file; files keep being checked for outside changes.
+  useEffect(() => {
+    const unsub = useApp.subscribe((s, prev) => {
+      if (s.expanded !== null && s.expanded !== prev.expanded) useEditor.getState().setActive(null);
+    });
+    const t = window.setInterval(() => void useEditor.getState().poll(), 15_000);
+    return () => {
+      unsub();
+      window.clearInterval(t);
+    };
+  }, []);
 
   // Remember when each pane was last opened (for "recently opened" sorting).
   useEffect(() => {
@@ -107,6 +122,7 @@ export default function App() {
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.shiftKey && e.key.toLowerCase() === "g") {
         e.preventDefault();
+        useEditor.getState().setActive(null);
         useApp.getState().setExpanded(null);
       }
       // Ctrl+Shift+B toggles the sidebar (plain Ctrl+B is tmux's prefix, so it stays with the pane).
@@ -149,6 +165,8 @@ export default function App() {
       const snapshot = await b.getSnapshot();
       if (cancelled) return;
       useApp.getState().init(snapshot);
+      // Unsaved editor buffers from last time.
+      void useEditor.getState().restoreDrafts();
       await b.subscribeFrames(applyFrames);
       if (b.kind === "mock") useApp.getState().notify("info", "Running with mock data (not inside the desktop app).");
     })().catch((e) => useApp.getState().notify("error", `Failed to start: ${e}`));
@@ -162,9 +180,17 @@ export default function App() {
     <div className="app-backdrop flex h-full">
       {!(maximized && expandedPane) && <LeftSidebar />}
       <main className="flex min-w-0 flex-1 flex-col">
-        {!expandedPane && <TopBar />}
+        {!expandedPane && !activeFile && <TopBar />}
         <Banners />
-        {!ready ? <div className="flex-1" /> : expandedPane ? <ExpandedPane pane={expandedPane} /> : <Grid />}
+        {!ready ? (
+          <div className="flex-1" />
+        ) : activeFile ? (
+          <FileView id={activeFile} />
+        ) : expandedPane ? (
+          <ExpandedPane pane={expandedPane} />
+        ) : (
+          <Grid />
+        )}
       </main>
       <Notices />
       {newPaneFor !== undefined && <NewPaneDialog />}

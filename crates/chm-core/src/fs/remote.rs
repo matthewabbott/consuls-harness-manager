@@ -187,3 +187,123 @@ pub(crate) async fn git_status(conn: &SshConnection, dir: &str) -> Result<Option
     let (branch, entries) = git::parse(&out.stdout[split + 1..]);
     Ok(Some(GitStatus { root, branch, entries }))
 }
+
+use super::{BYTES_LIMIT, EDIT_LIMIT, FileContent, FileStamp, HASH_LIMIT, SaveError, decode, encode, stamp_of, unchanged};
+
+/// Size and mtime of `path` (following symlinks); `None` if it doesn't exist.
+pub(crate) async fn stat(conn: &SshConnection, pool: &SftpPool, path: &str) -> Result<Option<FileStamp>, String> {
+    let r = pool
+        .with(conn, |s| {
+            let p = path.to_string();
+            async move { s.metadata(p).await }
+        })
+        .await;
+    match r {
+        Ok(m) => Ok(Some(FileStamp { size: m.size.unwrap_or(0), mtime: m.mtime.unwrap_or(0) as u64, hash: None })),
+        Err(e) if e.contains("No such file") || e.contains("not found") => Ok(None),
+        Err(e) => Err(format!("{}: {e}", base_name(path))),
+    }
+}
+
+async fn read_all(conn: &SshConnection, pool: &SftpPool, path: &str) -> Result<Vec<u8>, String> {
+    pool.with(conn, |s| {
+        let p = path.to_string();
+        async move { s.read(p).await }
+    })
+    .await
+    .map_err(|e| format!("{}: {e}", base_name(path)))
+}
+
+/// Reads a file for the editor.
+pub(crate) async fn read(conn: &SshConnection, pool: &SftpPool, path: &str) -> Result<FileContent, String> {
+    let meta = pool
+        .with(conn, |s| {
+            let p = path.to_string();
+            async move { s.metadata(p).await }
+        })
+        .await
+        .map_err(|e| format!("{}: {e}", base_name(path)))?;
+    if meta.is_dir() {
+        return Err(format!("{} is a folder", base_name(path)));
+    }
+    let (size, mtime) = (meta.size.unwrap_or(0), meta.mtime.unwrap_or(0) as u64);
+    if size > EDIT_LIMIT {
+        return Ok(FileContent::TooLarge { stamp: stamp_of(None, size, mtime) });
+    }
+    let bytes = read_all(conn, pool, path).await?;
+    let stamp = stamp_of(Some(&bytes), bytes.len() as u64, mtime);
+    Ok(decode(bytes, stamp))
+}
+
+/// Raw bytes (image preview), up to [`BYTES_LIMIT`].
+pub(crate) async fn read_bytes(conn: &SshConnection, pool: &SftpPool, path: &str) -> Result<Vec<u8>, String> {
+    if let Some(st) = stat(conn, pool, path).await?
+        && st.size > BYTES_LIMIT
+    {
+        return Err(format!("{} is too large to preview", base_name(path)));
+    }
+    read_all(conn, pool, path).await
+}
+
+/// The save script: resolves symlinks, keeps the mode, lands the new content atomically
+/// (temp file + mv), except in place for files with other hard links, owned by someone else,
+/// or in a folder we can't write. Reads the content from stdin; prints the new size and mtime.
+const SAVE_SCRIPT: &str = r#"f=$(readlink -f -- "$p" 2>/dev/null); [ -n "$f" ] || f=$p
+d=$(dirname -- "$f"); mode=; inplace=
+if [ -e "$f" ]; then
+  links=$(stat -c %h -- "$f" 2>/dev/null || stat -f %l -- "$f" 2>/dev/null || echo 1)
+  if [ "$links" -gt 1 ] || [ ! -w "$d" ] || [ ! -O "$f" ]; then
+    cat > "$f" || exit 5
+    inplace=1
+  else
+    mode=$(stat -c %a -- "$f" 2>/dev/null || stat -f %Lp -- "$f" 2>/dev/null)
+  fi
+fi
+if [ -z "$inplace" ]; then
+  tmp=$(mktemp "$d/.chm-save.XXXXXX") || exit 6
+  if ! cat > "$tmp"; then rm -f -- "$tmp"; exit 5; fi
+  [ -n "$mode" ] && chmod "$mode" "$tmp"
+  mv -f -- "$tmp" "$f" || { rm -f -- "$tmp"; exit 7; }
+fi
+m=$(stat -c %Y -- "$f" 2>/dev/null || stat -f %m -- "$f")
+s=$(wc -c < "$f" | tr -d ' ')
+printf 'STAMP %s %s\n' "$s" "$m""#;
+
+/// Saves editor text. With `expect`, refuses (Conflict) if the file changed since it was read.
+pub(crate) async fn write(
+    conn: &SshConnection,
+    pool: &SftpPool,
+    path: &str,
+    text: &str,
+    bom: bool,
+    expect: Option<FileStamp>,
+) -> Result<FileStamp, SaveError> {
+    if let Some(expect) = expect {
+        let current = match stat(conn, pool, path).await? {
+            Some(mut cur) => {
+                if expect.hash.is_some() && cur.size <= HASH_LIMIT {
+                    cur.hash = Some(super::hash(&read_all(conn, pool, path).await?));
+                }
+                Some(cur)
+            }
+            None => None,
+        };
+        match current {
+            Some(cur) if unchanged(&expect, &cur) => {}
+            other => return Err(SaveError::Conflict { current: other }),
+        }
+    }
+    let bytes = encode(text, bom);
+    let script = format!("p={}\n{SAVE_SCRIPT}", sh_quote(path));
+    let out = exec::run_with_stdin(conn, &script, Some(&bytes), Duration::from_secs(60)).await.map_err(|e| e.to_string())?;
+    if !out.success() {
+        let err = out.stderr_str();
+        let message = if err.trim().is_empty() { format!("save failed (status {:?})", out.status) } else { err.trim().to_string() };
+        return Err(SaveError::Failed { message });
+    }
+    let stdout = out.stdout_str();
+    let line = stdout.lines().rev().find_map(|l| l.strip_prefix("STAMP ")).ok_or("save didn't report the new file".to_string())?;
+    let mut parts = line.split_whitespace().map(|v| v.parse::<u64>().unwrap_or(0));
+    let (size, mtime) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    Ok(stamp_of(Some(&bytes), size, mtime))
+}

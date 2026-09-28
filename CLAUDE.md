@@ -62,6 +62,18 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   `Core::git_status` shares one run between concurrent callers. The UI rolls statuses up to
   folders (`store/files.ts`), except ignored, which instead dims everything beneath.
 
+## Editor
+
+- `fs::{read,write}` (per transport): text is UTF-8 with the BOM stripped and reported; saves
+  re-add it and the UI joins lines with the file's own EOL (`doc.sliceString(0, len, eol)`),
+  so an unedited file saves byte-identical. Stamps are size + mtime + FNV hash (≤ 2 MB):
+  mtime alone has 1 s resolution. A save with a stale stamp returns `SaveError::Conflict`.
+- Remote saves run one script (`SAVE_SCRIPT`): resolve symlinks, temp file + `mv -f` keeping
+  the mode, in place for hard links / foreign owners / unwritable folders. SFTP `write` doesn't
+  truncate — never use it for saves.
+- UI buffers are CodeMirror states in `store/editor.ts` `buffers` (outside React); unsaved ones
+  go to IndexedDB (`lib/drafts.ts`) and are restored at startup.
+
 ## Bells
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
@@ -78,7 +90,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `editor.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

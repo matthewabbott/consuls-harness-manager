@@ -104,6 +104,34 @@ pub async fn fs_count(state: State<'_, AppState>, host: String, path: String) ->
 }
 
 #[tauri::command]
+pub async fn read_file(state: State<'_, AppState>, host: String, path: String) -> CmdResult<chm_core::fs::FileContent> {
+    state.core.read_file(&host, &path).await
+}
+
+/// Raw bytes (image preview) as a binary IPC response, not a JSON number array.
+#[tauri::command]
+pub async fn read_bytes(state: State<'_, AppState>, host: String, path: String) -> Result<tauri::ipc::Response, String> {
+    state.core.read_bytes(&host, &path).await.map(tauri::ipc::Response::new)
+}
+
+#[tauri::command]
+pub async fn stat_file(state: State<'_, AppState>, host: String, path: String) -> CmdResult<Option<chm_core::fs::FileStamp>> {
+    state.core.stat_file(&host, &path).await
+}
+
+#[tauri::command]
+pub async fn write_file(
+    state: State<'_, AppState>,
+    host: String,
+    path: String,
+    text: String,
+    bom: bool,
+    expect: Option<chm_core::fs::FileStamp>,
+) -> Result<chm_core::fs::FileStamp, chm_core::fs::SaveError> {
+    state.core.write_file(&host, &path, text, bom, expect).await
+}
+
+#[tauri::command]
 pub async fn git_status(state: State<'_, AppState>, host: String, dir: String) -> CmdResult<Option<chm_core::fs::git::GitStatus>> {
     state.core.git_status(&host, &dir).await
 }

@@ -25,6 +25,7 @@ import type { GitFileStatus } from "../ipc/bindings/GitFileStatus";
 import { hostLabel, LOCAL_HOST } from "../lib/hosts";
 import { crumbsOf, joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
+import { useEditor } from "../store/editor";
 import { statusOf, useFiles } from "../store/files";
 import Modal, { Button } from "./Modal";
 
@@ -342,6 +343,7 @@ export default function FilesPanel() {
                   onClick={() => {
                     files().select(path);
                     if (entry.isDir) files().toggle(path);
+                    else void useEditor.getState().open(root.host, path, follow && expandedPane?.host === root.host ? expandedPane.key : null);
                   }}
                   onContextMenu={(e) => {
                     e.preventDefault();

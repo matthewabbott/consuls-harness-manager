@@ -9,7 +9,7 @@ import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { LabelDef } from "./bindings/LabelDef";
-import { mockFsCount, mockFsOp, mockGitStatus, mockListDir } from "./mockFs";
+import { mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
@@ -178,6 +178,7 @@ function toAnsi(lines: Seg[][]): string {
 }
 
 export function mockBackend(): Backend {
+  (window as unknown as { mockTouch?: typeof mockTouch }).mockTouch = mockTouch;
   const streaming = new Set<number>();
   const listeners = new Set<(ev: CoreEvent) => void>();
   const emit = (ev: CoreEvent) => listeners.forEach((l) => l(ev));
@@ -465,6 +466,12 @@ export function mockBackend(): Backend {
     fsOp: async (host, op) => mockFsOp(host, op),
     fsCount: async (host, path) => mockFsCount(host, path),
     gitStatus: async (host, dir) => mockGitStatus(host, dir),
+    readFile: async (host, path) => mockReadFile(host, path),
+    readBytes: async () => {
+      throw new Error("no image preview in the mock");
+    },
+    statFile: async (host, path) => mockStat(host, path),
+    writeFile: async (host, path, text, _bom, expect) => mockWriteFile(host, path, text, expect),
     sendInput: async (key, data) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(data === "\r" ? "\r\n" : data)));
     },

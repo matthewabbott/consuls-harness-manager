@@ -101,3 +101,120 @@ mod tests {
         }
     }
 }
+
+use super::{BYTES_LIMIT, EDIT_LIMIT, FileContent, FileStamp, HASH_LIMIT, SaveError, decode, encode, stamp_of, unchanged};
+
+fn mtime_of(meta: &std::fs::Metadata) -> u64 {
+    meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs())
+}
+
+pub(crate) fn stat(path: &str) -> Result<Option<FileStamp>, String> {
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(Some(FileStamp { size: m.len(), mtime: mtime_of(&m), hash: None })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(err(path)(e)),
+    }
+}
+
+pub(crate) fn read(path: &str) -> Result<FileContent, String> {
+    let meta = std::fs::metadata(path).map_err(err(path))?;
+    if meta.is_dir() {
+        return Err(format!("{} is a folder", base_name(path)));
+    }
+    if meta.len() > EDIT_LIMIT {
+        return Ok(FileContent::TooLarge { stamp: stamp_of(None, meta.len(), mtime_of(&meta)) });
+    }
+    let bytes = std::fs::read(path).map_err(err(path))?;
+    let stamp = stamp_of(Some(&bytes), bytes.len() as u64, mtime_of(&meta));
+    Ok(decode(bytes, stamp))
+}
+
+pub(crate) fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
+    let meta = std::fs::metadata(path).map_err(err(path))?;
+    if meta.len() > BYTES_LIMIT {
+        return Err(format!("{} is too large to preview", base_name(path)));
+    }
+    std::fs::read(path).map_err(err(path))
+}
+
+/// Whether a file must be rewritten in place rather than replaced (other hard links, or
+/// owned by someone else).
+#[cfg(unix)]
+fn keep_inode(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: getuid has no preconditions and can't fail.
+    let me = unsafe { libc::getuid() };
+    meta.nlink() > 1 || (me != 0 && meta.uid() != me)
+}
+
+#[cfg(not(unix))]
+fn keep_inode(_meta: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Saves editor text (same rules as [`super::remote::write`]).
+pub(crate) fn write(path: &str, text: &str, bom: bool, expect: Option<FileStamp>) -> Result<FileStamp, SaveError> {
+    if let Some(expect) = expect {
+        let current = stat(path)?.map(|mut cur| {
+            if expect.hash.is_some() && cur.size <= HASH_LIMIT {
+                cur.hash = std::fs::read(path).ok().map(|b| super::hash(&b));
+            }
+            cur
+        });
+        match current {
+            Some(cur) if unchanged(&expect, &cur) => {}
+            other => return Err(SaveError::Conflict { current: other }),
+        }
+    }
+    let bytes = encode(text, bom);
+    // Write through symlinks.
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
+    let meta = std::fs::metadata(&target).ok();
+    let atomic = || -> std::io::Result<()> {
+        let dir = target.parent().ok_or_else(|| std::io::Error::other("no parent folder"))?;
+        let tmp = dir.join(format!(".chm-save-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::write(&tmp, &bytes)?;
+        if let Some(m) = &meta {
+            let _ = std::fs::set_permissions(&tmp, m.permissions());
+        }
+        std::fs::rename(&tmp, &target).inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        })
+    };
+    // In place when replacing isn't appropriate, or isn't possible (e.g. the file is open in
+    // another program on Windows).
+    if meta.as_ref().is_some_and(keep_inode) || atomic().is_err() {
+        std::fs::write(&target, &bytes).map_err(err(path))?;
+    }
+    let after = std::fs::metadata(&target).map_err(err(path))?;
+    Ok(stamp_of(Some(&bytes), after.len(), mtime_of(&after)))
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+
+    #[test]
+    fn crlf_bom_round_trip_and_conflicts() {
+        let dir = std::env::temp_dir().join(format!("chm-edit-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = crate::local::to_slash(&dir.join("a.txt"));
+        let original = b"\xEF\xBB\xBFline one\r\nline two\r\n".to_vec();
+        std::fs::write(&path, &original).unwrap();
+        let FileContent::Text { text, bom, stamp } = read(&path).unwrap() else { panic!("text") };
+        assert!(bom && text.starts_with("line one\r\n"));
+        // An unedited save is byte-identical.
+        let s2 = write(&path, &text, bom, Some(stamp)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        // Shorter content truncates.
+        let s3 = write(&path, "x", false, Some(s2)).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"x");
+        // Someone else changes it (same size, same second): the hash catches it.
+        std::fs::write(&path, b"y").unwrap();
+        assert!(matches!(write(&path, "z", false, Some(s3)), Err(SaveError::Conflict { .. })));
+        // Saving without an expectation (overwrite) goes through.
+        write(&path, "z", false, None).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"z");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}

@@ -560,6 +560,59 @@ impl Core {
         rx.await.map_err(|_| "host not found".to_string())?
     }
 
+    /// Reads a file for the editor (text, or why it can't be edited).
+    pub async fn read_file(&self, host: &str, path: &str) -> Result<crate::fs::FileContent, String> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || crate::fs::local::read(&path)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::ReadFile { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// A file's raw bytes (image preview; capped at 20 MB).
+    pub async fn read_bytes(&self, host: &str, path: &str) -> Result<Vec<u8>, String> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || crate::fs::local::read_bytes(&path)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::ReadBytes { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// Size and mtime of a file (None if it doesn't exist), to notice outside changes.
+    pub async fn stat_file(&self, host: &str, path: &str) -> Result<Option<crate::fs::FileStamp>, String> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || crate::fs::local::stat(&path)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::StatFile { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// Saves editor text. With `expect`, refuses if the file changed since it was read.
+    pub async fn write_file(
+        &self,
+        host: &str,
+        path: &str,
+        text: String,
+        bom: bool,
+        expect: Option<crate::fs::FileStamp>,
+    ) -> Result<crate::fs::FileStamp, crate::fs::SaveError> {
+        if host == LOCAL_HOST {
+            let path = path.to_string();
+            return tokio::task::spawn_blocking(move || crate::fs::local::write(&path, &text, bom, expect))
+                .await
+                .map_err(|e| crate::fs::SaveError::Failed { message: e.to_string() })?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::WriteFile { path: path.to_string(), text, bom, expect, reply: tx });
+        rx.await.map_err(|_| crate::fs::SaveError::Failed { message: "host not found".into() })?
+    }
+
     /// `git status` of the repository containing `dir` (None when it isn't in one).
     /// Concurrent requests for the same folder share one run.
     pub async fn git_status(&self, host: &str, dir: &str) -> GitResult {

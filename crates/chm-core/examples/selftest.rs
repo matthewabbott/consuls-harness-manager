@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use chm_core::fs::FsOp;
+use chm_core::fs::{FileContent, FsOp, SaveError};
 use chm_core::fs::git::GitFileStatus;
 use chm_core::harness::Harness;
 use chm_core::model::{Activity, Alert, AlertKind, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome};
@@ -283,6 +283,30 @@ async fn main() -> anyhow::Result<()> {
     assert_eq!(status("README.md"), Some(GitFileStatus::Untracked));
     assert_eq!(status("target/"), Some(GitFileStatus::Ignored));
     println!("ok   git status: root {}, branch {:?}, {} entries", st.root, st.branch, st.entries.len());
+    // --- editing: byte-exact saves, truncation, conflicts, symlinks, modes
+    let f = format!("{tmp}/crlf.txt");
+    let prep = format!(r"printf '\357\273\277one\r\ntwo\r\n' > {f} && chmod 755 {f} && ln -s crlf.txt {tmp}/link.txt && md5sum {f} | cut -c1-32");
+    let before = core.exec(&host, &prep).await.map_err(anyhow::Error::msg)?.stdout_str().trim().to_string();
+    let FileContent::Text { text, bom, stamp } = core.read_file(&host, &format!("{tmp}/link.txt")).await.map_err(anyhow::Error::msg)? else {
+        panic!("expected text")
+    };
+    assert!(bom && text == "one\r\ntwo\r\n", "BOM stripped, CRLF kept: {text:?}");
+    let stamp = core.write_file(&host, &format!("{tmp}/link.txt"), text.clone(), bom, Some(stamp)).await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    let check = format!("md5sum {f} | cut -c1-32; [ -L {tmp}/link.txt ] && echo link; stat -c %a {f}");
+    let after = core.exec(&host, &check).await.map_err(anyhow::Error::msg)?.stdout_str();
+    let mut lines = after.lines();
+    assert_eq!(lines.next(), Some(before.as_str()), "unedited CRLF+BOM save is byte-identical");
+    assert_eq!(lines.next(), Some("link"), "a symlink stays a symlink");
+    assert_eq!(lines.next(), Some("755"), "the mode is kept");
+    let stamp = core.write_file(&host, &f, "x".into(), false, Some(stamp)).await.map_err(|e| anyhow::anyhow!("{e:?}"))?;
+    assert_eq!(core.exec(&host, &format!("cat {f}")).await.map_err(anyhow::Error::msg)?.stdout_str(), "x", "shorter content truncates");
+    core.exec(&host, &format!("printf y > {f}")).await.map_err(anyhow::Error::msg)?;
+    let res = core.write_file(&host, &f, "z".into(), false, Some(stamp)).await;
+    assert!(matches!(res, Err(SaveError::Conflict { .. })), "an outside edit (same size, same second) is a conflict: {res:?}");
+    let current = core.stat_file(&host, &f).await.map_err(anyhow::Error::msg)?.expect("exists");
+    assert_eq!(current.size, 1);
+    println!("ok   editing: byte-exact CRLF+BOM, symlink kept, mode kept, truncation, conflict");
+
     core.fs_op(&host, FsOp::Remove { path: format!("{tmp}/src") }).await.map_err(anyhow::Error::msg)?;
     core.fs_op(&host, FsOp::Remove { path: tmp.clone() }).await.map_err(anyhow::Error::msg)?;
     assert!(core.list_dir(&host, &tmp).await.is_err(), "scratch dir removed");

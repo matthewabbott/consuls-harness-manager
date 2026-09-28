@@ -41,6 +41,8 @@ const KEYS = {
   Enter: { code: "Enter", vk: 13, text: "\r" },
   Escape: { code: "Escape", vk: 27 },
   Up: { key: "ArrowUp", code: "ArrowUp", vk: 38 },
+  End: { code: "End", vk: 35 },
+  Home: { code: "Home", vk: 36 },
   Tab: { code: "Tab", vk: 9, text: "\t" },
 };
 /** key("Enter"), key("c", { ctrl: true }), key("d") … */

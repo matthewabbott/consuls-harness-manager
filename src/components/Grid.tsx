@@ -8,7 +8,9 @@ import { paneIdentity, paneName, paneWhere } from "../lib/panes";
 import { useApp } from "../store/app";
 import { useUi } from "../store/ui";
 import { isAgent } from "./HarnessBadge";
+import FileTile from "./FileTile";
 import MiniTile, { displayTitle } from "./MiniTile";
+import { useEditor } from "../store/editor";
 
 function matches(p: PaneInfo, q: string, labelNames: string): boolean {
   if (!q) return true;
@@ -34,6 +36,20 @@ export default function Grid() {
   const groupBy = useUi((s) => s.groupBy);
   const sortBy = useUi((s) => s.sortBy);
   const lastOpened = useUi((s) => s.lastOpened);
+  const openFiles = useEditor((s) => s.files);
+  const fileOrder = useEditor((s) => s.order);
+  /** Open files by the pane they came from (null: none, or that pane is gone). */
+  const filesByOrigin = useMemo(() => {
+    const alive = new Set(Object.values(panes).flat().map((p) => p.key));
+    const by = new Map<string, string[]>();
+    for (const id of fileOrder) {
+      const f = openFiles[id];
+      if (!f) continue;
+      const slot = f.origin !== null && alive.has(f.origin) ? `pane:${f.origin}` : `host:${f.host}`;
+      by.set(slot, [...(by.get(slot) ?? []), id]);
+    }
+    return by;
+  }, [openFiles, fileOrder, panes]);
 
   const { configured } = useMemo(() => machines(tailnet, config.hosts, hosts), [tailnet, config.hosts, hosts]);
 
@@ -85,7 +101,19 @@ export default function Grid() {
             </div>
           </section>
         ))}
-        {groups.length === 0 && (
+        {fileOrder.length > 0 && (
+          <section className="mb-8">
+            <div className="mb-3 flex items-baseline gap-2.5">
+              <h2 className="font-display text-[17px] font-semibold tracking-tight text-mist-100">Open files</h2>
+            </div>
+            <div className="grid gap-4" style={GRID_STYLE}>
+              {fileOrder.map((id) => (
+                <FileTile key={id} id={id} home={hosts[openFiles[id]?.host ?? ""]?.facts?.home} showHost />
+              ))}
+            </div>
+          </section>
+        )}
+        {groups.length === 0 && fileOrder.length === 0 && (
           <div className="rounded-xl border border-dashed border-ink-600 px-5 py-8 text-center text-[13px] text-mist-500">No panes match.</div>
         )}
       </div>
@@ -127,10 +155,14 @@ export default function Grid() {
                 </button>
               )}
             </div>
-            {list.length > 0 ? (
+            {list.length > 0 || filesByOrigin.has(`host:${m.id}`) ? (
               <div className="grid gap-4" style={GRID_STYLE}>
-                {list.map((p) => (
-                  <MiniTile key={p.key} pane={p} stale={stale} home={m.state?.facts?.home} />
+                {list.flatMap((p) => [
+                  <MiniTile key={p.key} pane={p} stale={stale} home={m.state?.facts?.home} />,
+                  ...(filesByOrigin.get(`pane:${p.key}`) ?? []).map((id) => <FileTile key={id} id={id} home={m.state?.facts?.home} />),
+                ])}
+                {(filesByOrigin.get(`host:${m.id}`) ?? []).map((id) => (
+                  <FileTile key={id} id={id} home={m.state?.facts?.home} />
                 ))}
               </div>
             ) : (
