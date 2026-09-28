@@ -1,4 +1,4 @@
-import { EyeOff, Power } from "lucide-react";
+import { EyeOff, Lock, Power } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -100,8 +100,9 @@ function MiniTile({ pane, stale, home, compact = false }: Props) {
           <>
             <span
               className="shrink-0 rounded bg-ink-700/80 px-1.5 py-0.5 font-mono text-[10.5px] text-mist-400 group-hover:hidden"
-              title={`${pane.paneId} · ${pane.width}×${pane.height}`}
+              title={`${pane.paneId} · ${pane.width}×${pane.height}${pane.sized ? " · size pinned by Harness Manager" : ""}`}
             >
+              {pane.sized && <Lock className="mr-1 inline h-2.5 w-2.5 align-[-1px]" />}
               {where}
             </span>
             <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex" onClick={(e) => e.stopPropagation()}>

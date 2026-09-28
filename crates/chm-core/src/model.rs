@@ -254,9 +254,23 @@ pub struct PaneInfo {
     pub alternate_on: bool,
     pub window_active: bool,
     pub pane_active: bool,
-    /// Set on panes the app created.
+    /// Set on panes the app created (and on panes the user has expanded, for stable identity).
     pub chm_id: Option<String>,
     pub hidden: bool,
+    /// Panes in this pane's tmux window (resizing a split window affects its neighbours).
+    pub window_panes: u32,
+    /// Harness Manager has pinned this window's size.
+    pub sized: bool,
+}
+
+/// Result of a resize request.
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct ResizeOutcome {
+    /// Regular (non-control) tmux clients also showing this pane's session, e.g. a phone.
+    /// Their view of a pinned window is cropped or padded.
+    pub other_clients: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]

@@ -26,6 +26,20 @@ const drafts: Record<string, string> = load(DRAFTS, {});
 const history: Record<string, string[]> = load(HISTORY, {});
 let saveTimer = 0;
 
+/** Moves a pane's draft and history to a new identity (it gained a stable @chm_id). */
+export function renameIdentity(from: string, to: string) {
+  if (drafts[from] !== undefined && drafts[to] === undefined) {
+    drafts[to] = drafts[from];
+    delete drafts[from];
+    save(DRAFTS, drafts);
+  }
+  if (history[from] && !history[to]) {
+    history[to] = history[from];
+    delete history[from];
+    save(HISTORY, history);
+  }
+}
+
 export function getDraft(id: string): string {
   return drafts[id] ?? "";
 }

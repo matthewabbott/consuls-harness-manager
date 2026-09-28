@@ -8,6 +8,23 @@ import type { NoticeLevel } from "../ipc/bindings/NoticeLevel";
 import type { PaneAttention } from "../ipc/bindings/PaneAttention";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import type { TailnetStatus } from "../ipc/bindings/TailnetStatus";
+import { paneIdentity } from "../lib/panes";
+import { renameIdentity } from "./composer";
+import { useViewPrefs } from "./viewPrefs";
+
+/** A pane just got a stable @chm_id: carry its drafts, history and view prefs over. */
+function migrateIdentities(before: PaneInfo[] | undefined, after: PaneInfo[]) {
+  if (!before) return;
+  for (const p of after) {
+    const old = before.find((b) => b.key === p.key);
+    if (old && !old.chmId && p.chmId) {
+      const from = paneIdentity(old);
+      const to = paneIdentity(p);
+      useViewPrefs.getState().rename(from, to);
+      renameIdentity(from, to);
+    }
+  }
+}
 
 export interface Notice {
   id: number;
@@ -112,6 +129,7 @@ export const useApp = create<AppStore>((set) => ({
           return { hosts, panes };
         }
         case "panes":
+          migrateIdentities(st.panes[ev.host], ev.panes);
           return { panes: { ...st.panes, [ev.host]: ev.panes } };
         case "attention":
           return { attention: { ...st.attention, [ev.state.key]: ev.state } };

@@ -14,6 +14,14 @@ key: number, host: string,
  */
 paneId: string, windowId: string, sessionId: string, sessionName: string, sessionGroup: string | null, windowIndex: number, windowName: string, paneIndex: number, width: number, height: number, currentCommand: string, currentPath: string, title: string, harness: Harness | null, dead: boolean, alternateOn: boolean, windowActive: boolean, paneActive: boolean, 
 /**
- * Set on panes the app created.
+ * Set on panes the app created (and on panes the user has expanded, for stable identity).
  */
-chmId: string | null, hidden: boolean, };
+chmId: string | null, hidden: boolean, 
+/**
+ * Panes in this pane's tmux window (resizing a split window affects its neighbours).
+ */
+windowPanes: number, 
+/**
+ * Harness Manager has pinned this window's size.
+ */
+sized: boolean, };

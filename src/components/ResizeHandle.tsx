@@ -26,7 +26,7 @@ export default function ResizeHandle({ axis, size, direction, onResize, onResize
       aria-orientation={horizontal ? "vertical" : "horizontal"}
       onPointerDown={(e) => {
         e.preventDefault();
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        capture(e.target, e.pointerId);
         start.current = { pos: horizontal ? e.clientX : e.clientY, size };
         document.body.style.cursor = horizontal ? "col-resize" : "row-resize";
       }}
@@ -37,7 +37,7 @@ export default function ResizeHandle({ axis, size, direction, onResize, onResize
       }}
       onPointerUp={(e) => {
         if (!start.current) return;
-        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+        release(e.target, e.pointerId);
         start.current = null;
         document.body.style.cursor = "";
         onResizeEnd?.();
@@ -57,4 +57,21 @@ export default function ResizeHandle({ axis, size, direction, onResize, onResize
       />
     </div>
   );
+}
+
+/** Pointer capture keeps the drag alive outside the element; harmless if unavailable. */
+function capture(target: EventTarget, id: number) {
+  try {
+    (target as HTMLElement).setPointerCapture(id);
+  } catch {
+    /* synthetic or already-released pointer */
+  }
+}
+
+function release(target: EventTarget, id: number) {
+  try {
+    (target as HTMLElement).releasePointerCapture(id);
+  } catch {
+    /* not captured */
+  }
 }

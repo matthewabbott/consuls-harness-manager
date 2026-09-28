@@ -1,19 +1,36 @@
-// Per-pane view preferences (text zoom now; size mode and remembered size with V2-4).
+// Per-pane view preferences: text zoom, and how the tmux window is sized while expanded.
 // Per device, keyed by pane identity (see lib/panes.ts).
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+/**
+ * - `fit`: resize the tmux window to fill the view (default the first time a pane is expanded).
+ * - `fixed`: keep a size the user chose (drag handle / "keep this size").
+ * - `scale`: leave tmux alone and scale the text to the pane's width (v1 behaviour; the default
+ *   for split windows, since resizing them redraws the neighbouring panes too).
+ */
+export type SizeMode = "fit" | "fixed" | "scale";
+
 export interface ViewPref {
-  /** Terminal font size in px; absent = fit the pane's width automatically. */
+  /** Terminal font size in px; absent = default (or width-fitted in `scale` mode). */
   fontSize?: number;
+  sizeMode?: SizeMode;
+  cols?: number;
+  rows?: number;
+  /** We've told the user that other devices see a cropped window while it's pinned. */
+  warnedOthers?: boolean;
 }
 
-export const FONT = { min: 8, max: 28, step: 1 };
+export const FONT = { min: 8, max: 28, step: 1, default: 13 };
 
 interface ViewPrefsState {
   prefs: Record<string, ViewPref>;
   setFontSize(id: string, size: number | null): void;
+  setSizeMode(id: string, mode: SizeMode, size?: { cols: number; rows: number }): void;
+  update(id: string, patch: Partial<ViewPref>): void;
+  /** Moves prefs when a pane gains a stable identity. */
+  rename(from: string, to: string): void;
 }
 
 export const useViewPrefs = create<ViewPrefsState>()(
@@ -26,6 +43,16 @@ export const useViewPrefs = create<ViewPrefsState>()(
           if (size === null) delete current.fontSize;
           else current.fontSize = Math.min(FONT.max, Math.max(FONT.min, Math.round(size * 2) / 2));
           return { prefs: { ...s.prefs, [id]: current } };
+        }),
+      setSizeMode: (id, mode, size) =>
+        set((s) => ({ prefs: { ...s.prefs, [id]: { ...(s.prefs[id] ?? {}), sizeMode: mode, ...(size ?? {}) } } })),
+      update: (id, patch) => set((s) => ({ prefs: { ...s.prefs, [id]: { ...(s.prefs[id] ?? {}), ...patch } } })),
+      rename: (from, to) =>
+        set((s) => {
+          if (!s.prefs[from] || s.prefs[to]) return s;
+          const prefs = { ...s.prefs, [to]: s.prefs[from] };
+          delete prefs[from];
+          return { prefs };
         }),
     }),
     { name: "consuls.viewprefs.v1", storage: createJSONStorage(() => localStorage) },

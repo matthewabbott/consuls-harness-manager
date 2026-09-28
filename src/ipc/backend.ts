@@ -10,6 +10,7 @@ import type { DirListing } from "./bindings/DirListing";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
+import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
 import type { TailnetStatus } from "./bindings/TailnetStatus";
@@ -44,6 +45,8 @@ export interface Backend {
   submitPrompt(key: number, text: string): Promise<void>;
   createPane(spec: NewPaneSpec): Promise<number>;
   setPaneHidden(key: number, hidden: boolean): Promise<void>;
+  resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
+  releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
   listDir(host: string, path: string): Promise<DirListing>;
   integrationStatus(host: string): Promise<IntegrationStatus>;
@@ -98,6 +101,8 @@ async function tauriBackend(): Promise<Backend> {
     submitPrompt: (key, text) => invoke("submit_prompt", { key, text }),
     createPane: (spec) => invoke("create_pane", { spec }),
     setPaneHidden: (key, hidden) => invoke("set_pane_hidden", { key, hidden }),
+    resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
+    releasePaneSize: (key) => invoke("release_pane_size", { key }),
     terminatePane: (key, force) => invoke("terminate_pane", { key, force }),
     listDir: (host, path) => invoke("list_dir", { host, path }),
     integrationStatus: (host) => invoke("integration_status", { host }),

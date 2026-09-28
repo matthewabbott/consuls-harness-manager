@@ -17,6 +17,9 @@ import MiniTile from "./MiniTile";
 import QuickKeys from "./QuickKeys";
 import SearchBar from "./SearchBar";
 import TerminalView, { type TerminalHandle } from "./TerminalView";
+import ResizeGrip from "./ResizeGrip";
+import SizeMenu from "./SizeMenu";
+import { useTerminalSizing } from "../term/sizing";
 
 function HeaderIcon({ onClick, title, children }: { onClick(): void; title: string; children: React.ReactNode }) {
   return (
@@ -31,6 +34,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const panes = useApp((s) => s.panes);
   const hosts = useApp((s) => s.hosts);
   const termRef = useRef<TerminalHandle>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   const [searching, setSearching] = useState(false);
   const home = hosts[pane.host]?.facts?.home;
@@ -48,6 +52,8 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const id = paneIdentity(pane);
   const fontPref = useViewPrefs((s) => s.prefs[id]?.fontSize);
   const currentFont = () => termRef.current?.term?.options.fontSize ?? fontPref ?? 13;
+  const cellSize = () => termRef.current?.cellSize() ?? null;
+  const sizing = useTerminalSizing(pane, frameRef, cellSize);
   const waitingElsewhere = useApp(
     (s) => Object.values(s.attention).filter((a) => a.key !== pane.key && a.attention === "unacked").length,
   );
@@ -86,6 +92,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             </div>
           </div>
           <div className="ml-auto flex items-center gap-1">
+            <SizeMenu pane={pane} sizing={sizing} />
             <div className="mr-1 flex items-center rounded-lg ring-1 ring-ink-700">
               <HeaderIcon onClick={() => zoom(id, currentFont(), -1)} title="Smaller text (Ctrl+−, Ctrl+wheel)">
                 <ZoomOut className="h-3.5 w-3.5" />
@@ -152,6 +159,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
         </header>
 
         <div
+          ref={frameRef}
           className="scroll-thin relative min-h-0 flex-1 overflow-auto rounded-xl bg-[#0e1119] p-3 ring-1 ring-ink-700"
           onMouseDown={() => setTimeout(() => termRef.current?.focus(), 0)}
         >
@@ -162,7 +170,25 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             onBack={back}
             autoFocus={!isAgent(pane.harness)}
             onCompose={() => composerRef.current?.focus()}
-          />
+            fontSize={sizing.fontSize}
+          >
+            {sizing.effective !== "scale" && (
+              <ResizeGrip
+                cols={pane.width}
+                rows={pane.height}
+                cellSize={cellSize}
+                onResize={(cols, rows) => sizing.setMode("fixed", { cols, rows })}
+              />
+            )}
+          </TerminalView>
+          {sizing.resizedElsewhere && (
+            <button
+              onClick={sizing.refit}
+              className="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-ember-400/15 px-3 py-1 text-[11.5px] font-medium text-ember-300 ring-1 ring-ember-400/40 backdrop-blur hover:bg-ember-400/25"
+            >
+              Resized elsewhere · fit again
+            </button>
+          )}
           {searching && (
             <SearchBar
               search={termRef.current?.search ?? null}

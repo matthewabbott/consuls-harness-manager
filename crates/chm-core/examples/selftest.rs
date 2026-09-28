@@ -113,6 +113,39 @@ async fn main() -> anyhow::Result<()> {
 
     core.send_keys(key, vec!["C-c".into()]);
 
+    // --- sizing: stamping, resize (pins + RESET at the new size), release, split windows
+    let pane = |k: u32| rec.panes.lock().unwrap().iter().find(|p| p.key == k).cloned();
+    wait_for("expanding stamps a stable @chm_id", Duration::from_secs(5), || pane(key).is_some_and(|p| p.chm_id.is_some())).await;
+    let resets_before = rec.resets.lock().unwrap().get(&key).copied().unwrap_or(0);
+    let outcome = core.resize_pane(key, 100, 30).await.map_err(anyhow::Error::msg)?;
+    println!("     resize outcome: {outcome:?}");
+    wait_for("pane is 100x30 and pinned", Duration::from_secs(5), || {
+        pane(key).is_some_and(|p| (p.width, p.height, p.sized) == (100, 30, true))
+    })
+    .await;
+    wait_for("fresh RESET after resize", Duration::from_secs(5), || {
+        rec.resets.lock().unwrap().get(&key).copied().unwrap_or(0) > resets_before
+    })
+    .await;
+    let wsize = core.exec(&host, &format!("tmux -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
+    assert_eq!(wsize.stdout_str().trim(), "manual", "resize pins window-size");
+    core.release_pane_size(key);
+    wait_for("release un-pins", Duration::from_secs(5), || pane(key).is_some_and(|p| !p.sized)).await;
+    let wsize = core.exec(&host, &format!("tmux -L {socket} show-options -wqv -t scratch window-size")).await.map_err(anyhow::Error::msg)?;
+    assert_eq!(wsize.stdout_str().trim(), "", "release restores the window's own (unset) window-size");
+    core.exec(&host, &format!("tmux -L {socket} split-window -h -t scratch")).await.map_err(anyhow::Error::msg)?;
+    wait_for("split window seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.window_panes == 2)).await;
+    core.resize_pane(key, 60, 20).await.map_err(anyhow::Error::msg)?;
+    wait_for("split pane resized to ~60x20", Duration::from_secs(5), || {
+        pane(key).is_some_and(|p| p.width.abs_diff(60) <= 1 && p.height == 20)
+    })
+    .await;
+    core.release_pane_size(key);
+    let split = rec.panes.lock().unwrap().iter().find(|p| p.key != key && p.window_panes == 2).map(|p| p.key);
+    if let Some(k) = split {
+        let _ = core.terminate_pane(k, true).await;
+    }
+
     // Drop the connection: it must come back on its own, with the same pane keys, and the
     // expanded pane must get a fresh RESET without the UI asking again.
     let resets_before = rec.resets.lock().unwrap().get(&key).copied().unwrap_or(0);

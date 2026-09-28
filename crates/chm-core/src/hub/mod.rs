@@ -21,8 +21,8 @@ use host::{HostCmd, HostHandle, IntegrationAction};
 use tmux_mgr::PaneCmd;
 
 use crate::model::{
-    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, NewPaneSpec, SoundPrefs, TailnetStatus,
-    TerminateOutcome,
+    AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, NewPaneSpec, ResizeOutcome, SoundPrefs,
+    TailnetStatus, TerminateOutcome,
 };
 
 /// Loads config.json. A file that exists but can't be parsed is set aside (never silently
@@ -320,6 +320,19 @@ impl Core {
         }
         self.send(&host, HostCmd::CreatePane { spec, reply: tx });
         rx.await.map_err(|_| "host went away".to_string())?
+    }
+
+    /// Resizes a pane (pins its tmux window's size).
+    pub async fn resize_pane(&self, key: u32, cols: u16, rows: u16) -> Result<ResizeOutcome, String> {
+        let (tx, rx) = oneshot::channel();
+        let Some(host) = self.host_of_pane(key) else { return Err("pane not found".into()) };
+        self.send(&host, HostCmd::Pane(PaneCmd::Resize { key, cols, rows, reply: tx }));
+        rx.await.map_err(|_| "host went away".to_string())?
+    }
+
+    /// Returns a pane's window to tmux's automatic sizing (only if we pinned it).
+    pub fn release_pane_size(&self, key: u32) {
+        self.pane(key, PaneCmd::ReleaseSize { key });
     }
 
     pub fn set_pane_hidden(&self, key: u32, hidden: bool) {

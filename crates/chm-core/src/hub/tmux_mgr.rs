@@ -14,7 +14,7 @@ use super::ctx::Ctx;
 use super::frames;
 use crate::harness::Harness;
 use crate::integration::assets::{self, Assets};
-use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, TerminateOutcome};
+use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, ResizeOutcome, TerminateOutcome};
 use crate::ssh::SshConnection;
 use crate::ssh::exec;
 use crate::term::TileTerm;
@@ -39,11 +39,17 @@ pub(crate) enum PaneCmd {
     Paste { key: u32, text: String },
     /// Composer prompt: paste it, give the TUI a moment, then press Enter.
     Submit { key: u32, text: String },
+    /// Resize the pane's tmux window so the pane is `cols`×`rows` (pins window-size).
+    Resize { key: u32, cols: u16, rows: u16, reply: tokio::sync::oneshot::Sender<Result<ResizeOutcome, String>> },
+    /// Undo our pin: give the window back to tmux's automatic sizing.
+    ReleaseSize { key: u32 },
     /// Hide/unhide (stored in tmux as `@chm_hidden`, so every device agrees).
     Hide { key: u32, hidden: bool },
     /// Quit the harness gracefully, then close the pane (or kill it outright with `force`).
     Terminate { key: u32, force: bool, reply: tokio::sync::oneshot::Sender<Result<TerminateOutcome, String>> },
 }
+
+const SEP_STR: &str = crate::tmux::formats::SEP;
 
 /// Subscription reporting per-pane fields that change without any other notification.
 const SUB_NAME: &str = "chm";
@@ -82,6 +88,8 @@ pub(crate) struct TmuxManager {
     server_start: u64,
     next_tag: u64,
     seeds: HashMap<u64, (PaneId, bool)>,
+    /// Replies to skip at the front of a tagged seed (commands prefixed to it, e.g. a resize).
+    seed_skip: HashMap<u64, usize>,
     relist_due: Option<Instant>,
     discover_due: Option<Instant>,
     publish_due: bool,
@@ -112,6 +120,7 @@ impl TmuxManager {
             server_start: 0,
             next_tag: 1,
             seeds: HashMap::new(),
+            seed_skip: HashMap::new(),
             relist_due: None,
             discover_due: None,
             publish_due: false,
@@ -249,14 +258,26 @@ impl TmuxManager {
     }
 
     async fn seed(&mut self, id: PaneId, resume: &str) {
+        self.seed_after(id, resume, None).await;
+    }
+
+    /// Seeds the pane, optionally running `prefix` (a command line of `n` commands) first in
+    /// the same line, so nothing happens between e.g. a resize and the capture.
+    async fn seed_after(&mut self, id: PaneId, resume: &str, prefix: Option<(String, usize)>) {
         let tag = self.next_tag;
         self.next_tag += 1;
         let Some(pane) = self.panes.get_mut(&id) else { return };
         let Some(client) = self.clients.get(&pane.client).map(|c| c.client.clone()) else { return };
         let history = if pane.streaming { STREAM_HISTORY } else { 0 };
-        let (cmd, replies) = seed_command(id, history, resume);
+        let (mut cmd, mut replies) = seed_command(id, history, resume);
+        let skip = prefix.as_ref().map_or(0, |(_, n)| *n);
+        if let Some((pre, n)) = prefix {
+            cmd = format!("{pre} ; {cmd}");
+            replies += n;
+        }
         pane.seeding = Some(tag);
         self.seeds.insert(tag, (id, history > 0));
+        self.seed_skip.insert(tag, skip);
         if let Err(e) = client.send_tagged(&cmd, replies, tag).await {
             debug!(host = %self.host, "seed %{id} failed: {e}");
             self.seeds.remove(&tag);
@@ -297,6 +318,8 @@ impl TmuxManager {
             pane_active: r.pane_active,
             chm_id: r.chm_id.clone(),
             hidden: r.chm_hidden,
+            window_panes: r.window_panes,
+            sized: r.sized,
         }
     }
 
@@ -331,6 +354,14 @@ impl TmuxManager {
             },
             ClientEvent::Tagged { tag, replies } => {
                 let Some((id, with_history)) = self.seeds.remove(&tag) else { return };
+                let skip = self.seed_skip.remove(&tag).unwrap_or(0);
+                let replies = if replies.len() >= skip && replies[..skip].iter().all(|r| r.ok) {
+                    replies[skip..].to_vec()
+                } else {
+                    let err = replies.iter().find(|r| !r.ok).map(|r| r.text()).unwrap_or_default();
+                    self.ctx.notice(Some(&self.host), NoticeLevel::Warning, format!("Resize failed: {err}"));
+                    Vec::new()
+                };
                 let Some(p) = self.panes.get_mut(&id) else { return };
                 if p.seeding != Some(tag) {
                     return; // superseded by a newer seed
@@ -626,6 +657,95 @@ impl TmuxManager {
         self.panes.get(&pane).map(|p| p.key).ok_or_else(|| "the new pane didn't show up".to_string())
     }
 
+    /// Makes the pane `cols`×`rows` by pinning its window's size. For a split window the window
+    /// grows or shrinks by the difference and the pane is then resized within it.
+    async fn resize(&mut self, key: u32, cols: u16, rows: u16) -> Result<ResizeOutcome, String> {
+        let (id, client) = self.pane_by_key(key).ok_or("pane not found")?;
+        let row = self.panes.get(&id).map(|p| p.row.clone()).ok_or("pane not found")?;
+        let (cols, rows) = (cols.clamp(20, 1000), rows.clamp(5, 500));
+        let window = quote(&format!("@{}", row.window));
+        let pane = quote(&format!("%{id}"));
+
+        let mut cmds: Vec<String> = Vec::new();
+        if !row.sized {
+            // Remember the window's own window-size (usually unset) so release can restore it.
+            let prev = client
+                .command(&format!("show-options -wqv -t {window} window-size"))
+                .await
+                .map(|r| r.text().trim().to_string())
+                .unwrap_or_default();
+            cmds.push(format!("set-option -w -t {window} @chm_prev_wsize {}", quote(if prev.is_empty() { "-" } else { &prev })));
+            cmds.push(format!("set-option -w -t {window} @chm_sized 1"));
+        }
+        if row.window_panes <= 1 {
+            cmds.push(format!("resize-window -t {window} -x {cols} -y {rows}"));
+        } else {
+            let w = (row.window_width as i32 + cols as i32 - row.width as i32).max(cols as i32);
+            let h = (row.window_height as i32 + rows as i32 - row.height as i32).max(rows as i32);
+            cmds.push(format!("resize-window -t {window} -x {w} -y {h}"));
+            cmds.push(format!("resize-pane -t {pane} -x {cols} -y {rows}"));
+        }
+        let n = cmds.len();
+        let prefix = cmds.join(" ; ");
+
+        // Other (non-control) clients looking at this session or its group: they'll see a
+        // cropped/padded window while it's pinned.
+        let others = client
+            .command(&format!("list-clients -F {}", quote("#{client_control_mode}|~|#{session_group}|~|#{session_name}")))
+            .await
+            .map(|r| {
+                r.lines
+                    .iter()
+                    .map(|l| String::from_utf8_lossy(l).into_owned())
+                    .filter(|l| {
+                        let f: Vec<&str> = l.splitn(3, SEP_STR).collect();
+                        f.len() == 3
+                            && f[0] != "1"
+                            && match &row.session_group {
+                                Some(g) => f[1] == g,
+                                None => f[2] == row.session_name,
+                            }
+                    })
+                    .count() as u32
+            })
+            .unwrap_or(0);
+
+        if let Some(p) = self.panes.get_mut(&id) {
+            p.row.sized = true;
+        }
+        // Resize and re-capture in one line: the streaming view gets a RESET at the new size
+        // and never sees output drawn for the old width.
+        self.seed_after(id, "on", Some((prefix, n))).await;
+        self.schedule_relist();
+        Ok(ResizeOutcome { other_clients: others })
+    }
+
+    async fn release_size(&mut self, key: u32) -> Result<(), String> {
+        let (id, client) = self.pane_by_key(key).ok_or("pane not found")?;
+        let row = self.panes.get(&id).map(|p| p.row.clone()).ok_or("pane not found")?;
+        if !row.sized {
+            return Ok(()); // never touch windows we didn't pin
+        }
+        let window = quote(&format!("@{}", row.window));
+        let prev = client
+            .command(&format!("show-options -wqv -t {window} @chm_prev_wsize"))
+            .await
+            .map(|r| r.text().trim().to_string())
+            .unwrap_or_default();
+        let restore = if prev.is_empty() || prev == "-" {
+            format!("set-option -wu -t {window} window-size")
+        } else {
+            format!("set-option -w -t {window} window-size {}", quote(&prev))
+        };
+        let line = format!("{restore} ; set-option -wu -t {window} @chm_sized ; set-option -wu -t {window} @chm_prev_wsize");
+        client.commands(&line, 3).await.map_err(|e| e.to_string())?;
+        if let Some(p) = self.panes.get_mut(&id) {
+            p.row.sized = false;
+        }
+        self.schedule_relist();
+        Ok(())
+    }
+
     /// The UI (re)subscribed and has no expanded panes yet.
     pub fn stop_streams(&mut self) {
         self.ctx.streaming.lock().unwrap().clear();
@@ -651,9 +771,19 @@ impl TmuxManager {
                         streaming.remove(&key);
                     }
                 }
-                let Some((id, _)) = self.pane_by_key(key) else { return };
+                let Some((id, client)) = self.pane_by_key(key) else { return };
                 let Some(p) = self.panes.get_mut(&id) else { return };
                 p.streaming = on;
+                if on && p.row.chm_id.is_none() {
+                    // Give the pane a stable identity for per-pane preferences (survives window
+                    // renumbering and is shared across devices).
+                    let chm_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
+                    let line = format!("set-option -p -t {} @chm_id {}", quote(&format!("%{id}")), quote(&chm_id));
+                    if client.command(&line).await.is_ok() {
+                        p.row.chm_id = Some(chm_id);
+                        self.publish_due = true;
+                    }
+                }
                 if on {
                     // Always (re)seed: the UI needs a RESET to (re)build its terminal.
                     self.seed(id, "on").await;
@@ -696,6 +826,14 @@ impl TmuxManager {
                         ctx.notice(Some(&host), NoticeLevel::Error, format!("Couldn't send prompt: {e}"));
                     }
                 });
+            }
+            PaneCmd::Resize { key, cols, rows, reply } => {
+                let _ = reply.send(self.resize(key, cols, rows).await);
+            }
+            PaneCmd::ReleaseSize { key } => {
+                if let Err(e) = self.release_size(key).await {
+                    self.ctx.notice(Some(&self.host), NoticeLevel::Warning, format!("Couldn't release size: {e}"));
+                }
             }
             PaneCmd::Hide { key, hidden } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };

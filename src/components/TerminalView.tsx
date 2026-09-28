@@ -13,6 +13,7 @@ import { rawCopy, selectionRows, smartCopy } from "../term/smartCopy";
 import { attachStream } from "../term/streams";
 import { paneIdentity } from "../lib/panes";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
+import type React from "react";
 
 const FONT = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
 
@@ -20,6 +21,8 @@ export interface TerminalHandle {
   term: Terminal | null;
   search: SearchAddon | null;
   focus(): void;
+  /** Rendered size of one character cell in CSS px (null before the first render). */
+  cellSize(): { width: number; height: number } | null;
 }
 
 interface Props {
@@ -30,6 +33,10 @@ interface Props {
   autoFocus?: boolean;
   /** Move focus to the composer (Ctrl+L / Ctrl+K style shortcut). */
   onCompose?(): void;
+  /** Font size in px, or null to fit the text to the pane's width. */
+  fontSize: number | null;
+  /** Extra overlay content positioned over the terminal's box (e.g. the resize grip). */
+  children?: React.ReactNode;
 }
 
 interface Menu {
@@ -47,21 +54,23 @@ function measureCharRatio(): number {
   return charRatio || 0.6;
 }
 
-const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ pane, onSearch, onBack, autoFocus = true, onCompose }, ref) {
+const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
+  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children },
+  ref,
+) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
   const sizeRef = useRef({ cols: pane.width, rows: pane.height });
   const id = paneIdentity(pane);
-  const fontPref = useViewPrefs((s) => s.prefs[id]?.fontSize);
   // Read by the (long-lived) terminal callbacks without rebuilding the terminal.
-  const fontPrefRef = useRef(fontPref);
+  const fontRef = useRef(fontSize);
   const fitRef = useRef<() => void>(() => {});
   useEffect(() => {
-    fontPrefRef.current = fontPref;
+    fontRef.current = fontSize;
     fitRef.current();
-  }, [fontPref]);
+  }, [fontSize]);
 
   useImperativeHandle(ref, () => ({
     get term() {
@@ -71,6 +80,16 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ p
       return searchRef.current;
     },
     focus: () => termRef.current?.focus(),
+    cellSize: () => {
+      const term = termRef.current;
+      if (!term) return null;
+      // xterm doesn't expose cell metrics publicly; the fit addon reads the same field.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cell = (term as any)._core?._renderService?.dimensions?.css?.cell;
+      if (cell?.width && cell?.height) return { width: cell.width, height: cell.height };
+      const size = term.options.fontSize ?? 13;
+      return { width: size * measureCharRatio(), height: Math.ceil(size * (term.options.lineHeight ?? 1)) };
+    },
   }));
 
   useEffect(() => {
@@ -127,7 +146,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ p
       if (!wrap) return;
       const avail = wrap.clientWidth - 24;
       const auto = Math.max(8, Math.min(15, Math.floor((avail / (sizeRef.current.cols * measureCharRatio())) * 4) / 4));
-      const size = fontPrefRef.current ?? auto;
+      const size = fontRef.current ?? auto;
       if (term.options.fontSize !== size) term.options.fontSize = size;
     };
     fitRef.current = fit;
@@ -275,14 +294,16 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView({ p
 
   return (
     <>
-      <div
-        ref={hostRef}
-        className="inline-block"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          setMenu({ x: e.clientX, y: e.clientY });
-        }}
-      />
+      <div className="relative inline-block align-top">
+        <div
+          ref={hostRef}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY });
+          }}
+        />
+        {children}
+      </div>
       {menu && (
         <div className="fixed inset-0 z-50" onMouseDown={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }}>
           <div

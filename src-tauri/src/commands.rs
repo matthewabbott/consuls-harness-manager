@@ -1,4 +1,7 @@
-use chm_core::model::{AlertKind, CoreSnapshot, DirListing, FocusState, HostConfig, NewPaneSpec, SoundPrefs, TailnetStatus, TerminateOutcome};
+use chm_core::model::{
+    AlertKind, CoreSnapshot, DirListing, FocusState, HostConfig, NewPaneSpec, ResizeOutcome, SoundPrefs, TailnetStatus,
+    TerminateOutcome,
+};
 use chm_core::integration::install::IntegrationStatus;
 use tauri::State;
 use tauri::ipc::{Channel, InvokeResponseBody};
@@ -138,6 +141,16 @@ pub fn submit_prompt(state: State<'_, AppState>, key: u32, text: String) {
 #[tauri::command]
 pub async fn create_pane(state: State<'_, AppState>, spec: NewPaneSpec) -> CmdResult<u32> {
     state.core.create_pane(spec).await
+}
+
+#[tauri::command]
+pub async fn resize_pane(state: State<'_, AppState>, key: u32, cols: u16, rows: u16) -> CmdResult<ResizeOutcome> {
+    state.core.resize_pane(key, cols, rows).await
+}
+
+#[tauri::command]
+pub fn release_pane_size(state: State<'_, AppState>, key: u32) {
+    state.core.release_pane_size(key);
 }
 
 #[tauri::command]

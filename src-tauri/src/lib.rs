@@ -138,6 +138,8 @@ pub fn run() {
             commands::set_pane_muted,
             commands::create_pane,
             commands::set_pane_hidden,
+            commands::resize_pane,
+            commands::release_pane_size,
             commands::terminate_pane,
             commands::list_dir,
         ])

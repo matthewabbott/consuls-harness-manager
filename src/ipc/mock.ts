@@ -134,6 +134,8 @@ function pane(key: number, host: string, extra: Partial<PaneInfo>, lines: Seg[][
       paneActive: true,
       chmId: null,
       hidden: false,
+      windowPanes: 1,
+      sized: false,
       ...extra,
     },
     lines,
@@ -340,6 +342,29 @@ export function mockBackend(): Backend {
       emitPanes(spec.host);
       setTimeout(sendTiles, 50);
       return key;
+    },
+    resizePane: async (key, cols, rows) => {
+      const p = panes.find((p) => p.info.key === key);
+      if (!p) throw new Error("no such pane");
+      p.info = { ...p.info, width: cols, height: rows, sized: true, chmId: p.info.chmId ?? `mock${key}` };
+      emitPanes(p.info.host);
+      if (streaming.has(key)) {
+        const header = new Uint8Array(4);
+        new DataView(header.buffer).setUint16(0, cols, true);
+        new DataView(header.buffer).setUint16(2, rows, true);
+        const body = new TextEncoder().encode(toAnsi(p.lines));
+        const payload = new Uint8Array(4 + body.length);
+        payload.set(header);
+        payload.set(body, 4);
+        frameCb?.(encodeFrame(FRAME_RESET, key, payload));
+      }
+      return { otherClients: key === 1 ? 1 : 0 };
+    },
+    releasePaneSize: async (key) => {
+      const p = panes.find((p) => p.info.key === key);
+      if (!p) return;
+      p.info = { ...p.info, sized: false };
+      emitPanes(p.info.host);
     },
     setPaneHidden: async (key, hidden) => {
       const p = panes.find((p) => p.info.key === key);

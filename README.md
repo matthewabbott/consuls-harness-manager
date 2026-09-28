@@ -34,8 +34,11 @@ Tauri app (Windows/macOS)
 remote host: tmux ≥ 3.2, and (uploaded on demand) ~/.local/share/consuls/{chm-hook.sh, …}
 ```
 
-- **Attaching never resizes your other tmux clients** (`ignore-size`), and panes Consuls didn't
-  create are never resized — Claude Code redraws its whole transcript on a width change.
+- **Attaching never resizes your other tmux clients** (`ignore-size`). A window is only resized when
+  you expand a pane: the first expand fits the tmux window to the view, and after that your chosen
+  size is remembered per pane (size menu: Auto-fit · Keep size · Maximize · Don't resize · Let
+  tmux decide). Split windows default to *Don't resize*, since resizing redraws the neighbours —
+  and Claude Code redraws its whole transcript on every width change. Pinned windows show a lock.
 - **Turn detection** comes from the harnesses' own hooks. Agents started from Consuls get them
   injected at launch (`claude --settings`, `codex -c notify=…`, `omp --hook`). For agents you
   start by hand, the bell icon on a machine installs the same hooks globally (opt-in,
