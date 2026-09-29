@@ -14,7 +14,7 @@ use super::ctx::Ctx;
 use super::frames;
 use crate::harness::Harness;
 use crate::integration::assets::{self, Assets};
-use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc, TmuxOp};
+use crate::model::{Activity, HostId, NewPaneSpec, NoticeLevel, NotifyMode, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc, TmuxOp};
 use crate::cygwin::PathMap;
 use crate::link::Link;
 use crate::ssh::exec;
@@ -54,6 +54,12 @@ pub(crate) enum PaneCmd {
     SetLabels { key: u32, labels: Vec<String> },
     /// Ping (or not) on the terminal bell; `None` = the default for what's running.
     SetBell { key: u32, bell: Option<bool> },
+    /// Push to the phone for this pane (`None`: don't), in `@chm_notify` so every device and
+    /// the push daemon agree.
+    SetNotify { key: u32, mode: Option<NotifyMode> },
+    /// A device showed you the pane: if it's tracked and waiting, record it in `@chm_seen`
+    /// (throttled), so the push daemon drops a push you've already seen.
+    MarkSeen { key: u32 },
     /// Hide/unhide (stored in tmux as `@chm_hidden`, so every device agrees).
     Hide { key: u32, hidden: bool },
     /// Name the pane (`None` clears it), in `@chm_name` so every device agrees. tmux's own
@@ -72,7 +78,10 @@ const SEP_STR: &str = crate::tmux::formats::SEP;
 /// dereferences the client's session, which is NULL for a moment after that session is
 /// destroyed (e.g. its last pane closed), and the whole server crashes (fixed in 3.7).
 const SUB_PREFIX: &str = "chm-";
-const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{pane_title}";
+const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{@chm_notify}|~|#{@chm_seen}|~|#{pane_title}";
+
+/// `@chm_seen` is written at most this often per pane.
+const SEEN_EVERY: Duration = Duration::from_secs(5);
 
 struct Client {
     client: Arc<ControlClient>,
@@ -97,6 +106,9 @@ struct Pane {
     heuristic_working: bool,
     /// The client holding this pane's subscription.
     subscribed: Option<ClientKey>,
+    /// A device showed the pane to the user; `@chm_seen` is written on the next tick.
+    seen_due: bool,
+    seen_written: Option<Instant>,
 }
 
 pub(crate) struct TmuxManager {
@@ -281,6 +293,9 @@ impl TmuxManager {
             match self.panes.get_mut(&id) {
                 Some(p) => {
                     let resized = (p.row.width, p.row.height) != (row.width, row.height);
+                    if row.hook_state.is_some() && p.row.hook_state.is_none() {
+                        self.ctx.attention.lock().unwrap().mark_hooked(p.key);
+                    }
                     p.client = client;
                     p.row = row;
                     if resized {
@@ -293,6 +308,10 @@ impl TmuxManager {
                     let events = Collector::default();
                     let term = TileTerm::with_listener(row.width, row.height, 0, events.clone());
                     let streaming = self.ctx.streaming.lock().unwrap().contains(&key);
+                    // Its agent has reported through hooks before (maybe to another app).
+                    if row.hook_state.is_some() {
+                        self.ctx.attention.lock().unwrap().mark_hooked(key);
+                    }
                     let pane = Pane {
                         key,
                         row,
@@ -306,6 +325,8 @@ impl TmuxManager {
                         burst_start: None,
                         heuristic_working: false,
                         subscribed: None,
+                        seen_due: false,
+                        seen_written: None,
                     };
                     self.panes.insert(id, pane);
                     to_seed.push(id);
@@ -426,6 +447,8 @@ impl TmuxManager {
             ended: None,
             bell: r.bell,
             bell_pings: crate::harness::bell_pings(r.bell, &r.current_command),
+            notify: r.notify,
+            seen: r.seen,
         }
     }
 
@@ -512,13 +535,15 @@ impl TmuxManager {
                 self.seed(pane).await;
             }
             ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name.starts_with(SUB_PREFIX) => {
-                let mut parts = value.splitn(7, crate::tmux::formats::SEP);
+                let mut parts = value.splitn(9, crate::tmux::formats::SEP);
                 let cmd = parts.next().unwrap_or_default().to_string();
                 let alt = parts.next() == Some("1");
                 let hidden = parts.next() == Some("1");
                 let labels = crate::tmux::formats::parse_labels(parts.next().unwrap_or_default());
                 let bell = crate::tmux::formats::parse_bell(parts.next().unwrap_or_default());
                 let name = parts.next().filter(|n| !n.is_empty()).map(str::to_string);
+                let notify = NotifyMode::parse(parts.next().unwrap_or_default());
+                let seen = parts.next().and_then(|s| s.trim().parse().ok());
                 let title = parts.next().unwrap_or_default().to_string();
                 let mut reseed = false;
                 if let Some(p) = self.panes.get_mut(&pane)
@@ -528,7 +553,9 @@ impl TmuxManager {
                         || p.row.chm_hidden != hidden
                         || p.row.labels != labels
                         || p.row.bell != bell
-                        || p.row.name != name)
+                        || p.row.name != name
+                        || p.row.notify != notify
+                        || p.row.seen != seen)
                 {
                     reseed = p.row.alternate_on != alt;
                     p.row.current_command = cmd;
@@ -538,6 +565,8 @@ impl TmuxManager {
                     p.row.labels = labels;
                     p.row.bell = bell;
                     p.row.name = name;
+                    p.row.notify = notify;
+                    p.row.seen = seen;
                     self.publish_due = true;
                 }
                 if reseed {
@@ -586,6 +615,7 @@ impl TmuxManager {
         } else if self.relist_due.is_some_and(|d| d <= now) {
             self.relist().await;
         }
+        self.write_seen().await;
         if self.publish_due {
             self.publish();
         }
@@ -595,6 +625,45 @@ impl TmuxManager {
                 p.dirty = false;
                 self.ctx.sink.frame(frames::encode(frames::TILE, p.key, &p.term.snapshot()));
             }
+        }
+    }
+
+    /// Records on tracked, waiting panes that a device showed them to the user (`@chm_seen`),
+    /// so the push daemon drops a push they've already seen. At most once per pane per
+    /// [`SEEN_EVERY`].
+    async fn write_seen(&mut self) {
+        let due: Vec<(PaneId, u32)> = self.panes.iter().filter(|(_, p)| p.seen_due).map(|(id, p)| (*id, p.key)).collect();
+        for (id, key) in due {
+            let waiting = matches!(self.ctx.attention.lock().unwrap().get(key).map(|a| a.activity), Some(Activity::Idle | Activity::NeedsInput));
+            let Some(p) = self.panes.get_mut(&id) else { continue };
+            p.seen_due = false;
+            if p.row.notify.is_none() || !waiting || p.seen_written.is_some_and(|t| t.elapsed() < SEEN_EVERY) {
+                continue;
+            }
+            p.seen_written = Some(Instant::now());
+            let Some((_, client)) = self.pane_by_key(key) else { continue };
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let line = format!("set-option -p -t {} @chm_seen {now}", quote(&format!("%{id}")));
+            match client.command(&line).await {
+                Ok(_) => {
+                    if let Some(p) = self.panes.get_mut(&id) {
+                        p.row.seen = Some(now);
+                    }
+                    self.publish_due = true;
+                }
+                Err(e) => debug!(host = %self.host, "couldn't mark %{id} seen: {e}"),
+            }
+        }
+    }
+
+    /// The pane's state changed while the user was looking right at it: that counts as seen.
+    fn seen_if_looking(&mut self, key: u32) {
+        let focus = self.ctx.attention.lock().unwrap().focus;
+        if focus.window_focused
+            && focus.expanded == Some(key)
+            && let Some(p) = self.panes.values_mut().find(|p| p.key == key)
+        {
+            p.seen_due = true;
         }
     }
 
@@ -676,7 +745,9 @@ impl TmuxManager {
         self.last_hook.insert(id, (ev.event.clone(), ev.ts));
         let sig = Signal { event: ev.event.clone(), detail: ev.detail.clone(), ts: ev.ts, heuristic: false };
         let (key, label) = (p.key, self.label(p));
-        self.ctx.signal(key, &sig, &label, stale)
+        let alerted = self.ctx.signal(key, &sig, &label, stale);
+        self.seen_if_looking(key);
+        alerted
     }
 
     /// Fallback for agent panes without hooks: sustained output = working; a long silence
@@ -705,6 +776,7 @@ impl TmuxManager {
             let label = self.label(p);
             let sig = Signal { event: event.into(), detail: String::new(), ts: 0, heuristic: true };
             self.ctx.signal(key, &sig, &label, false);
+            self.seen_if_looking(key);
         }
     }
 
@@ -1060,6 +1132,27 @@ impl TmuxManager {
                     p.row.bell = bell;
                 }
                 self.publish();
+            }
+            PaneCmd::SetNotify { key, mode } => {
+                let Some((id, client)) = self.pane_by_key(key) else { return };
+                let target = quote(&format!("%{id}"));
+                let line = match mode {
+                    Some(m) => format!("set-option -p -t {target} @chm_notify {}", m.as_str()),
+                    None => format!("set-option -p -u -t {target} @chm_notify"),
+                };
+                if let Err(e) = client.command(&line).await {
+                    self.ctx.notice(Some(&self.host), NoticeLevel::Error, format!("Couldn't update pane: {e}"));
+                    return;
+                }
+                if let Some(p) = self.panes.get_mut(&id) {
+                    p.row.notify = mode;
+                }
+                self.publish();
+            }
+            PaneCmd::MarkSeen { key } => {
+                if let Some(p) = self.panes.values_mut().find(|p| p.key == key) {
+                    p.seen_due = true;
+                }
             }
             PaneCmd::Hide { key, hidden } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };

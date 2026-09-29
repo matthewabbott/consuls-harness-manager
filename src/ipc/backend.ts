@@ -18,6 +18,7 @@ import type { FileContent } from "./bindings/FileContent";
 import type { FileStamp } from "./bindings/FileStamp";
 import type { HeadVersion } from "./bindings/HeadVersion";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
+import type { NotifyMode } from "./bindings/NotifyMode";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
@@ -84,6 +85,8 @@ export interface Backend {
   renamePane(key: number, name: string | null): Promise<void>;
   /** Ping on the pane's terminal bell; null = default (on for irssi, weechat, …). */
   setPaneBell(key: number, bell: boolean | null): Promise<void>;
+  /** Push to the phone for this pane (`null`: don't track it). */
+  setPaneNotify(key: number, mode: NotifyMode | null): Promise<void>;
   resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
   releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
@@ -180,6 +183,7 @@ async function tauriBackend(): Promise<Backend> {
     renamePane: (key, name) => invoke("rename_pane", { key, name }),
     tmuxOp: (key, op) => invoke("tmux_op", { key, op }),
     setPaneBell: (key, bell) => invoke("set_pane_bell", { key, bell }),
+    setPaneNotify: (key, mode) => invoke("set_pane_notify", { key, mode }),
     resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
     releasePaneSize: (key) => invoke("release_pane_size", { key }),
     terminatePane: (key, force) => invoke("terminate_pane", { key, force }),

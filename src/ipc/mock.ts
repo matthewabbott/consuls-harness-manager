@@ -156,6 +156,8 @@ function pane(key: number, host: string, extra: PaneExtra, lines: Seg[][], curso
       ended: null,
       bell: null,
       bellPings: rest.currentCommand === "irssi",
+      notify: null,
+      seen: null,
       ...rest,
     },
     lines,
@@ -204,7 +206,7 @@ export function mockBackend(): Backend {
   ];
   const panes: MockPane[] = [
     pane(1, "spark-d683", { tmux: { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp" }, currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
-    pane(2, "spark-d683", { tmux: { sessionName: "consuls", windowName: "claude" }, currentCommand: "claude", harness: "claude", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22 }, claudeLines, [4, 15]),
+    pane(2, "spark-d683", { tmux: { sessionName: "consuls", windowName: "claude" }, currentCommand: "claude", harness: "claude", notify: "delay", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22 }, claudeLines, [4, 15]),
     pane(3, "spark-d683", { tmux: { sessionName: "fix-owui-3", windowName: "codex" }, currentCommand: "codex", harness: "codex", labels: ["urgent"], title: "", currentPath: "/home/consulear/Programming/open-webui", width: 66, height: 18 }, codexLines, [4, 13]),
     pane(4, "spark-d683", { tmux: { sessionName: "dual-setup-2", windowName: "bash" }, currentPath: "/home/consulear/models" }, shellLines, [21, 3]),
     pane(5, "spark-d683", { tmux: null, currentPath: "/home/consulear", chmId: "d5" }, shellLines, [21, 3]),
@@ -461,6 +463,12 @@ export function mockBackend(): Backend {
       const p = panes.find((p) => p.info.key === key);
       if (!p) return;
       p.info = { ...p.info, bell, bellPings: bell ?? p.info.currentCommand === "irssi" };
+      emitPanes(p.info.host);
+    },
+    setPaneNotify: async (key, mode) => {
+      const p = panes.find((p) => p.info.key === key);
+      if (!p) return;
+      p.info = { ...p.info, notify: mode };
       emitPanes(p.info.host);
     },
     setPaneLabels: async (key, labels) => {

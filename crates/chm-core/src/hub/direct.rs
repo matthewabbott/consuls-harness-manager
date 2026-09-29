@@ -76,6 +76,8 @@ pub(crate) fn spawn(ctx: &Arc<Ctx>, rt: &tokio::runtime::Handle, spec: DirectSpe
         ended: None,
         bell: None,
         bell_pings: false,
+        notify: None,
+        seen: None,
     };
     let (tx, rx) = mpsc::unbounded_channel();
     ctx.direct.lock().unwrap().insert(key, DirectHandle { info: info.clone(), tx });
@@ -328,6 +330,8 @@ impl Direct {
             PaneCmd::TmuxOp { reply, .. } => {
                 let _ = reply.send(Err("this is a plain shell, not a tmux pane".into()));
             }
+            // Pushes are for tmux panes: the daemon can't see this app's plain shells.
+            PaneCmd::SetNotify { .. } | PaneCmd::MarkSeen { .. } => {}
             PaneCmd::Terminate { reply, .. } => {
                 self.close();
                 let _ = reply.send(Ok(TerminateOutcome::Closed));

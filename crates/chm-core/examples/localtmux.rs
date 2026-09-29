@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use chm_core::harness::Harness;
 use chm_core::link::Link;
 use chm_core::local::{self, LOCAL_HOST};
-use chm_core::model::{AttentionLevel, CoreEvent, FocusState, HostFacts, NewPaneSpec, PaneAttention, PaneInfo, PaneKind};
+use chm_core::model::{AttentionLevel, CoreEvent, FocusState, HostFacts, NewPaneSpec, NotifyMode, PaneAttention, PaneInfo, PaneKind};
 use chm_core::{Core, Sink};
 
 #[derive(Default)]
@@ -102,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
     // tmux reports a folder by its real path (macOS: /var/folders/… is /private/var/folders/…).
     let folder = if cfg!(windows) { local::to_slash(&dir) } else { local::to_slash(&dir.canonicalize()?) };
     let spec = NewPaneSpec { host: LOCAL_HOST.into(), cwd: folder.clone(), harness: Harness::Shell, name: None, session: None, args: None, direct: None, shell: None };
-    let result = run(&core, &rec, spec, &folder).await;
+    let result = run(&core, &rec, spec, &folder, &cleanup, &format!("{tmux} -L {socket}")).await;
     if result.is_err() {
         for p in rec.panes.lock().unwrap().iter() {
             println!("     pane {}: kind={:?} path={:?} cmd={:?}", p.key, p.kind, p.current_path, p.current_command);
@@ -133,7 +133,7 @@ fn posix_shell() -> Link {
     unreachable!("Windows uses Cygwin's shell")
 }
 
-async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &str) -> anyhow::Result<()> {
+async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &str, sh: &Link, tmux: &str) -> anyhow::Result<()> {
     let key = core.create_pane(spec).await.map_err(anyhow::Error::msg)?;
     let pane = |k: u32| rec.panes.lock().unwrap().iter().find(|p| p.key == k).cloned();
     let draw = |k: u32| String::from_utf8_lossy(rec.raw.lock().unwrap().get(&k).map(Vec::as_slice).unwrap_or(&[])).into_owned();
@@ -176,6 +176,28 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
         rec.attention.lock().unwrap().get(&key).is_some_and(|a| a.attention == AttentionLevel::Unacked)
     })
     .await?;
+
+    // Push to phone: kept on the tmux pane, so every device and the daemon see it.
+    let option = |name: &'static str| {
+        let (sh, target) = (sh.clone(), format!("{tmux} show-options -pqv -t {} {name}", pane(key).and_then(|p| p.tmux).map(|t| t.pane_id).unwrap_or_default()));
+        async move { sh.exec(&target, Duration::from_secs(10)).await.map(|o| o.stdout_str().trim().to_string()).unwrap_or_default() }
+    };
+    core.set_pane_notify(key, Some(NotifyMode::Delay));
+    wait_for("tracked (@chm_notify)", Duration::from_secs(10), || pane(key).is_some_and(|p| p.notify == Some(NotifyMode::Delay))).await?;
+    anyhow::ensure!(option("@chm_notify").await == "delay", "@chm_notify not set on the tmux pane");
+    // It waits (the Stop above). Expanded in an unfocused window isn't "seen"...
+    core.set_focus(FocusState { expanded: Some(key), window_focused: false });
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    anyhow::ensure!(pane(key).is_some_and(|p| p.seen.is_none()), "an unfocused window marked the pane seen");
+    // ...looking at it in a focused one is.
+    core.set_focus(FocusState { expanded: Some(key), window_focused: true });
+    wait_for("seen when looked at (@chm_seen)", Duration::from_secs(10), || pane(key).is_some_and(|p| p.seen.is_some())).await?;
+    anyhow::ensure!(!option("@chm_seen").await.is_empty(), "@chm_seen not set on the tmux pane");
+    core.set_focus(FocusState { expanded: None, window_focused: false });
+    // Another device turns it off.
+    let off = format!("{tmux} set-option -p -u -t {} @chm_notify", pane(key).and_then(|p| p.tmux).map(|t| t.pane_id).unwrap_or_default());
+    sh.exec(&off, Duration::from_secs(10)).await?;
+    wait_for("untracked by another client", Duration::from_secs(10), || pane(key).is_some_and(|p| p.notify.is_none())).await?;
 
     let outcome = core.terminate_pane(key, true).await.map_err(anyhow::Error::msg)?;
     println!("     terminate: {outcome:?}");

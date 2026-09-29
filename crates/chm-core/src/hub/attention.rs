@@ -101,6 +101,12 @@ impl AttentionBook {
         self.hooked.contains(&key)
     }
 
+    /// The pane's agent is known to report through hooks (e.g. it left `@chm_state` on its
+    /// tmux pane), so the output heuristic stays out of it from the start.
+    pub fn mark_hooked(&mut self, key: u32) {
+        self.hooked.insert(key);
+    }
+
     pub fn set_muted(&mut self, key: u32, muted: bool) {
         if muted {
             self.muted.insert(key);

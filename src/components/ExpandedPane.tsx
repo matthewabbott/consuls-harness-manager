@@ -34,6 +34,7 @@ import Composer, { type ComposerHandle } from "./Composer";
 import HarnessBadge, { harnessLabel, isAgent } from "./HarnessBadge";
 import { displayTitle } from "./MiniTile";
 import MiniTile from "./MiniTile";
+import NotifyToggle, { canTrack } from "./NotifyToggle";
 import PaneNameField, { renameHint } from "./PaneNameField";
 import { PrefixHelp, PrefixPending, TmuxRenameField, usePrefixKeys } from "./PrefixKeys";
 import QuickKeys from "./QuickKeys";
@@ -173,6 +174,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             >
               {maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
             </HeaderIcon>
+            {canTrack(pane) && <NotifyToggle pane={pane} />}
             <button
               onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}
               title={

@@ -1,4 +1,4 @@
-import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Pencil, Plus, Power, SquareCode, Tag } from "lucide-react";
+import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Pencil, Plus, Power, Smartphone, SquareCode, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -7,6 +7,7 @@ import { isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
 import { LabelEditor } from "./LabelsPanel";
+import { canTrack, notifyTitle, toggleNotify } from "./NotifyToggle";
 import PaneNameField, { renameHint } from "./PaneNameField";
 
 export interface TileMenuState {
@@ -94,6 +95,14 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
           </>
         )}
         <div className="my-1 h-px bg-ink-700" />
+        {canTrack(pane) && (
+          <MenuItem icon={<Smartphone className="h-3.5 w-3.5" />} onClick={() => toggleNotify(pane)}>
+            <span className="flex-1" title={notifyTitle(pane)}>
+              Push to phone when waiting
+            </span>
+            {pane.notify && <Check className="h-3.5 w-3.5 text-jade-400" />}
+          </MenuItem>
+        )}
         <MenuItem icon={<BellRing className="h-3.5 w-3.5" />} onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}>
           <span className="flex-1">Ping on terminal bell</span>
           {pane.bellPings && <Check className="h-3.5 w-3.5 text-sky-400" />}

@@ -1,13 +1,14 @@
 //! tmux format strings we query, and parsers for their output.
 
 use super::parser::{PaneId, SessionId, WindowId};
+use crate::model::NotifyMode;
 
 /// Field separator. tmux replaces control characters (even tabs) in `-F` output with `_`
 /// when the client has no terminal, so we use a printable sequence that won't occur in ids.
 pub const SEP: &str = "|~|";
 
 /// `pane_title` is last because it's the only free-form field likely to contain `SEP`.
-pub const PANE_FORMAT: &str = "#{pane_id}|~|#{window_id}|~|#{session_id}|~|#{session_name}|~|#{window_index}|~|#{window_name}|~|#{pane_index}|~|#{pane_width}|~|#{pane_height}|~|#{pane_current_command}|~|#{pane_current_path}|~|#{pane_pid}|~|#{pane_dead}|~|#{alternate_on}|~|#{window_active}|~|#{pane_active}|~|#{@chm_id}|~|#{@chm_harness}|~|#{@chm_hidden}|~|#{session_group}|~|#{window_panes}|~|#{window_width}|~|#{window_height}|~|#{@chm_sized}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{pane_title}";
+pub const PANE_FORMAT: &str = "#{pane_id}|~|#{window_id}|~|#{session_id}|~|#{session_name}|~|#{window_index}|~|#{window_name}|~|#{pane_index}|~|#{pane_width}|~|#{pane_height}|~|#{pane_current_command}|~|#{pane_current_path}|~|#{pane_pid}|~|#{pane_dead}|~|#{alternate_on}|~|#{window_active}|~|#{pane_active}|~|#{@chm_id}|~|#{@chm_harness}|~|#{@chm_hidden}|~|#{session_group}|~|#{window_panes}|~|#{window_width}|~|#{window_height}|~|#{@chm_sized}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{@chm_notify}|~|#{@chm_seen}|~|#{@chm_state}|~|#{pane_title}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneRow {
@@ -42,6 +43,12 @@ pub struct PaneRow {
     pub bell: Option<bool>,
     /// `@chm_name`: the name the user gave the pane.
     pub name: Option<String>,
+    /// `@chm_notify`: push to the phone for this pane.
+    pub notify: Option<NotifyMode>,
+    /// `@chm_seen`: when a device last showed the pane to the user while it waited.
+    pub seen: Option<u64>,
+    /// `@chm_state`: the last hook event the pane's agent reported (it has hooks).
+    pub hook_state: Option<String>,
     pub title: String,
 }
 
@@ -68,8 +75,8 @@ fn opt(s: &str) -> Option<String> {
 }
 
 pub fn parse_pane_row(line: &str) -> Option<PaneRow> {
-    let f: Vec<&str> = line.splitn(28, SEP).collect();
-    if f.len() < 28 {
+    let f: Vec<&str> = line.splitn(31, SEP).collect();
+    if f.len() < 31 {
         return None;
     }
     Some(PaneRow {
@@ -100,7 +107,10 @@ pub fn parse_pane_row(line: &str) -> Option<PaneRow> {
         labels: parse_labels(f[24]),
         bell: parse_bell(f[25]),
         name: opt(f[26]),
-        title: f[27].to_string(),
+        notify: NotifyMode::parse(f[27]),
+        seen: f[28].trim().parse().ok(),
+        hook_state: opt(f[29]),
+        title: f[30].to_string(),
     })
 }
 
@@ -192,7 +202,7 @@ mod tests {
 
     #[test]
     fn pane_row() {
-        let line = "%1|~|@1|~|$1|~|annotator-omp-1|~|1|~|bash|~|1|~|68|~|22|~|omp|~|/home/c/proj|~|401604|~|0|~|0|~|1|~|1|~||~||~||~|annotator-omp|~|2|~|137|~|22|~|1|~|terrarium,urgent|~|0|~|PR #12 review|~|_ > Hysteresis|~|benchmark";
+        let line = "%1|~|@1|~|$1|~|annotator-omp-1|~|1|~|bash|~|1|~|68|~|22|~|omp|~|/home/c/proj|~|401604|~|0|~|0|~|1|~|1|~||~||~||~|annotator-omp|~|2|~|137|~|22|~|1|~|terrarium,urgent|~|0|~|PR #12 review|~|delay|~|1790000000|~|Stop|~|_ > Hysteresis|~|benchmark";
         let row = parse_pane_row(line).unwrap();
         assert_eq!((row.pane, row.window, row.session), (1, 1, 1));
         assert_eq!((row.width, row.height), (68, 22));
@@ -204,6 +214,20 @@ mod tests {
         assert_eq!(row.labels, vec!["terrarium", "urgent"]);
         assert_eq!(row.bell, Some(false));
         assert_eq!(row.name.as_deref(), Some("PR #12 review"));
+        assert_eq!((row.notify, row.seen, row.hook_state.as_deref()), (Some(NotifyMode::Delay), Some(1_790_000_000), Some("Stop")));
+    }
+
+    #[test]
+    fn notify_values() {
+        assert_eq!(NotifyMode::parse(""), None);
+        assert_eq!(NotifyMode::parse("delay"), Some(NotifyMode::Delay));
+        assert_eq!(NotifyMode::parse("any"), Some(NotifyMode::Any));
+        assert_eq!(NotifyMode::parse("finished"), Some(NotifyMode::Finished));
+        // A newer build's mode still tracks.
+        assert_eq!(NotifyMode::parse("smart"), Some(NotifyMode::Delay));
+        for m in [NotifyMode::Delay, NotifyMode::Any, NotifyMode::Finished] {
+            assert_eq!(NotifyMode::parse(m.as_str()), Some(m));
+        }
     }
 
     #[test]

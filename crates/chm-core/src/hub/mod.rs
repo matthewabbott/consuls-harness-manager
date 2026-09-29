@@ -520,14 +520,33 @@ impl Core {
         self.pane(key, PaneCmd::SetBell { key, bell });
     }
 
-    /// What the user is looking at (drives ping/toast/ack rules).
+    /// Push to your phone for this pane (`None`: don't). Kept on the tmux pane, so every
+    /// device and the push daemon agree.
+    pub fn set_pane_notify(&self, key: u32, mode: Option<crate::model::NotifyMode>) {
+        self.pane(key, PaneCmd::SetNotify { key, mode });
+    }
+
+    /// A device showed you the pane: a push for it that's still to come is dropped (see
+    /// `@chm_seen`).
+    pub fn mark_pane_seen(&self, key: u32) {
+        self.pane(key, PaneCmd::MarkSeen { key });
+    }
+
+    /// What the user is looking at (drives ping/toast/ack rules). Looking at a pane in a
+    /// focused window counts as having seen it.
     pub fn set_focus(&self, focus: FocusState) {
         self.ctx.set_focus(focus);
+        if focus.window_focused
+            && let Some(key) = focus.expanded
+        {
+            self.mark_pane_seen(key);
+        }
     }
 
     /// The user interacted with a pane's tile: stop glowing.
     pub fn ack_pane(&self, key: u32) {
         self.ctx.ack(key);
+        self.mark_pane_seen(key);
     }
 
     pub fn set_pane_muted(&self, key: u32, muted: bool) {

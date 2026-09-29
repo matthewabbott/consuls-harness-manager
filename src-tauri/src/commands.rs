@@ -213,6 +213,12 @@ pub fn set_pane_bell(state: State<'_, AppState>, key: u32, bell: Option<bool>) {
     state.core.set_pane_bell(key, bell);
 }
 
+/// Push to the phone for this pane (`null`: don't); kept on the tmux pane (`@chm_notify`).
+#[tauri::command]
+pub fn set_pane_notify(state: State<'_, AppState>, key: u32, mode: Option<chm_core::model::NotifyMode>) {
+    state.core.set_pane_notify(key, mode);
+}
+
 /// Shells that can be started on this machine ("This PC").
 #[tauri::command]
 pub fn local_shells(state: State<'_, AppState>) -> Vec<chm_core::local::LocalShell> {

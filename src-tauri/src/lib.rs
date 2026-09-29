@@ -149,6 +149,7 @@ pub fn run() {
             commands::local_shells,
             commands::local_drives,
             commands::set_pane_bell,
+            commands::set_pane_notify,
             commands::fs_op,
             commands::fs_count,
             commands::git_status,

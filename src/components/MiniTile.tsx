@@ -13,6 +13,7 @@ import { isDirect, paneName, paneWhere } from "../lib/panes";
 import { paintTile } from "../term/tilePainter";
 import { getTile, subscribeTile } from "../term/tiles";
 import HarnessBadge from "./HarnessBadge";
+import NotifyToggle, { canTrack } from "./NotifyToggle";
 
 /** Strip the status glyph some harnesses prefix to their terminal title. */
 function cleanTitle(title: string): string {
@@ -132,6 +133,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
             </div>
           )}
         </div>
+        {canTrack(pane) && <NotifyToggle pane={pane} small={compact} />}
         {!compact && (
           <>
             <span

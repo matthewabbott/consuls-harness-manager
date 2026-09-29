@@ -376,6 +376,48 @@ pub struct PaneInfo {
     pub bell: Option<bool>,
     /// Whether a bell pings: the user's choice, else on for chat clients (irssi, weechat, …).
     pub bell_pings: bool,
+    /// Push to your phone for this pane (tmux: `@chm_notify`, so every device and the push
+    /// daemon agree). `None`: not tracked.
+    pub notify: Option<NotifyMode>,
+    /// When a device last showed you this pane while it waited (tmux: `@chm_seen`, unix
+    /// seconds): the push daemon drops a push you've already seen.
+    #[ts(type = "number | null")]
+    pub seen: Option<u64>,
+}
+
+/// When a tracked pane pushes to your phone.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum NotifyMode {
+    /// If it's still waiting for you after a while (the default).
+    Delay,
+    /// As soon as it finishes a turn or asks for something.
+    Any,
+    /// As soon as it finishes a turn; not for questions or permission prompts.
+    Finished,
+}
+
+impl NotifyMode {
+    /// Its `@chm_notify` value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NotifyMode::Delay => "delay",
+            NotifyMode::Any => "any",
+            NotifyMode::Finished => "finished",
+        }
+    }
+
+    /// A `@chm_notify` value: empty is untracked, and one this build doesn't know (set by a
+    /// newer one) still tracks, with the default.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "" => None,
+            "any" => Some(NotifyMode::Any),
+            "finished" => Some(NotifyMode::Finished),
+            _ => Some(NotifyMode::Delay),
+        }
+    }
 }
 
 /// A pane name as the user typed it, made safe to store: one line, no control characters,
