@@ -1,50 +1,6 @@
 @import "tailwindcss";
 
-@theme {
-  --color-ink-950: #07090d;
-  --color-ink-900: #0b0d12;
-  --color-ink-850: #0e1119;
-  --color-ink-800: #121622;
-  --color-ink-750: #161b29;
-  --color-ink-700: #1b2130;
-  --color-ink-600: #262d40;
-  --color-ink-500: #363e56;
-  --color-mist-500: #5f6780;
-  --color-mist-400: #7c849b;
-  --color-mist-300: #a3abc2;
-  --color-mist-200: #c6cce0;
-  --color-mist-100: #e3e7f2;
-  --color-ember-500: #ec8a3e;
-  --color-ember-400: #f5a25d;
-  --color-ember-300: #ffc27f;
-  --color-iris-400: #a192ff;
-  --color-iris-300: #c0b6ff;
-  --color-jade-400: #4ade9a;
-  --color-sky-400: #6aa9ff;
-  --color-rose-400: #ff6b81;
-  --color-claude: #d97757;
-  --color-codex: #d7dbe6;
-  --color-omp: #a192ff;
-  --color-pi: #8fb3ff;
-  --color-opencode: #f2c14e;
-  --color-gemini: #5b8cff;
-
-  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI", "Inter", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace;
-
-  --animate-breathe: breathe 2.4s ease-in-out infinite;
-  --animate-rise: rise 180ms ease-out both;
-
-  @keyframes breathe {
-    0%, 100% { opacity: 0.45; }
-    50% { opacity: 1; }
-  }
-  @keyframes rise {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: none; }
-  }
-}
+@import "./theme.css";
 
 html,
 body,

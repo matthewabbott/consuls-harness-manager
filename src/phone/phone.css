@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@import "../theme.css";
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-ink-900);
+  color: var(--color-mist-200);
+  font-family: -apple-system, system-ui, var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}

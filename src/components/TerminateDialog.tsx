@@ -6,7 +6,7 @@ import { useApp } from "../store/app";
 import { useRedact } from "../store/recording";
 import { harnessLabel, isAgent } from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
-import { displayTitle } from "./MiniTile";
+import { displayTitle } from "../lib/panes";
 import { isDirect, paneWhere } from "../lib/panes";
 import { hostLabel } from "../lib/hosts";
 

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/chm-core", "src-tauri"]
+members = ["crates/chm-core", "crates/chm-daemon", "src-tauri"]
 
 [workspace.package]
 edition = "2024"

@@ -10,7 +10,8 @@ import { useRedact } from "../store/recording";
 import { useUi } from "../store/ui";
 import { isAgent } from "./HarnessBadge";
 import FileTile from "./FileTile";
-import MiniTile, { displayTitle } from "./MiniTile";
+import { displayTitle } from "../lib/panes";
+import MiniTile from "./MiniTile";
 import { useEditor } from "../store/editor";
 
 function matches(p: PaneInfo, q: string, labelNames: string): boolean {

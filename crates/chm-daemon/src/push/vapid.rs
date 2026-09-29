@@ -1,0 +1,150 @@
+//! VAPID (RFC 8292): the daemon's identity toward push services. One P-256 key for the daemon's
+//! whole life, kept in `vapid.json`: every subscription is bound to it, so it's never rotated.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+
+use anyhow::{Context, anyhow};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use p256::SecretKey;
+use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{Signature, SigningKey};
+use p256::elliptic_curve::Generate;
+use serde::{Deserialize, Serialize};
+
+/// Tokens last this long (push services allow up to 24 h).
+const LIFETIME: u64 = 12 * 3600;
+/// A cached token is signed again once it has less than this left.
+const REFRESH: u64 = 3600;
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct KeyFile {
+    /// The P-256 private scalar, base64url.
+    private_key: String,
+}
+
+pub struct Vapid {
+    key: SigningKey,
+    /// Uncompressed public key, base64url: the `applicationServerKey` phones subscribe with.
+    public: String,
+    /// `sub` claim: how a push service can reach the sender (a `mailto:` or `https:` URL).
+    subject: String,
+    /// Signed tokens per push service origin, with their expiry.
+    tokens: Mutex<HashMap<String, (String, u64)>>,
+}
+
+impl Vapid {
+    /// Loads `path`, or makes a new key there (0600).
+    pub fn load_or_create(path: &Path, subject: String) -> anyhow::Result<Self> {
+        let secret = match std::fs::read_to_string(path) {
+            Ok(text) => {
+                let file: KeyFile = serde_json::from_str(&text).with_context(|| format!("{}", path.display()))?;
+                SecretKey::from_slice(&URL_SAFE_NO_PAD.decode(file.private_key)?).context("bad VAPID key")?
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let secret = SecretKey::generate();
+                let file = KeyFile { private_key: URL_SAFE_NO_PAD.encode(secret.to_bytes()) };
+                crate::files::write_private(path, serde_json::to_string_pretty(&file)?.as_bytes())?;
+                secret
+            }
+            Err(e) => return Err(e).with_context(|| format!("{}", path.display())),
+        };
+        Ok(Self::new(secret, subject))
+    }
+
+    pub fn new(secret: SecretKey, subject: String) -> Self {
+        let public = URL_SAFE_NO_PAD.encode(secret.public_key().to_sec1_bytes());
+        Self { key: SigningKey::from(secret), public, subject, tokens: Mutex::new(HashMap::new()) }
+    }
+
+    pub fn public_key(&self) -> &str {
+        &self.public
+    }
+
+    /// The `Authorization` header for a push to `endpoint` at unix time `now`.
+    pub fn authorization(&self, endpoint: &str, now: u64) -> anyhow::Result<String> {
+        let aud = audience(endpoint)?;
+        let mut tokens = self.tokens.lock().unwrap();
+        let token = match tokens.get(&aud) {
+            Some((t, exp)) if *exp > now + REFRESH => t.clone(),
+            _ => {
+                let exp = now + LIFETIME;
+                let t = self.token(&aud, exp);
+                tokens.insert(aud, (t.clone(), exp));
+                t
+            }
+        };
+        Ok(format!("vapid t={token}, k={}", self.public))
+    }
+
+    /// An ES256 JWT: `{aud, exp, sub}`.
+    fn token(&self, aud: &str, exp: u64) -> String {
+        let header = URL_SAFE_NO_PAD.encode(br#"{"typ":"JWT","alg":"ES256"}"#);
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::json!({ "aud": aud, "exp": exp, "sub": self.subject }).to_string());
+        let input = format!("{header}.{claims}");
+        let signature: Signature = self.key.sign(input.as_bytes());
+        format!("{input}.{}", URL_SAFE_NO_PAD.encode(signature.to_bytes()))
+    }
+}
+
+/// A push endpoint's origin (`https://web.push.apple.com`), the token's `aud`.
+pub fn audience(endpoint: &str) -> anyhow::Result<String> {
+    let uri: http::Uri = endpoint.parse().context("bad endpoint")?;
+    let scheme = uri.scheme_str().ok_or_else(|| anyhow!("endpoint has no scheme"))?;
+    let authority = uri.authority().ok_or_else(|| anyhow!("endpoint has no host"))?;
+    Ok(format!("{scheme}://{authority}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use p256::ecdsa::VerifyingKey;
+    use p256::ecdsa::signature::Verifier;
+
+    use super::*;
+
+    #[test]
+    fn tokens_verify_and_carry_the_claims() {
+        let vapid = Vapid::new(SecretKey::generate(), "https://daemon.example.ts.net".into());
+        let header = vapid.authorization("https://web.push.apple.com/QGm2x-abc", 1_790_000_000).unwrap();
+        let (t, k) = header.strip_prefix("vapid t=").unwrap().split_once(", k=").unwrap();
+        assert_eq!(k, vapid.public_key());
+        let parts: Vec<&str> = t.split('.').collect();
+        assert_eq!(parts.len(), 3);
+        let claims: serde_json::Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
+        assert_eq!(claims["aud"], "https://web.push.apple.com");
+        assert_eq!(claims["exp"], 1_790_000_000 + LIFETIME);
+        assert_eq!(claims["sub"], "https://daemon.example.ts.net");
+        let key = VerifyingKey::from_sec1_bytes(&URL_SAFE_NO_PAD.decode(k).unwrap()).unwrap();
+        let sig = Signature::from_slice(&URL_SAFE_NO_PAD.decode(parts[2]).unwrap()).unwrap();
+        key.verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &sig).expect("the signature checks out");
+        // Cached per origin until close to expiry.
+        assert_eq!(vapid.authorization("https://web.push.apple.com/other", 1_790_000_100).unwrap(), header);
+        assert_ne!(vapid.authorization("https://web.push.apple.com/x", 1_790_000_000 + LIFETIME - 60).unwrap(), header);
+    }
+
+    #[test]
+    fn audience_is_the_origin() {
+        assert_eq!(audience("https://fcm.googleapis.com/fcm/send/abc").unwrap(), "https://fcm.googleapis.com");
+        assert_eq!(audience("http://127.0.0.1:9000/push/1").unwrap(), "http://127.0.0.1:9000");
+        assert!(audience("not a url").is_err());
+    }
+
+    #[test]
+    fn the_key_survives_restarts() {
+        let dir = std::env::temp_dir().join(format!("chm-vapid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vapid.json");
+        let a = Vapid::load_or_create(&path, "https://x".into()).unwrap();
+        let b = Vapid::load_or_create(&path, "https://x".into()).unwrap();
+        assert_eq!(a.public_key(), b.public_key());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

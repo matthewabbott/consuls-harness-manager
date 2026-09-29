@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { useRecording } from "../store/recording";
-import { displayTitle } from "./MiniTile";
+import { displayTitle } from "../lib/panes";
 
 /** Where a pane's name is kept, for the hint under the field. */
 export function renameHint(p: PaneInfo): string {

@@ -9,27 +9,11 @@ import { useApp } from "../store/app";
 import { beginTileDrag, consumeJustDragged } from "../store/drag";
 import { useRecording, useRedact } from "../store/recording";
 import { resolveLabels } from "../lib/labels";
-import { isDirect, paneName, paneWhere } from "../lib/panes";
+import { displayTitle, isDirect, paneWhere } from "../lib/panes";
 import { paintTile } from "../term/tilePainter";
 import { getTile, subscribeTile } from "../term/tiles";
 import HarnessBadge from "./HarnessBadge";
 import NotifyToggle, { canTrack } from "./NotifyToggle";
-
-/** Strip the status glyph some harnesses prefix to their terminal title. */
-function cleanTitle(title: string): string {
-  return title.replace(/^[✳✻✶✢·◐◑◒◓⠀-⣿*•]+\s*/u, "").trim();
-}
-
-export function displayTitle(p: PaneInfo): string {
-  if (p.name) return p.name;
-  const t = cleanTitle(p.title);
-  // Shells title themselves with the host, user@host:path, or (Windows) their exe path /
-  // `MINGW64:/…`; none of those beat the folder.
-  const noise = /^[\w.-]+@[\w.-]+:/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^MINGW(32|64):/.test(t);
-  if (t && t !== p.host && !t.startsWith(p.host + ":") && !noise) return t;
-  if (p.harness === "shell" || p.harness === null) return shortPath(p.currentPath);
-  return paneName(p);
-}
 
 interface Props {
   pane: PaneInfo;

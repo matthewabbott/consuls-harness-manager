@@ -2,7 +2,7 @@ import { Bot, Eye, EyeOff, LayoutGrid, Plus, Search, X } from "lucide-react";
 import { useState } from "react";
 
 import { backend } from "../ipc/backend";
-import { displayTitle } from "./MiniTile";
+import { displayTitle } from "../lib/panes";
 
 import { useApp, type PaneFilter } from "../store/app";
 import { useUi } from "../store/ui";

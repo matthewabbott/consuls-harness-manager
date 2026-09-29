@@ -1,0 +1,43 @@
+[package]
+name = "chm-daemon"
+description = "Consuls push daemon: headless chm-core on an always-on machine, pushing to your phone"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "consuls-daemon"
+path = "src/main.rs"
+
+[dependencies]
+chm-core = { path = "../chm-core" }
+tokio = { workspace = true, features = ["signal"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+ts-rs.workspace = true
+
+# Web Push (RFC 8291 / 8292) on the RustCrypto crates russh already brings in.
+p256 = { version = "0.14", default-features = false, features = ["std", "ecdh", "ecdsa", "getrandom"] }
+aes-gcm = "0.11"
+hkdf = "0.13"
+sha2 = "0.11"
+base64 = "0.22"
+getrandom = "0.3"
+
+# HTTP: the API behind `tailscale serve`, and the client to push services. TLS through rustls
+# with ring only (no aws-lc, no openssl), which keeps cross-compiling simple.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+http = "1"
+bytes = "1"
+http-body-util = "0.1"
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "ring", "tls12", "webpki-tokio"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
