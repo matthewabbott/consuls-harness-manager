@@ -10,6 +10,7 @@ pub mod integration;
 pub mod link;
 pub mod local;
 pub mod model;
+pub mod notify;
 pub mod pty;
 pub mod ssh;
 pub mod tailscale;
