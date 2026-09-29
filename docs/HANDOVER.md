@@ -110,6 +110,42 @@ Roughly in order. Each is small-to-medium and self-contained.
   - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH
     server lands in cmd/PowerShell, so `exec`'s `$SHELL -lc` wrapper would need a Cygwin-aware
     variant.
+- The push daemon (branch `push-daemon`, 2026-09-29). docs/DAEMON.md has the runbook.
+  - The user's calls:
+    - The phone app is a Home Screen web app served by the daemon, with Web Push: no Apple
+      account. A native wrapper (APNs) is possible later behind the same API.
+    - Tracking is per agent and off by default, one tap away on tiles and in the phone's list.
+    - The default push is "still waiting after a delay". Its "finished only" variant means a
+      turn ended, not a question or permission prompt.
+  - Done:
+    - `@chm_notify` / `@chm_seen` on tmux panes, and the desktop switch (`NotifyToggle`).
+    - `chm_core::notify::Policy`.
+    - `crates/chm-daemon`: headless core, Web Push, API, the embedded phone app.
+    - Deployed on spark-d683; the e2e passes.
+  - 2026-09-29: the user approved the daemon's SSH checks and set up `tailscale serve`. The
+    phone app is on their Home Screen, and a test push arrived.
+  - Seen in the phone app:
+    - This Mac showed "No agents running". Claude Code renames its process to its version
+      (`2.1.284`), so harness detection by command misses it unless `@chm_harness` is set.
+    - spark-d683 was hidden while it had no agents (the list skips an empty `@local`).
+    - The switch has no visible label, and panes can't be opened yet.
+  - Roadmap:
+    1. Per-agent modes in a context menu for tracked agents: any turn end / after a delay /
+       finished only. The policy already has all three (`NotifyMode`); only the UI is missing.
+       Also per-pane delays and phone settings.
+    2. Grow the phone app into the full UI:
+       - a WebSocket for `CoreEvent`s and frames;
+       - a `daemonBackend()` implementing `Backend`, so the store and components are reused;
+       - reading and copying context, the composer with dictation, tmux, files.
+       Typing from the phone raises the security bar.
+    3. Desktops clear their glow when `@chm_seen` says the pane was seen elsewhere.
+    4. Windows PC coverage: the desktop app relays its `@local` alerts to the daemon (Tailscale
+       SSH has no Windows server).
+    5. Quiet hours, reminders, "at my desk" suppression.
+    6. A hook for "resumed after a permission prompt". Approving outside Consuls leaves a stale
+       "needs you" push today.
+    7. `events.jsonl` rotation that's safe with several readers.
+    8. Headless: skip the per-pane terminal emulator.
 
 ### 1. Sidebars (done in V3-1)
 - Right sidebar (the filmstrip beside an expanded pane, `ExpandedPane.tsx`): its collapse toggle

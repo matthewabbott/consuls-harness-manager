@@ -20,6 +20,11 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   notification if Consuls isn't focused; clicking it opens the pane); its tile glows until you
   look, then shows "Waiting on you". Ctrl+Shift+Space (⇧⌘Space on a Mac) jumps to the next
   waiting pane.
+- **Push to your phone**: with the push daemon running on an always-on machine
+  ([docs/DAEMON.md](docs/DAEMON.md)), flip the phone icon on an agent's tile (or its switch in
+  the phone app) and it pushes to your phone when it's still waiting for you after a few
+  minutes — not if you answered, or looked at it on a desktop, meanwhile. The phone app is a
+  Home Screen web app served over your tailnet: no App Store, no Apple developer account.
 - **Labels**: tag panes (right-click a tile, or drag it onto a label in the sidebar), then
   group the grid by label, project, status or machine and sort by attention, name or recency.
   Labels are stored on the tmux pane (`@chm_labels`), so every device sees the same tags.
@@ -153,8 +158,8 @@ by word).
 ## Not yet
 
 Next up:
-- Reaching a Windows PC from another Consuls (e.g. the Mac) over SSH.
-- tmux on This PC when that's a Linux box: written (it's the macOS code), not yet tried.
+- Per-agent push modes (immediately on any turn end / after a delay / only finished turns).
+- The phone app beyond notifications: reading and copying context, typing, tmux, files, dictation.
+- Reaching a Windows PC from another Consuls (e.g. the Mac) over SSH, and push coverage for it.
 
-Bigger: the iPhone app and push notifications, a transcript-backed conversation view,
-sub-agent panes, per-harness expandable regions.
+Bigger: a transcript-backed conversation view, sub-agent panes, per-harness expandable regions.

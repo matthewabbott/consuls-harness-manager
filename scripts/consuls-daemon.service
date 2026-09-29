@@ -1,0 +1,21 @@
+# Consuls push daemon, as a systemd user service (see docs/DAEMON.md).
+# Installed by scripts/deploy-daemon.sh to ~/.config/systemd/user/.
+[Unit]
+Description=Consuls push daemon (watches your agents, pushes to your phone)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/consuls-daemon run
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info,russh=warn
+# Fewer malloc arenas: the machines this runs on can be short of memory.
+Environment=MALLOC_ARENA_MAX=2
+MemoryHigh=120M
+MemoryMax=250M
+NoNewPrivileges=yes
+# No PrivateTmp: tmux's sockets live in /tmp.
+
+[Install]
+WantedBy=default.target
