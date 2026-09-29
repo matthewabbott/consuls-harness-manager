@@ -5,10 +5,9 @@ import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { useRecording } from "../store/recording";
 import { displayTitle } from "./MiniTile";
 
-/** What naming a pane does beyond Consuls, for the hint under the field. */
+/** Where a pane's name is kept, for the hint under the field. */
 export function renameHint(p: PaneInfo): string {
-  if (!p.tmux) return "Kept while the shell runs.";
-  return p.tmux.windowPanes <= 1 ? "Also names its tmux window." : "The tmux window is split, so it keeps its name.";
+  return p.tmux ? "Shown in Consuls (on every device); tmux keeps its own names." : "Kept while the shell runs.";
 }
 
 /**

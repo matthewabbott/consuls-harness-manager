@@ -1,6 +1,5 @@
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -9,6 +8,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { tmuxKey } from "../term/keymap";
+import { isPrefix } from "../term/tmuxPrefix";
 import { theme } from "../term/palette";
 import { rawCopy, selectionRows, smartCopy } from "../term/smartCopy";
 import { attachStream } from "../term/streams";
@@ -18,6 +18,7 @@ import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { useRecording } from "../store/recording";
 import { findPaths, resolvePath } from "../term/links";
+import { findUrls, type RowText } from "../term/urls";
 import { StreamRedactor } from "../term/redactStream";
 import { imageFiles, pasteImagesInto } from "../store/attachments";
 import type React from "react";
@@ -49,7 +50,14 @@ interface Props {
    * answers terminal queries (it answers even while the pane isn't open here).
    */
   raw?: boolean;
+  /** tmux panes: the server's prefix key (`C-b`); the key after it goes to `onPrefixKey`. */
+  prefix?: string | null;
+  onPrefixKey?(key: string, tmuxName: string | null): void;
+  /** The prefix was pressed and the next key is awaited (or that ended). */
+  onPrefixPending?(pending: boolean): void;
 }
+
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
 
 interface Menu {
   x: number;
@@ -67,10 +75,13 @@ function measureCharRatio(): number {
 }
 
 const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
-  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false },
+  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false, prefix = null, onPrefixKey, onPrefixPending },
   ref,
 ) {
   const [menu, setMenu] = useState<Menu | null>(null);
+  // The terminal is built once per pane; key handling reads the latest prefix props from here.
+  const propsRef = useRef({ prefix, onPrefixKey, onPrefixPending });
+  propsRef.current = { prefix, onPrefixKey, onPrefixPending };
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -228,8 +239,29 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       b?.sendKeys(key, keys);
     };
 
+    let prefixPending = false;
+    const setPending = (on: boolean) => {
+      prefixPending = on;
+      propsRef.current.onPrefixPending?.(on);
+    };
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return !e.ctrlKey && !e.altKey; // let keypress produce text
+      // tmux panes: the server's prefix (Ctrl+B) and the key after it (see term/tmuxPrefix.ts).
+      const prefix = propsRef.current.prefix;
+      if (prefix && !MODIFIER_KEYS.has(e.key)) {
+        if (prefixPending) {
+          e.preventDefault();
+          setPending(false);
+          propsRef.current.onPrefixKey?.(e.key, tmuxKey(e));
+          return false;
+        }
+        if (isPrefix(e.key, tmuxKey(e), prefix)) {
+          e.preventDefault();
+          flushText();
+          setPending(true);
+          return false;
+        }
+      }
       const mod = e.ctrlKey || e.metaKey;
       // App shortcuts first.
       if (mod && e.key.toLowerCase() === "f") {
@@ -413,6 +445,9 @@ function swallowQueries(term: Terminal): { dispose(): void }[] {
   ];
 }
 
+/** Rows looked at above and below the pointer for a URL that wraps onto several of them. */
+const URL_ROWS = 20;
+
 /** Opens a URL from the terminal: https in the browser; anything else is only copied. */
 function openUrl(uri: string) {
   if (/^https:\/\//i.test(uri)) {
@@ -442,7 +477,30 @@ async function openPath(pane: PaneInfo, ref: string, line?: number, col?: number
  */
 function installLinks(term: Terminal, pane: () => PaneInfo) {
   const withMod = (e: MouseEvent) => e.ctrlKey || e.metaKey;
-  term.loadAddon(new WebLinksAddon((e, uri) => withMod(e) && openUrl(uri)));
+  // URLs, whole even when wrapped across rows (by the terminal, or by the program itself).
+  term.registerLinkProvider({
+    provideLinks(y, callback) {
+      const buf = term.buffer.active;
+      const first = Math.max(0, y - 1 - URL_ROWS);
+      const rows: RowText[] = [];
+      for (let i = first; i <= Math.min(buf.length - 1, y - 1 + URL_ROWS); i++) {
+        const line = buf.getLine(i);
+        rows.push({ text: line?.translateToString(false) ?? "", wrapped: line?.isWrapped ?? false });
+      }
+      const here = y - 1 - first;
+      const links = findUrls(rows, term.cols)
+        .filter((u) => u.start.row <= here && u.end.row >= here)
+        .map((u) => ({
+          range: { start: { x: u.start.col + 1, y: first + u.start.row + 1 }, end: { x: u.end.col + 1, y: first + u.end.row + 1 } },
+          text: u.url,
+          decorations: { underline: true, pointerCursor: true },
+          activate: (e: MouseEvent) => {
+            if (withMod(e)) openUrl(u.url);
+          },
+        }));
+      callback(links.length ? links : undefined);
+    },
+  });
   term.options.linkHandler = {
     allowNonHttpProtocols: true,
     activate: (e, uri) => {

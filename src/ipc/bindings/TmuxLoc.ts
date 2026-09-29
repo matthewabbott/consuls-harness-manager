@@ -15,4 +15,8 @@ windowPanes: number,
 /**
  * Harness Manager has pinned this window's size.
  */
-sized: boolean, };
+sized: boolean, 
+/**
+ * The server's prefix key as tmux names it (`C-b` unless the user changed it).
+ */
+prefix: string, };

@@ -5,7 +5,10 @@
 // own output to the pane width, indenting continuation lines under a gutter (`⏺ `, `• `).
 // Copying raw gives you those breaks and gutters. This joins soft wraps always, joins
 // hard wraps when a row ran up to the right edge and the next row continues the same
-// block, strips the gutter markers, and dedents.
+// block, strips the gutter markers, and dedents. A URL wrapped that way is joined without a
+// space, so it copies whole.
+
+import { EDGE_SLACK, continuesUrl } from "./urls";
 
 export interface Row {
   text: string;
@@ -16,9 +19,6 @@ export interface Row {
 const GUTTER = /^(\s*)([⏺●•⎿∙▪◦·]|└|⏵⏵?)\s+/u;
 const LIST_ITEM = /^\s*([-*+]|\d+[.)]|[a-z][.)])\s+/i;
 const FENCE = /^\s*(```|~~~)/;
-
-/** How close to the right edge a row must end to count as hard-wrapped. */
-const EDGE_SLACK = 8;
 
 function indentOf(s: string): number {
   return s.length - s.trimStart().length;
@@ -65,7 +65,8 @@ export function smartCopy(rows: Row[], cols: number): string {
 
     if (joinable) {
       const last = out.length - 1;
-      out[last] += (out[last].endsWith("-") ? "" : " ") + line.trimStart();
+      const glue = continuesUrl(prev!.raw, out[last], line, cols) || out[last].endsWith("-") ? "" : " ";
+      out[last] += glue + line.trimStart();
     } else {
       out.push(line);
     }

@@ -324,6 +324,23 @@ pub struct TmuxLoc {
     pub window_panes: u32,
     /// Harness Manager has pinned this window's size.
     pub sized: bool,
+    /// The server's prefix key as tmux names it (`C-b` unless the user changed it).
+    pub prefix: String,
+}
+
+/// tmux's own window operations, aimed at a pane (prefix keys in the expanded view).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "kind")]
+#[ts(export)]
+pub enum TmuxOp {
+    /// A new window in the pane's session (Ctrl+B c).
+    NewWindow,
+    /// Split the pane: side by side (Ctrl+B %) or one above the other (Ctrl+B ").
+    Split { horizontal: bool },
+    /// Ctrl+B ,
+    RenameWindow { name: String },
+    /// Ctrl+B $
+    RenameSession { name: String },
 }
 
 /// One pane, as shown in the grid.

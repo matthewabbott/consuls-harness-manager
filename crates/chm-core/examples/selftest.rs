@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use chm_core::fs::{FileContent, FsOp, SaveError};
 use chm_core::fs::git::GitFileStatus;
 use chm_core::harness::Harness;
-use chm_core::model::{Activity, Alert, AlertKind, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome};
+use chm_core::model::{Activity, Alert, AlertKind, AttentionLevel, CoreEvent, FocusState, HostConfig, NewPaneSpec, PaneAttention, PaneInfo, PaneKind, TerminateOutcome, TmuxOp};
 use chm_core::{Core, Sink};
 
 #[derive(Default)]
@@ -171,28 +171,45 @@ async fn main() -> anyhow::Result<()> {
     core.set_pane_labels(key, vec![]);
     wait_for("labels cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels.is_empty())).await;
 
-    // --- names: `@chm_name`, and the window's name while the pane has it to itself (put back
-    // when the name is cleared)
-    wait_for("window back to one pane", Duration::from_secs(5), || pane(key).is_some_and(|p| p.tmux.as_ref().is_some_and(|t| t.window_panes == 1))).await;
-    let naming = || async {
+    // --- names: `@chm_name` only; tmux's own window name stays as it was
+    let window_name = || async {
         let out = core
-            .exec(&host, &format!("{tmux} -L {socket} display -p -t '{pane_id}' '#{{window_name}}|#{{@chm_name}}|#{{automatic-rename}}|#{{@chm_window_name}}'"))
+            .exec(&host, &format!("{tmux} -L {socket} display -p -t '{pane_id}' '#{{window_name}}|#{{automatic-rename}}'"))
             .await
             .map_err(anyhow::Error::msg)?;
         anyhow::Ok(out.stdout_str().trim_end().to_string())
     };
+    let before = window_name().await?;
     core.rename_pane(key, Some("  PR #7\tfix ".into()));
-    wait_for("pane named", Duration::from_secs(5), || {
-        pane(key).is_some_and(|p| p.name.as_deref() == Some("PR #7 fix") && p.tmux.as_ref().is_some_and(|t| t.window_name == "PR #7 fix"))
-    })
-    .await;
-    assert_eq!(naming().await?, "PR #7 fix|PR #7 fix|0|=", "window renamed, automatic name saved");
+    wait_for("pane named", Duration::from_secs(5), || pane(key).is_some_and(|p| p.name.as_deref() == Some("PR #7 fix"))).await;
+    assert_eq!(window_name().await?, before, "the tmux window keeps its name");
     core.exec(&host, &format!("{tmux} -L {socket} set-option -p -t '{pane_id}' @chm_name elsewhere")).await.map_err(anyhow::Error::msg)?;
     wait_for("name set by another client seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.name.as_deref() == Some("elsewhere"))).await;
     core.rename_pane(key, Some(" ".into()));
     wait_for("name cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.name.is_none())).await;
-    assert_eq!(naming().await?.split('|').skip(1).collect::<Vec<_>>(), ["", "1", ""], "tmux names the window again");
-    println!("ok   pane names (window renamed and given back)");
+    println!("ok   pane names (in @chm_name; the window keeps its own)");
+
+    // --- prefix keys: tmux's own window operations, aimed at this pane
+    let prefix = pane(key).and_then(|p| p.tmux).map(|t| t.prefix).unwrap_or_default();
+    assert!(!prefix.is_empty(), "the server's prefix key is known");
+    let split = core.tmux_op(key, TmuxOp::Split { horizontal: true }).await.map_err(anyhow::Error::msg)?.expect("split returns the new pane");
+    wait_for("split pane listed", Duration::from_secs(5), || pane(split).is_some()).await;
+    let window = core.tmux_op(key, TmuxOp::NewWindow).await.map_err(anyhow::Error::msg)?.expect("new-window returns the new pane");
+    wait_for("new window listed in the same session", Duration::from_secs(5), || {
+        pane(window).and_then(|p| p.tmux).is_some_and(|t| t.session_name == "scratch" && t.window_panes == 1)
+    })
+    .await;
+    core.tmux_op(window, TmuxOp::RenameWindow { name: "win #2".into() }).await.map_err(anyhow::Error::msg)?;
+    wait_for("window renamed (with a literal #)", Duration::from_secs(5), || pane(window).and_then(|p| p.tmux).is_some_and(|t| t.window_name == "win #2")).await;
+    core.tmux_op(window, TmuxOp::RenameSession { name: "scratch-renamed".into() }).await.map_err(anyhow::Error::msg)?;
+    wait_for("session renamed", Duration::from_secs(5), || pane(key).and_then(|p| p.tmux).is_some_and(|t| t.session_name == "scratch-renamed")).await;
+    core.tmux_op(window, TmuxOp::RenameSession { name: "scratch".into() }).await.map_err(anyhow::Error::msg)?;
+    wait_for("session name restored", Duration::from_secs(5), || pane(key).and_then(|p| p.tmux).is_some_and(|t| t.session_name == "scratch")).await;
+    for k in [split, window] {
+        let _ = core.terminate_pane(k, true).await;
+    }
+    wait_for("split and window closed", Duration::from_secs(5), || pane(split).is_none() && pane(window).is_none()).await;
+    println!("ok   prefix keys: split, new window, rename window and session (prefix {prefix})");
 
     // --- a session destroyed under our control client (its last pane closed) must not crash
     // tmux <= 3.6: an all-panes subscription's timer dereferences the NULL session. Freezing

@@ -21,6 +21,7 @@ import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
+import type { TmuxOp } from "./bindings/TmuxOp";
 import type { TailnetStatus } from "./bindings/TailnetStatus";
 import type { UiPrefs } from "./bindings/UiPrefs";
 
@@ -79,13 +80,15 @@ export interface Backend {
   updateLabel(label: LabelDef): Promise<void>;
   deleteLabel(id: string): Promise<void>;
   setPaneLabels(key: number, labels: string[]): Promise<void>;
-  /** Name a pane; null (or blank) clears it. A tmux pane alone in its window names the window too. */
+  /** Name a pane (shown in Consuls only); null (or blank) clears it. */
   renamePane(key: number, name: string | null): Promise<void>;
   /** Ping on the pane's terminal bell; null = default (on for irssi, weechat, …). */
   setPaneBell(key: number, bell: boolean | null): Promise<void>;
   resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
   releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
+  /** tmux's own window operations on a tmux pane; resolves to the new pane's key, if any. */
+  tmuxOp(key: number, op: TmuxOp): Promise<number | null>;
   listDir(host: string, path: string): Promise<DirListing>;
   fsOp(host: string, op: FsOp): Promise<void>;
   /** Items a delete of `path` would remove (capped at 100,000 + 1). */
@@ -175,6 +178,7 @@ async function tauriBackend(): Promise<Backend> {
     deleteLabel: (id) => invoke("delete_label", { id }),
     setPaneLabels: (key, labels) => invoke("set_pane_labels", { key, labels }),
     renamePane: (key, name) => invoke("rename_pane", { key, name }),
+    tmuxOp: (key, op) => invoke("tmux_op", { key, op }),
     setPaneBell: (key, bell) => invoke("set_pane_bell", { key, bell }),
     resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
     releasePaneSize: (key) => invoke("release_pane_size", { key }),

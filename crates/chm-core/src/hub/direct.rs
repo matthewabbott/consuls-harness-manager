@@ -325,6 +325,9 @@ impl Direct {
                 self.info.bell_pings = crate::harness::bell_pings(bell, &self.info.current_command);
                 self.publish();
             }
+            PaneCmd::TmuxOp { reply, .. } => {
+                let _ = reply.send(Err("this is a plain shell, not a tmux pane".into()));
+            }
             PaneCmd::Terminate { reply, .. } => {
                 self.close();
                 let _ = reply.send(Ok(TerminateOutcome::Closed));

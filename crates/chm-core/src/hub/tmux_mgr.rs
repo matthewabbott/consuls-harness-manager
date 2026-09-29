@@ -14,7 +14,7 @@ use super::ctx::Ctx;
 use super::frames;
 use crate::harness::Harness;
 use crate::integration::assets::{self, Assets};
-use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc};
+use crate::model::{HostId, NewPaneSpec, NoticeLevel, PaneInfo, PaneKind, ResizeOutcome, TerminateOutcome, TmuxLoc, TmuxOp};
 use crate::cygwin::PathMap;
 use crate::link::Link;
 use crate::ssh::exec;
@@ -56,9 +56,11 @@ pub(crate) enum PaneCmd {
     SetBell { key: u32, bell: Option<bool> },
     /// Hide/unhide (stored in tmux as `@chm_hidden`, so every device agrees).
     Hide { key: u32, hidden: bool },
-    /// Name the pane (`None` clears it). tmux: `@chm_name`, plus the window's name when the
-    /// pane has the window to itself.
+    /// Name the pane (`None` clears it), in `@chm_name` so every device agrees. tmux's own
+    /// window and session names are left alone.
     Rename { key: u32, name: Option<String> },
+    /// tmux's own window operations; replies with the new pane's key (new window, split).
+    TmuxOp { key: u32, op: TmuxOp, reply: tokio::sync::oneshot::Sender<Result<Option<u32>, String>> },
     /// Quit the harness gracefully, then close the pane (or kill it outright with `force`).
     Terminate { key: u32, force: bool, reply: tokio::sync::oneshot::Sender<Result<TerminateOutcome, String>> },
 }
@@ -111,6 +113,8 @@ pub(crate) struct TmuxManager {
     events_tx: mpsc::UnboundedSender<(ClientKey, ClientEvent)>,
     panes: BTreeMap<PaneId, Pane>,
     server_start: u64,
+    /// The server's prefix key (`show-options -gv prefix`).
+    prefix: String,
     next_tag: u64,
     seeds: HashMap<u64, (PaneId, bool)>,
     /// Replies to skip at the front of a tagged seed (commands prefixed to it, e.g. a resize).
@@ -143,6 +147,7 @@ impl TmuxManager {
             events_tx,
             panes: BTreeMap::new(),
             server_start: 0,
+            prefix: "C-b".into(),
             next_tag: 1,
             seeds: HashMap::new(),
             seed_skip: HashMap::new(),
@@ -230,6 +235,15 @@ impl TmuxManager {
                     self.clients.insert(key, Client { client: Arc::new(client), group_key });
                 }
                 Err(e) => warn!(host = %self.host, "attach to {} failed: {e}", session.name),
+            }
+        }
+        if let Some(client) = self.any_client()
+            && let Ok(reply) = client.command("show-options -gv prefix").await
+        {
+            let prefix = reply.text().trim().to_string();
+            if !prefix.is_empty() && prefix != self.prefix {
+                self.prefix = prefix;
+                self.publish_due = true;
             }
         }
         self.relist().await;
@@ -396,6 +410,7 @@ impl TmuxManager {
                 pane_active: r.pane_active,
                 window_panes: r.window_panes,
                 sized: r.sized,
+                prefix: self.prefix.clone(),
             }),
             width: r.width,
             height: r.height,
@@ -905,6 +920,32 @@ impl TmuxManager {
         Some((*id, client))
     }
 
+    /// tmux's own window operations, aimed at a pane. New windows and panes are made with
+    /// `-d`, so other clients on the session stay where they are; the UI shows the new pane.
+    async fn tmux_op(&mut self, key: u32, op: TmuxOp) -> Result<Option<u32>, String> {
+        let (id, client) = self.pane_by_key(key).ok_or("that pane is gone")?;
+        let session = self.panes.get(&id).map(|p| p.row.session).ok_or("that pane is gone")?;
+        let pane = quote(&format!("%{id}"));
+        let env: String = self.pane_env.iter().map(|(k, v)| format!(" -e {}", quote(&format!("{k}={v}")))).collect();
+        // rename-window and rename-session expand formats: a literal `#` is `##`.
+        let literal = |s: &str| quote(&s.replace('#', "##"));
+        let line = match &op {
+            TmuxOp::NewWindow => format!("new-window -d -P -F '#{{pane_id}}' -t {}{env}", quote(&format!("${session}:"))),
+            TmuxOp::Split { horizontal } => {
+                format!("split-window -d {} -P -F '#{{pane_id}}' -t {pane}{env}", if *horizontal { "-h" } else { "-v" })
+            }
+            TmuxOp::RenameWindow { name } => format!("rename-window -t {pane} {}", literal(name.trim())),
+            TmuxOp::RenameSession { name } => format!("rename-session -t {} {}", quote(&format!("${session}")), literal(name.trim())),
+        };
+        if matches!(&op, TmuxOp::RenameWindow { name } | TmuxOp::RenameSession { name } if name.trim().is_empty()) {
+            return Err("a name can't be empty".into());
+        }
+        let reply = client.command(&line).await.map_err(|e| e.to_string())?;
+        self.schedule_relist();
+        let new = reply.text().trim().strip_prefix('%').and_then(|n| n.parse::<PaneId>().ok());
+        Ok(new.map(|id| self.ctx.pane_key(&self.host, self.server_start, id)))
+    }
+
     pub async fn pane_cmd(&mut self, cmd: PaneCmd) {
         match cmd {
             PaneCmd::Stream { key, on } => {
@@ -1038,10 +1079,12 @@ impl TmuxManager {
             }
             PaneCmd::Rename { key, name } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };
-                let Some(p) = self.panes.get(&id) else { return };
                 let name = name.as_deref().and_then(crate::model::clean_pane_name);
-                let row = p.row.clone();
-                let line = rename_line(id, &row, name.as_deref(), &window_naming(&client, id).await);
+                let target = quote(&format!("%{id}"));
+                let line = match &name {
+                    Some(name) => format!("set-option -p -t {target} @chm_name {}", quote(name)),
+                    None => format!("set-option -p -u -t {target} @chm_name"),
+                };
                 if let Err(e) = client.command(&line).await {
                     self.ctx.notice(Some(&self.host), NoticeLevel::Error, format!("Couldn't rename pane: {e}"));
                     return;
@@ -1050,7 +1093,9 @@ impl TmuxManager {
                     p.row.name = name;
                 }
                 self.publish();
-                self.schedule_relist();
+            }
+            PaneCmd::TmuxOp { key, op, reply } => {
+                let _ = reply.send(self.tmux_op(key, op).await);
             }
             PaneCmd::Terminate { key, force, reply } => {
                 let Some((id, client)) = self.pane_by_key(key) else {
@@ -1081,58 +1126,6 @@ async fn submit(client: &ControlClient, pane: PaneId, text: &str, images: &[Stri
         }
     }
     Ok(())
-}
-
-/// How a pane's window is named, as far as naming the pane goes.
-#[derive(Debug, Default)]
-struct WindowNaming {
-    /// The window's name from before we named it after its pane (`@chm_window_name`): empty
-    /// when tmux was naming it after the running command, `None` when we haven't named it.
-    saved: Option<String>,
-    /// tmux names the window after the running command (`automatic-rename`).
-    automatic: bool,
-}
-
-async fn window_naming(client: &ControlClient, pane: PaneId) -> WindowNaming {
-    let line = format!("display-message -p -t {} '#{{@chm_window_name}}|~|#{{automatic-rename}}'", quote(&format!("%{pane}")));
-    let text = client.command(&line).await.map(|r| r.text()).unwrap_or_default();
-    let Some((saved, automatic)) = text.trim_end().rsplit_once(SEP_STR) else { return WindowNaming::default() };
-    // Saved with a leading `=`, so an automatic name (empty) still counts as saved.
-    WindowNaming { saved: saved.strip_prefix('=').map(str::to_string), automatic: matches!(automatic, "1" | "on") }
-}
-
-/// One command line that names (or un-names) a pane. A pane alone in its window names the
-/// window too, so plain tmux clients show it; the window's own name is kept in
-/// `@chm_window_name`, and clearing the pane's name puts it back.
-fn rename_line(pane: PaneId, row: &crate::tmux::formats::PaneRow, name: Option<&str>, naming: &WindowNaming) -> String {
-    let target = quote(&format!("%{pane}"));
-    // rename-window expands formats: a literal `#` is `##`.
-    let rename = |to: &str| format!(" ; rename-window -t {target} {}", quote(&to.replace('#', "##")));
-    match name {
-        Some(name) => {
-            let mut line = format!("set-option -p -t {target} @chm_name {}", quote(name));
-            if row.window_panes <= 1 {
-                if naming.saved.is_none() {
-                    let was = if naming.automatic { "" } else { row.window_name.as_str() };
-                    line += &format!(" ; set-option -w -t {target} @chm_window_name {}", quote(&format!("={was}")));
-                }
-                line += &rename(name);
-            }
-            line
-        }
-        None => {
-            let mut line = format!("set-option -p -u -t {target} @chm_name");
-            if let Some(was) = &naming.saved {
-                if was.is_empty() {
-                    line += &format!(" ; set-option -w -u -t {target} automatic-rename");
-                } else {
-                    line += &rename(was);
-                }
-                line += &format!(" ; set-option -w -u -t {target} @chm_window_name");
-            }
-            line
-        }
-    }
 }
 
 /// tmux session/window names: keep them shell- and target-friendly.
@@ -1238,37 +1231,7 @@ pub(crate) async fn paste(client: &ControlClient, pane: PaneId, text: &str) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::{WindowNaming, chunk_str, rename_line, sanitize_name};
-    use crate::tmux::formats::parse_pane_row;
-
-    #[test]
-    fn rename_lines() {
-        let row = |panes: u32| {
-            let line = format!("%3|~|@2|~|$1|~|s|~|1|~|my win|~|0|~|80|~|24|~|bash|~|/|~|1|~|0|~|0|~|1|~|1|~||~||~||~||~|{panes}|~|80|~|24|~||~||~||~||~|t");
-            parse_pane_row(&line).unwrap()
-        };
-        let fresh = WindowNaming { saved: None, automatic: false };
-        assert_eq!(
-            rename_line(3, &row(1), Some("PR #1"), &fresh),
-            "set-option -p -t '%3' @chm_name 'PR #1' ; set-option -w -t '%3' @chm_window_name '=my win' ; rename-window -t '%3' 'PR ##1'"
-        );
-        // Named before: the window's original name is already saved.
-        let named = WindowNaming { saved: Some(String::new()), automatic: false };
-        assert_eq!(rename_line(3, &row(1), Some("x"), &named), "set-option -p -t '%3' @chm_name x ; rename-window -t '%3' x");
-        // A split window keeps its name.
-        assert_eq!(rename_line(3, &row(2), Some("x"), &fresh), "set-option -p -t '%3' @chm_name x");
-        // Clearing gives tmux the name back.
-        assert_eq!(
-            rename_line(3, &row(1), None, &named),
-            "set-option -p -u -t '%3' @chm_name ; set-option -w -u -t '%3' automatic-rename ; set-option -w -u -t '%3' @chm_window_name"
-        );
-        let was = WindowNaming { saved: Some("my win".into()), automatic: false };
-        assert_eq!(
-            rename_line(3, &row(1), None, &was),
-            "set-option -p -u -t '%3' @chm_name ; rename-window -t '%3' 'my win' ; set-option -w -u -t '%3' @chm_window_name"
-        );
-        assert_eq!(rename_line(3, &row(1), None, &fresh), "set-option -p -u -t '%3' @chm_name");
-    }
+    use super::{chunk_str, sanitize_name};
 
     #[test]
     fn names_are_sanitized() {

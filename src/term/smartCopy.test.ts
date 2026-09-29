@@ -17,6 +17,13 @@ describe("smartCopy", () => {
     expect(text).toBe("Reconnects now re-attach and re-seed every pane; the live test passes 8 consecutive seeds under load with no divergence.");
   });
 
+  it("joins a hard-wrapped URL without spaces (Claude Code's sign-in link)", () => {
+    const url = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=abc";
+    const chunks = url.match(/.{1,56}/g)!;
+    const text = smartCopy(rows("  Browser didn't open? Use the url below to sign in", "", ...chunks.map((c) => `  ${c}`)), COLS);
+    expect(text).toBe(`Browser didn't open? Use the url below to sign in\n\n${url}`);
+  });
+
   it("keeps short lines, blank lines and list items separate", () => {
     const text = smartCopy(
       rows("⏺ Corrected final status:", "", "  - Criterion 1: not met as written, both arms scored", "  - Criteria 2–4: met"),

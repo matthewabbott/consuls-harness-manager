@@ -143,6 +143,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
     choices) goes through `lib/uiState.ts` into the core's `ui-state.json`. Saves are batched
     (300 ms) and flushed on exit (`RunEvent::Exit`). Persisted zustand stores use
     `uiStorage` with `skipHydration`; `main.tsx` loads the state, rehydrates, then renders.
+    Debug builds use `ui-state-dev.json`, so E2E runs don't touch the release app's state.
   - Unsaved editor buffers are still in IndexedDB (`lib/drafts.ts`).
 
 ## Editor
@@ -166,15 +167,33 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   number, or a known extension is required, and nothing inside a URL) and resolves them against
   the pane's cwd. Ctrl+click only. URLs go through `open_external`, which stays https-only;
   other schemes are copied instead.
+- URLs are found across rows (`term/urls.ts`): terminal soft wraps, and hard wraps where a row
+  ran to the edge and the next carries on with URL characters. Claude Code prints its sign-in
+  link that way (Ink wraps it), and a link cut at the first wrap fails with "Missing
+  redirect_uri". Smart copy joins such a URL without a space. OSC 8 hyperlinks (Claude Code
+  sends the whole URL as one) take precedence: xterm's own provider is registered first.
+
+## tmux prefix keys
+
+- In a tmux pane's expanded view the server's prefix (`show-options -gv prefix`, in
+  `TmuxLoc.prefix`) starts a key sequence the app handles itself (`term/tmuxPrefix.ts`,
+  `components/PrefixKeys.tsx`), with tmux's stock meanings aimed at the pane on screen:
+  tmux's own commands for what changes tmux (`TmuxOp`: new window, split, rename window or
+  session; made with `-d` so other clients stay put), app actions for what a client does
+  (d → grid, n/p/0–9/o → show that pane, z → maximize, x → quit & close). The prefix twice
+  sends it to the program (Claude Code's Ctrl+B).
+- Not through tmux's key tables (`send-keys -K`): bindings would act on the control client's
+  current pane (not the one on screen), switching it would move other devices on that
+  session, `detach-client` would detach the app itself, and prompts (`,` `$` `:`) need a
+  status line a control client doesn't have.
 
 ## Pane names and pasted images
 
 - A pane's name is `@chm_name` (tmux) or kept in memory (plain shells); `displayTitle` shows it
-  in place of the title. A tmux pane alone in its window also renames the window, saving the
-  old name in the window option `@chm_window_name` (`=` + the name, or just `=` when tmux was
-  naming it automatically) so clearing puts it back. **`rename-window` expands formats**
-  (3.4 and 3.7 alike): a literal `#` must be sent as `##`. `@chm_name` is before `pane_title`
-  in both formats, so names can't contain `|~|` (`clean_pane_name`).
+  in place of the title. It never renames the tmux window or session (the user's call: names are
+  Consuls-only). If that ever changes: **`rename-window` expands formats** (3.4 and 3.7 alike),
+  so a literal `#` must be sent as `##`. `@chm_name` is before `pane_title` in both formats, so
+  names can't contain `|~|` (`clean_pane_name`).
 - Pasted images are saved on the pane's machine (`~/.cache/consuls/pastes/` over one exec with
   the bytes on stdin; This PC: the OS cache folder) and removed after a week. The UI sends the
   bytes as a raw IPC body with `chm-host`/`chm-ext` headers (`save_paste`).

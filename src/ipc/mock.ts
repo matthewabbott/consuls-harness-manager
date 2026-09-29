@@ -139,6 +139,7 @@ function pane(key: number, host: string, extra: PaneExtra, lines: Seg[][], curso
               paneActive: true,
               windowPanes: 1,
               sized: false,
+              prefix: "C-b",
               ...tmux,
             },
       width: 100,
@@ -472,9 +473,26 @@ export function mockBackend(): Backend {
       const p = panes.find((p) => p.info.key === key);
       if (!p) return;
       const clean = name?.replace(/\s+/g, " ").trim().slice(0, 60) || null;
-      const t = p.info.tmux;
-      p.info = { ...p.info, name: clean, tmux: t && t.windowPanes <= 1 ? { ...t, windowName: clean ?? t.windowName } : t };
+      p.info = { ...p.info, name: clean };
       emitPanes(p.info.host);
+    },
+    tmuxOp: async (key, op) => {
+      const p = panes.find((p) => p.info.key === key);
+      const t = p?.info.tmux;
+      if (!p || !t) throw "that pane is gone";
+      if (op.kind === "renameWindow") p.info = { ...p.info, tmux: { ...t, windowName: op.name } };
+      else if (op.kind === "renameSession") {
+        for (const q of panes) if (q.info.tmux?.sessionId === t.sessionId) q.info = { ...q.info, tmux: { ...q.info.tmux, sessionName: op.name } };
+      } else {
+        const key = 200 + panes.length;
+        const windowIndex = op.kind === "newWindow" ? Math.max(...panes.filter((q) => q.info.tmux?.sessionId === t.sessionId).map((q) => q.info.tmux!.windowIndex)) + 1 : t.windowIndex;
+        const tmux = { ...t, paneId: `%${key}`, windowIndex, paneIndex: op.kind === "newWindow" ? 0 : t.paneIndex + 1, paneActive: false, windowName: op.kind === "newWindow" ? "bash" : t.windowName };
+        panes.push({ ...p, info: { ...p.info, key, tmux, title: "", name: null, harness: "shell", currentCommand: "bash", labels: [] } });
+        emitPanes(p.info.host);
+        return key;
+      }
+      emitPanes(p.info.host);
+      return null;
     },
     setPaneHidden: async (key, hidden) => {
       const p = panes.find((p) => p.info.key === key);

@@ -77,6 +77,9 @@ struct UiState {
 
 /// Largest value the UI may store under one key.
 const UI_VALUE_LIMIT: usize = 4 * 1024 * 1024;
+/// The UI state file. Debug builds (the ones end-to-end tests drive, against the real config
+/// folder) keep their own, so a test run can't change the release app's layout or choices.
+const UI_STATE_FILE: &str = if cfg!(debug_assertions) { "ui-state-dev.json" } else { "ui-state.json" };
 
 impl Core {
     /// Loads config from `data_dir`. Call [`Core::start`] from within a tokio runtime.
@@ -84,7 +87,7 @@ impl Core {
         let _ = std::fs::create_dir_all(&data_dir);
         let known_hosts = Arc::new(KnownHosts::load(data_dir.join("known_hosts.json")));
         let config = load_config(&data_dir.join("config.json"));
-        let ui_values = std::fs::read(data_dir.join("ui-state.json"))
+        let ui_values = std::fs::read(data_dir.join(UI_STATE_FILE))
             .ok()
             .and_then(|b| serde_json::from_slice(&b).map_err(|e| warn!("ui-state.json is unreadable ({e}); starting afresh")).ok())
             .unwrap_or_default();
@@ -240,7 +243,7 @@ impl Core {
         if !std::mem::replace(&mut st.dirty, false) {
             return;
         }
-        let path = self.data_dir.join("ui-state.json");
+        let path = self.data_dir.join(UI_STATE_FILE);
         let tmp = path.with_extension("json.tmp");
         let written = serde_json::to_vec(&st.values).map_err(std::io::Error::other).and_then(|b| std::fs::write(&tmp, b)).and_then(|_| std::fs::rename(&tmp, &path));
         if let Err(e) = written {
@@ -496,8 +499,8 @@ impl Core {
         self.pane(key, PaneCmd::SetLabels { key, labels });
     }
 
-    /// Names a pane (`None` or a blank name clears it). A tmux pane alone in its window names
-    /// the window too.
+    /// Names a pane (`None` or a blank name clears it). Only Consuls shows it; tmux's window
+    /// and session names are left alone.
     pub fn rename_pane(&self, key: u32, name: Option<String>) {
         self.pane(key, PaneCmd::Rename { key, name });
     }
@@ -623,6 +626,16 @@ impl Core {
     }
 
     /// Gracefully quits the pane's harness and closes it (or kills it with `force`).
+    /// tmux's own window operations on a tmux pane (the expanded view's prefix keys). Returns
+    /// the new pane's key for a new window or split.
+    pub async fn tmux_op(&self, key: u32, op: crate::model::TmuxOp) -> Result<Option<u32>, String> {
+        let (tx, rx) = oneshot::channel();
+        if !self.pane(key, PaneCmd::TmuxOp { key, op, reply: tx }) {
+            return Err("that pane is gone".into());
+        }
+        rx.await.map_err(|_| "host went away".to_string())?
+    }
+
     pub async fn terminate_pane(&self, key: u32, force: bool) -> Result<TerminateOutcome, String> {
         let (tx, rx) = oneshot::channel();
         if !self.pane(key, PaneCmd::Terminate { key, force, reply: tx }) {

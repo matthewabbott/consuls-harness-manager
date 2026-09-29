@@ -20,6 +20,7 @@ const pane = (key: number, extra: Partial<PaneInfo> = {}): PaneInfo => ({
     dead: false,
     windowActive: true,
     paneActive: true,
+    prefix: "C-b",
     windowPanes: 1,
     sized: false,
   },

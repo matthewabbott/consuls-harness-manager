@@ -167,6 +167,7 @@ pub fn run() {
             commands::resize_pane,
             commands::release_pane_size,
             commands::terminate_pane,
+            commands::tmux_op,
             commands::list_dir,
             commands::get_ui_state,
             commands::set_ui_state,

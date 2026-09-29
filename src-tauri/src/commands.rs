@@ -341,6 +341,12 @@ pub fn set_pane_hidden(state: State<'_, AppState>, key: u32, hidden: bool) {
     state.core.set_pane_hidden(key, hidden);
 }
 
+/// tmux's own window operations (the expanded view's prefix keys).
+#[tauri::command]
+pub async fn tmux_op(state: State<'_, AppState>, key: u32, op: chm_core::model::TmuxOp) -> CmdResult<Option<u32>> {
+    state.core.tmux_op(key, op).await
+}
+
 #[tauri::command]
 pub async fn terminate_pane(state: State<'_, AppState>, key: u32, force: bool) -> CmdResult<TerminateOutcome> {
     state.core.terminate_pane(key, force).await

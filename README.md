@@ -14,8 +14,8 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   it's saved on the pane's machine (`~/.cache/consuls/pastes/`, cleared after a week).
   Claude Code and Codex get it as an attachment; other programs get its path.
 - **Names**: rename a pane from its tile menu, or double-click its title when it's open. A tmux
-  pane keeps its name in `@chm_name` and, when it has its window to itself, names the window too,
-  so other tmux clients see it. Clearing the name gives the window its old name back.
+  pane keeps its name in `@chm_name`, so every device running Consuls shows it; tmux's own
+  window and session names are left alone.
 - **Attention**: when an agent finishes its turn or needs permission, you get a ping (and a
   toast if Consuls isn't focused); its tile glows until you look, then shows "Waiting on you".
   Ctrl+Shift+Space jumps to the next waiting pane.
@@ -136,7 +136,7 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 | Where | Keys |
 |---|---|
 | Anywhere | **Ctrl+Shift+Space** next waiting pane · **Ctrl+Shift+G** back to grid |
-| Terminal | keys go straight to the pane · **Ctrl+F** search · **Ctrl+C** smart copy (with a selection) · **Ctrl+Shift+C** copy as shown · **Ctrl+V** paste · **Ctrl+Enter** jump to composer |
+| Terminal | keys go straight to the pane · **Ctrl+B** then a key: tmux's keys on tmux panes (**d** back to grid, **c** new window, **%** / **"** split, **n**/**p** windows, **,** / **$** rename; **Ctrl+B ?** lists them) · **Ctrl+F** search · **Ctrl+C** smart copy (with a selection) · **Ctrl+Shift+C** copy as shown · **Ctrl+V** paste · **Ctrl+Enter** jump to composer |
 | Composer | **Enter** send · **Shift+Enter** new line · **↑/↓** prompt history · **Ctrl+V** also pastes images · **Esc** (empty) interrupts the agent |
 
 ## Not yet

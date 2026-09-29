@@ -74,12 +74,17 @@ Roughly in order. Each is small-to-medium and self-contained.
     - Verified by `localtmux`, a real-app E2E, a crash test (the server survives, the client
       dies) and the SSH selftest.
 - After v3 was merged (on `master`):
-  - Renaming panes: `@chm_name`, plus the tmux window while the pane has it to itself (the old
-    name comes back when the name is cleared). Not `select-pane -T`: agents overwrite pane
-    titles constantly.
+  - Renaming panes: `@chm_name`, shown only in Consuls. The user chose not to rename tmux
+    windows or sessions (they'd rather do that with tmux's own keys).
   - Image paste into the composer or the terminal, saved on the pane's machine.
   - The UI's layout, zoom and composer drafts/history moved from localStorage to the core's
     `ui-state.json`.
+  - tmux ≤ 3.6 crashed (whole server) when a session closed under our control client: the
+    all-panes subscription's timer reads a NULL session. Subscriptions are per pane now; the
+    selftest reproduces the crash (it froze our client with SIGSTOP and killed its session).
+  - tmux prefix keys (Ctrl+B …) in the expanded view, handled by the app with tmux's stock
+    meanings, aimed at the pane on screen.
+  - Wrapped URLs (Claude Code's sign-in link) copy and Ctrl+click whole.
 - Future (from the user, 2026-09-28):
   - The Mac app watching its own tmux (a native `LocalSh`). Likely next.
   - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH

@@ -1,5 +1,6 @@
 // End-to-end: a tmux pane on This PC (Cygwin), made through the real new-pane dialog, typed into
-// and closed. Start the app with CHM_TMUX_SOCKET=<private name> so it uses its own tmux server:
+// and closed, with the prefix keys (Ctrl+B %, o, ",", d). Start the app with
+// CHM_TMUX_SOCKET=<private name> so it uses its own tmux server:
 //
 //   CHM_TMUX_SOCKET=chm-e2e WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 ./target/debug/consuls.exe
 //   node scripts/e2e/cdp.mjs scripts/e2e/local-tmux.mjs
@@ -48,7 +49,28 @@ export default async function ({ js, text, key, sleep, log }) {
   await key("Enter");
   await until("typing reaches the tmux pane", async () => ((await buf(20))?.lines ?? []).some((l) => l.includes("local-tmux-42")));
 
-  await js(`await window.__TAURI_INTERNALS__.invoke("terminate_pane", { key: ${pane.key}, force: true }); ${app}.getState().setExpanded(null); return true`);
-  await until("pane gone", () => js(`return !Object.values(${app}.getState().panes).flat().some(p => p.key === ${pane.key})`));
+  // tmux prefix keys, handled by the app and aimed at this pane.
+  const prefixKey = (k, extra = {}) =>
+    js(`const t = document.querySelector(".xterm-helper-textarea"); t.focus();
+        t.dispatchEvent(new KeyboardEvent("keydown", { key: "b", code: "KeyB", ctrlKey: true, bubbles: true, cancelable: true }));
+        t.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true, ...${JSON.stringify(extra)} })); return true`);
+  const expanded = () => js(`const k = ${app}.getState().expanded; return Object.values(${app}.getState().panes).flat().find(p => p.key === k) ?? null`);
+  await prefixKey("%", { shiftKey: true });
+  const split = await until("Ctrl+B % splits and shows the new pane", async () => {
+    const p = await expanded();
+    return p && p.key !== pane.key && p.tmux?.windowId === pane.tmux.windowId ? p : null;
+  });
+  await prefixKey("o");
+  await until("Ctrl+B o goes back to the first pane", async () => (await expanded())?.key === pane.key);
+  await prefixKey(",");
+  await until("Ctrl+B , asks for the window's name", () => js(`return document.activeElement?.getAttribute("aria-label") === "tmux window name"`));
+  await js(`const i = document.activeElement; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(i, "e2e #win");
+            i.dispatchEvent(new Event("input", { bubbles: true })); i.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); return true`);
+  await until("tmux window renamed", async () => (await expanded())?.tmux?.windowName === "e2e #win");
+  await prefixKey("d");
+  await until("Ctrl+B d goes back to the grid", () => js(`return ${app}.getState().expanded === null`));
+
+  for (const k of [split.key, pane.key]) await js(`await window.__TAURI_INTERNALS__.invoke("terminate_pane", { key: ${k}, force: true }); return true`);
+  await until("panes gone", () => js(`return !Object.values(${app}.getState().panes).flat().some(p => p.key === ${pane.key} || p.key === ${split.key})`));
   log("all local tmux e2e checks passed");
 }

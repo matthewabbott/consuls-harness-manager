@@ -34,6 +34,7 @@ import HarnessBadge, { harnessLabel, isAgent } from "./HarnessBadge";
 import { displayTitle } from "./MiniTile";
 import MiniTile from "./MiniTile";
 import PaneNameField, { renameHint } from "./PaneNameField";
+import { PrefixHelp, PrefixPending, TmuxRenameField, usePrefixKeys } from "./PrefixKeys";
 import QuickKeys from "./QuickKeys";
 import SearchBar from "./SearchBar";
 import TerminalView, { type TerminalHandle } from "./TerminalView";
@@ -101,10 +102,16 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
     setExpanded(null);
   };
   const showFilmstrip = others.length > 0 && !filmstripCollapsed && !maximized;
+  const keys = usePrefixKeys(pane, back);
+  const endTmuxRename = () => {
+    keys.setRenaming(null);
+    termRef.current?.focus();
+  };
 
   return (
     <div className="flex min-h-0 flex-1">
-      <section className="flex min-w-0 flex-1 flex-col px-5 pb-4">
+      <section className="relative flex min-w-0 flex-1 flex-col px-5 pb-4">
+        {keys.help && keys.prefix && <PrefixHelp prefix={keys.prefix} onClose={() => keys.setHelp(false)} />}
         <header className="flex h-12 shrink-0 items-center gap-3">
           <button
             onClick={back}
@@ -126,13 +133,18 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
                 {r(displayTitle(pane))}
               </div>
             )}
-            <div className="truncate font-mono text-[11px] text-mist-500">
-              {harnessLabel(pane.harness)} · {r(hostLabel(pane.host))} ·{" "}
-              {direct ? <span className="text-rose-300/80">{pane.currentCommand} · no tmux</span> : r(paneWhere(pane, true))} ·{" "}
-              {r(shortPath(pane.currentPath, home))} · {pane.width}×{pane.height}
-            </div>
+            {keys.renaming ? (
+              <TmuxRenameField pane={pane} what={keys.renaming} onDone={endTmuxRename} />
+            ) : (
+              <div className="truncate font-mono text-[11px] text-mist-500">
+                {harnessLabel(pane.harness)} · {r(hostLabel(pane.host))} ·{" "}
+                {direct ? <span className="text-rose-300/80">{pane.currentCommand} · no tmux</span> : r(paneWhere(pane, true))} ·{" "}
+                {r(shortPath(pane.currentPath, home))} · {pane.width}×{pane.height}
+              </div>
+            )}
           </div>
           <div className="ml-auto flex items-center gap-1">
+            {keys.pending && keys.prefix && <PrefixPending prefix={keys.prefix} />}
             <SizeMenu pane={pane} sizing={sizing} />
             <div className="mr-1 flex items-center rounded-lg ring-1 ring-ink-700">
               <HeaderIcon onClick={() => zoom(id, currentFont(), -1)} title="Smaller text (Ctrl+−, Ctrl+wheel)">
@@ -229,6 +241,9 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             onCompose={() => composerRef.current?.focus()}
             fontSize={sizing.fontSize}
             raw={direct}
+            prefix={direct ? null : keys.prefix}
+            onPrefixKey={keys.onKey}
+            onPrefixPending={keys.setPending}
           >
             {sizing.effective !== "scale" && (
               <ResizeGrip
