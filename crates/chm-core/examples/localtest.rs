@@ -61,6 +61,13 @@ async fn wait_for(what: &str, timeout: Duration, mut check: impl FnMut() -> bool
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let dir = std::env::temp_dir().join(format!("chm-localtest-{}", std::process::id()));
+    // Hook events go to a scratch folder, and This PC's tmux (found at start-up) is a private
+    // server that never gets started: the real ones are left alone.
+    // SAFETY: set before any other thread reads the environment.
+    unsafe {
+        std::env::set_var("XDG_STATE_HOME", dir.join("state"));
+        std::env::set_var("CHM_TMUX_SOCKET", format!("chm-localtest-{}", std::process::id()));
+    }
     let rec = Arc::new(Recorder::default());
     let core = Core::new(dir.clone(), rec.clone());
     core.start();

@@ -103,6 +103,14 @@ pub fn local(cmd: &LocalCommand, cols: u16, rows: u16) -> Result<Pty, String> {
     if let Some(cwd) = cmd.cwd.as_deref().filter(|c| std::path::Path::new(c).is_dir()) {
         builder.cwd(native(cwd));
     }
+    // Started from inside tmux (or a Consuls pane), the app mustn't pass that pane on: hooks in
+    // this shell would report to it.
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy();
+        if crate::local::private_var(&k) {
+            builder.env_remove(k.as_ref());
+        }
+    }
     for (k, v) in &cmd.env {
         builder.env(k, v);
     }

@@ -261,8 +261,9 @@ async fn connect_phase(
 /// Host details, and where tmux is. Commands run in a login shell, which doesn't read
 /// `~/.zshrc`/`~/.bashrc`; tmux installed somewhere only those add to PATH (a Homebrew in the
 /// home folder, say) is looked for in the usual places, then asked of an interactive shell
-/// (given 5 s, in case its startup files wait for something).
-const FACTS_SCRIPT: &str = r#"t=$(command -v tmux 2>/dev/null); p=
+/// (given 5 s, in case its startup files wait for something). This PC runs it too, for its own
+/// tmux (macOS, Linux): the same answer as an app watching it over SSH gets.
+pub(crate) const FACTS_SCRIPT: &str = r#"t=$(command -v tmux 2>/dev/null); p=
 case "$t" in /*) ;; *) t= ;; esac
 if [ -z "$t" ]; then
   for c in "$HOME/.homebrew/bin/tmux" /opt/homebrew/bin/tmux /usr/local/bin/tmux /home/linuxbrew/.linuxbrew/bin/tmux \
@@ -287,7 +288,7 @@ tmuxpath=%s
 ' "$(id -un)" "$HOME" "$SHELL" "$(uname -sr)" \
   "$([ -n "$t" ] && "$t" -V 2>/dev/null)" "$p""#;
 
-fn parse_facts(out: &str) -> HostFacts {
+pub(crate) fn parse_facts(out: &str) -> HostFacts {
     let mut facts = HostFacts::default();
     for line in out.lines() {
         let Some((k, v)) = line.split_once('=') else { continue };

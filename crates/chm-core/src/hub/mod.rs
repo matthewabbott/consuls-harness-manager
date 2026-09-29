@@ -61,7 +61,7 @@ pub struct Core {
     /// Captured in [`Core::start`] so the public API can be called from any thread (Tauri
     /// runs synchronous commands on the main thread, outside the runtime).
     rt: OnceLock<tokio::runtime::Handle>,
-    /// tmux on This PC (Cygwin), when there is one.
+    /// tmux on This PC (Cygwin on Windows, native elsewhere), when there is one.
     local_tmux: OnceLock<LocalTmux>,
     /// The UI's own per-device state (layout, zoom, composer drafts and history), kept in
     /// `ui-state.json`: the webview's storage can lose recent writes when the app quits.
@@ -118,20 +118,29 @@ impl Core {
         // This PC: always there, always connected. Hooks of agents in local shells report
         // through the local events file.
         self.ctx.set_phase(LOCAL_HOST, HostPhase::Connected);
-        let ctx = self.ctx.clone();
+        if let Some(cygwin) = local_tmux::find_cygwin() {
+            let _ = self.local_tmux.set(local_tmux::spawn(self.ctx.clone(), &rt, local_tmux::Flavor::Cygwin(cygwin)));
+        }
+        let (core, ctx, handle) = (self.clone(), self.ctx.clone(), rt.clone());
         rt.spawn(async move {
             let facts = tokio::task::spawn_blocking(local::facts).await.ok();
-            ctx.set_facts(LOCAL_HOST, facts);
+            ctx.set_facts(LOCAL_HOST, facts.clone());
+            // A native tmux is found through the login shell, which takes a moment.
+            #[cfg(unix)]
+            if let Some(native) = local_tmux::find_native().await {
+                local::set_tmux_command(native.hook_tmux.clone());
+                let facts = facts.map(|f| crate::model::HostFacts { tmux_version: Some(native.version.clone()), tmux_path: native.bin.clone(), ..f });
+                let _ = core.local_tmux.set(local_tmux::spawn(ctx.clone(), &handle, local_tmux::Flavor::Native(native)));
+                ctx.set_facts(LOCAL_HOST, facts);
+            }
+            let _ = (core, handle); // only used on unix
         });
-        if let Some(cygwin) = local_tmux::find() {
-            let _ = self.local_tmux.set(local_tmux::spawn(self.ctx.clone(), &rt, cygwin));
-        }
         let ctx = self.ctx.clone();
-        let tmux = self.local_tmux.get().cloned();
+        let core = Arc::downgrade(self);
         rt.spawn(local::tail_events(Arc::new(move |line: &str| {
             if let Ok(event) = serde_json::from_str::<crate::integration::events::HookEvent>(line)
                 && !direct::route_hook(&ctx, &event, false)
-                && let Some(tmux) = &tmux
+                && let Some(tmux) = core.upgrade().and_then(|c| c.local_tmux.get().cloned())
             {
                 tmux.send(LocalTmuxCmd::Hook(event));
             }

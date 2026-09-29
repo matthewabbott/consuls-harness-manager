@@ -39,8 +39,8 @@ export function collectSecrets(app: ReturnType<typeof useApp.getState>, hideMach
     const f = h.facts;
     if (f?.user) literals.push(f.user);
     if (f?.home) literals.push(baseName(f.home));
-    // "Windows · DESKTOP-ABC123" → the PC's name.
-    const pc = f?.uname.match(/^Windows · (.+)$/)?.[1];
+    // This PC's "Windows · DESKTOP-ABC123" / "macOS · MBAs-MacBook-Pro" → its name.
+    const pc = f?.uname.match(/^(?:Windows|macOS|Linux) · (.+)$/)?.[1];
     if (pc) literals.push(pc);
   }
   for (const c of app.config.hosts) {

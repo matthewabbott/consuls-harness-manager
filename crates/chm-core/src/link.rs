@@ -116,6 +116,16 @@ pub struct LocalSh {
 const BOOT: &str = r#"eval "$(printf %s "$1" | /usr/bin/base64 -d)""#;
 
 impl LocalSh {
+    /// `/bin/sh` on this machine (macOS, Linux). Scripts run in the user's login shell, as over
+    /// SSH, so `$SHELL` is set even when the app has none; so is a UTF-8 locale.
+    #[cfg(unix)]
+    pub fn posix(env: Vec<(String, String)>) -> Arc<LocalSh> {
+        let mut all = vec![("SHELL".to_string(), crate::local::user_shell())];
+        all.extend(crate::local::locale_env());
+        all.extend(env);
+        Arc::new(LocalSh { sh: "/bin/sh".into(), env: all, control_needs_pty: false })
+    }
+
     fn command(&self, command: &str) -> tokio::process::Command {
         let mut cmd = tokio::process::Command::new(&self.sh);
         if cfg!(windows) {
@@ -128,7 +138,7 @@ impl LocalSh {
         // server started from here.
         for (k, _) in std::env::vars_os() {
             let k = k.to_string_lossy();
-            if k.starts_with("WEBVIEW2_") || k.starts_with("CHM_") || k == "TMUX" || k == "TMUX_PANE" {
+            if crate::local::private_var(&k) {
                 cmd.env_remove(k.as_ref());
             }
         }

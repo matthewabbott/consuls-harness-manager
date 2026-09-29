@@ -1,11 +1,12 @@
-//! End-to-end check of tmux on This PC (Cygwin on Windows), on a private tmux server:
+//! End-to-end check of tmux on This PC (Cygwin on Windows, the native tmux on macOS/Linux), on a
+//! private tmux server:
 //!
 //!   cargo run -p chm-core --example localtmux
 //!
-//! Creates a tmux pane under `@local` in a given folder (Windows path in, Windows path out),
-//! types into it through the control client, resizes it, fires the hook from inside it (routed
-//! through the local events file to the tmux pane), closes it, and kills the private server.
-//! Hook events go to a scratch state folder, never the real one.
+//! Creates a tmux pane under `@local` in a given folder (on Windows: Windows path in, Windows path
+//! out), types into it through the control client, resizes it, fires the hook from inside it
+//! (routed through the local events file to the tmux pane), closes it, and kills the private
+//! server. Hook events go to a scratch state folder, never the real one.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -63,10 +64,11 @@ async fn wait_for(what: &str, timeout: Duration, mut check: impl FnMut() -> bool
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let Some(cygwin) = chm_core::cygwin::Cygwin::find() else {
+    let cygwin = chm_core::cygwin::Cygwin::find();
+    if cfg!(windows) && cygwin.is_none() {
         println!("no Cygwin with tmux here; nothing to check");
         return Ok(());
-    };
+    }
     let socket = format!("chm-localtmux-{}", std::process::id());
     let dir = std::env::temp_dir().join(format!("chm-localtmux-{}", std::process::id()));
     let state = dir.join("state");
@@ -76,16 +78,29 @@ async fn main() -> anyhow::Result<()> {
         std::env::set_var("CHM_TMUX_SOCKET", &socket);
         std::env::set_var("XDG_STATE_HOME", &state);
     }
-    let cleanup = Link::Local(cygwin.shell(&local::to_slash(&state)));
 
     let rec = Arc::new(Recorder::default());
     let core = Core::new(dir.join("data"), rec.clone());
     core.start();
     core.set_focus(FocusState { expanded: None, window_focused: false });
-    wait_for("This PC reports tmux", Duration::from_secs(15), || rec.facts.lock().unwrap().as_ref().is_some_and(|f| f.tmux_version.is_some())).await?;
-    println!("     tmux {} at {}", rec.facts.lock().unwrap().as_ref().unwrap().tmux_version.clone().unwrap(), cygwin.root.display());
+    // Elsewhere tmux is found through the login shell, if it's there at all.
+    let found = wait_for("This PC reports tmux", Duration::from_secs(30), || rec.facts.lock().unwrap().as_ref().is_some_and(|f| f.tmux_version.is_some())).await;
+    if found.is_err() && cygwin.is_none() {
+        println!("no tmux here; nothing to check");
+        let _ = std::fs::remove_dir_all(&dir);
+        return Ok(());
+    }
+    found?;
+    let facts = rec.facts.lock().unwrap().clone().unwrap();
+    let (tmux, cleanup) = match &cygwin {
+        Some(c) => ("tmux".to_string(), Link::Local(c.shell(&local::to_slash(&state)))),
+        None => (facts.tmux_path.clone().unwrap_or_else(|| "tmux".into()), posix_shell()),
+    };
+    let at = cygwin.as_ref().map_or_else(|| facts.tmux_path.clone().unwrap_or_else(|| "the login PATH".into()), |c| c.root.display().to_string());
+    println!("     tmux {} at {at}", facts.tmux_version.clone().unwrap());
 
-    let folder = local::to_slash(&dir);
+    // tmux reports a folder by its real path (macOS: /var/folders/… is /private/var/folders/…).
+    let folder = if cfg!(windows) { local::to_slash(&dir) } else { local::to_slash(&dir.canonicalize()?) };
     let spec = NewPaneSpec { host: LOCAL_HOST.into(), cwd: folder.clone(), harness: Harness::Shell, name: None, session: None, args: None, direct: None, shell: None };
     let result = run(&core, &rec, spec, &folder).await;
     if result.is_err() {
@@ -94,16 +109,28 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    match cleanup.exec(&format!("tmux -L {socket} kill-server"), Duration::from_secs(15)).await {
+    match cleanup.exec(&format!("{tmux} -L {socket} kill-server"), Duration::from_secs(15)).await {
         Ok(out) if out.success() => println!("     private tmux server stopped"),
         // Closing its only pane already ended it.
         Ok(out) if out.stderr_str().contains("no server running") => println!("     private tmux server already gone"),
         other => println!("     couldn't stop the private tmux server: {:?}", other.map(|o| (o.status, o.stderr_str()))),
     }
+    // A server that ends with its last session can leave its socket file behind.
+    let _ = cleanup.exec(&format!("rm -f \"${{TMUX_TMPDIR:-/tmp}}/tmux-$(id -u)/{socket}\""), Duration::from_secs(15)).await;
     let _ = std::fs::remove_dir_all(&dir);
     result?;
     println!("all local tmux checks passed");
     Ok(())
+}
+
+#[cfg(unix)]
+fn posix_shell() -> Link {
+    Link::Local(chm_core::link::LocalSh::posix(Vec::new()))
+}
+
+#[cfg(not(unix))]
+fn posix_shell() -> Link {
+    unreachable!("Windows uses Cygwin's shell")
 }
 
 async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &str) -> anyhow::Result<()> {
@@ -112,13 +139,22 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
     let draw = |k: u32| String::from_utf8_lossy(rec.raw.lock().unwrap().get(&k).map(Vec::as_slice).unwrap_or(&[])).into_owned();
     wait_for("tmux pane listed under This PC", Duration::from_secs(15), || pane(key).is_some_and(|p| p.kind == PaneKind::Tmux)).await?;
     let same = |a: &str, b: &str| a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'));
-    wait_for("its folder, as a Windows path", Duration::from_secs(10), || pane(key).is_some_and(|p| same(&p.current_path, folder))).await?;
+    wait_for("its folder (Windows: as a Windows path)", Duration::from_secs(10), || pane(key).is_some_and(|p| same(&p.current_path, folder))).await?;
 
     core.stream_pane(key, true);
     wait_for("RESET on expand", Duration::from_secs(10), || !draw(key).is_empty()).await?;
     core.send_text(key, "echo \"local-tmux-$((6*7))\"".into());
     core.send_keys(key, vec!["Enter".into()]);
     wait_for("typed into the pane (control client both ways)", Duration::from_secs(10), || draw(key).contains("local-tmux-42")).await?;
+    if cfg!(unix) {
+        // A server we start has a UTF-8 locale, even when the app has none (started from the Dock).
+        core.send_text(key, "printf 'loc=[%s]\\n' \"${LC_ALL:-${LC_CTYPE:-$LANG}}\"".into());
+        core.send_keys(key, vec!["Enter".into()]);
+        wait_for("the pane has a UTF-8 locale", Duration::from_secs(10), || {
+            draw(key).split("loc=[").skip(1).any(|rest| rest.split(']').next().is_some_and(|l| l.contains("UTF-8")))
+        })
+        .await?;
+    }
 
     core.resize_pane(key, 100, 30).await.map_err(anyhow::Error::msg)?;
     wait_for("resized to 100x30", Duration::from_secs(10), || pane(key).is_some_and(|p| (p.width, p.height) == (100, 30))).await?;

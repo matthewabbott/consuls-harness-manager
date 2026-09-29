@@ -90,6 +90,12 @@ pub fn version() -> String {
     format!("{h:016x}")
 }
 
+/// What `VERSION` holds: the assets' hash and the tmux the hook calls (a different tmux means a
+/// redeploy too). Every writer uses it, so apps watching the same machine agree on it.
+pub(crate) fn stamp(tmux: &str) -> String {
+    format!("{}\n{tmux}", version())
+}
+
 fn render(template: &str, assets: &Assets, tmux: &str) -> String {
     template.replace("__HOOK__", &assets.hook).replace("__TMUX__", tmux)
 }
@@ -103,7 +109,7 @@ pub(crate) fn files(assets: &Assets, tmux: &str) -> Vec<(String, String, u32)> {
     ];
     files.extend(SHELL_FILES.map(|(name, content)| (format!("{}/{name}", assets.shell), content.to_string(), 0o644)));
     // Last: its presence says the rest is complete.
-    files.push((format!("{}/VERSION", assets.dir), version(), 0o644));
+    files.push((format!("{}/VERSION", assets.dir), stamp(tmux), 0o644));
     files
 }
 
@@ -127,9 +133,7 @@ pub async fn ensure(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Res
     };
     let sftp = conn.open_sftp().await.map_err(|e| e.to_string())?;
     let version_path = format!("{}/VERSION", assets.dir);
-    // The hook embeds tmux's path, so a different tmux means a redeploy too.
-    let stamp = format!("{}\n{tmux}", version());
-    if sftp.read(version_path.clone()).await.ok().is_some_and(|v| v == stamp.as_bytes()) {
+    if sftp.read(version_path).await.ok().is_some_and(|v| v == stamp(&tmux).as_bytes()) {
         let _ = sftp.close().await;
         return Ok(assets);
     }
@@ -143,7 +147,6 @@ pub async fn ensure(conn: &SshConnection, home: &str, tmux: Option<&str>) -> Res
         let _ = sftp.create_dir(dir).await;
     }
     for (path, content, mode) in files(&assets, &tmux) {
-        let content = if path == version_path { stamp.clone() } else { content };
         let mut file = sftp.create(path.clone()).await.map_err(|e| format!("writing {path}: {e}"))?;
         file.write_all(content.as_bytes()).await.map_err(|e| format!("writing {path}: {e}"))?;
         file.shutdown().await.map_err(|e| format!("closing {path}: {e}"))?;

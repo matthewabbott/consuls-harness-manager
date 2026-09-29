@@ -7,7 +7,7 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -171,6 +171,83 @@ fn git_root() -> Option<PathBuf> {
         .find(|p| p.join("usr/bin/sh.exe").is_file())
 }
 
+/// Whether a variable of the app's own environment must stay out of programs it starts (shells,
+/// tmux servers): a tmux or Consuls pane the app itself runs in (a hook would report to that
+/// pane instead), WebView2's settings, and the app's macOS identity (its bundle id).
+pub(crate) fn private_var(key: &str) -> bool {
+    key.starts_with("WEBVIEW2_") || key.starts_with("CHM_") || key.starts_with("XPC_") || matches!(key, "__CFBundleIdentifier" | "TMUX" | "TMUX_PANE")
+}
+
+/// The user's login shell: `$SHELL`, else the password database's (an app started from the
+/// Dock may have no `$SHELL`).
+#[cfg(unix)]
+pub fn user_shell() -> String {
+    if let Some(s) = std::env::var("SHELL").ok().filter(|s| s.starts_with('/')) {
+        return s;
+    }
+    // SAFETY: getpwuid returns null or a pointer to static storage, read before any other call.
+    let from_passwd = unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        (!pw.is_null() && !(*pw).pw_shell.is_null()).then(|| std::ffi::CStr::from_ptr((*pw).pw_shell).to_string_lossy().into_owned())
+    };
+    from_passwd.filter(|s| s.starts_with('/')).unwrap_or_else(|| "/bin/sh".into())
+}
+
+/// A UTF-8 `LANG` for shells and tmux servers this app starts, when the app itself has no locale:
+/// apps started from the Finder or Dock get none, and zsh then garbles non-ASCII input. macOS: the
+/// user's region if the system has a UTF-8 locale for it, else `en_US`.
+#[cfg(unix)]
+pub(crate) fn locale_env() -> Option<(String, String)> {
+    static LANG: OnceLock<String> = OnceLock::new();
+    let set = |k: &str| std::env::var(k).is_ok_and(|v| !v.is_empty());
+    if set("LC_ALL") || set("LC_CTYPE") || set("LANG") {
+        return None;
+    }
+    let lang = LANG.get_or_init(|| {
+        if !cfg!(target_os = "macos") {
+            return "C.UTF-8".into();
+        }
+        // `en_US`, `en_GB@rg=…`, `zh-Hans_CN` (no such POSIX locale: falls back).
+        let region = std::process::Command::new("/usr/bin/defaults")
+            .args(["read", "-g", "AppleLocale"])
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().split('@').next().unwrap_or("").to_string())
+            .filter(|r| !r.is_empty() && Path::new("/usr/share/locale").join(format!("{r}.UTF-8")).is_dir());
+        format!("{}.UTF-8", region.as_deref().unwrap_or("en_US"))
+    });
+    Some(("LANG".into(), lang.clone()))
+}
+
+/// This machine's name as its shell prompt shows it (`MBAs-MacBook-Pro`), from the environment
+/// on Windows and `gethostname` elsewhere (apps don't get `$HOSTNAME`).
+fn machine_name() -> String {
+    if let Some(name) = ["COMPUTERNAME", "HOSTNAME"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty())) {
+        return name;
+    }
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // SAFETY: the buffer outlives the call and its length is passed.
+        if unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+            let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            let name = String::from_utf8_lossy(&buf[..len]);
+            return name.split('.').next().unwrap_or("").to_string();
+        }
+    }
+    String::new()
+}
+
+/// How hooks on this machine call tmux (the hook's `__TMUX__`). Set once this machine's tmux is
+/// known; found the way `assets::ensure` finds it on other hosts, so this app and one watching
+/// this machine over SSH write the same files.
+static TMUX_COMMAND: OnceLock<String> = OnceLock::new();
+
+#[cfg_attr(windows, allow(dead_code))] // Cygwin's hooks call plain `tmux`
+pub(crate) fn set_tmux_command(tmux: String) {
+    let _ = TMUX_COMMAND.set(tmux);
+}
+
 /// The POSIX `sh` that runs hook scripts on this machine.
 pub(crate) fn hook_sh() -> Option<String> {
     #[cfg(windows)]
@@ -236,13 +313,14 @@ pub(crate) fn shell_defs() -> Vec<ShellDef> {
     }
     #[cfg(not(windows))]
     {
-        let login = std::env::var("SHELL").ok().map(PathBuf::from);
-        if let Some(p) = login {
-            let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "shell".into());
-            add("login", &name, p, &["-l"], &[], Quoting::Posix);
-        }
+        let login = PathBuf::from(user_shell());
+        let name = login.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "shell".into());
+        add("login", &name, login.clone(), &["-l"], &[], Quoting::Posix);
+        let same = |a: &Path, b: &Path| a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(x), Ok(y)) if x == y);
         for name in ["zsh", "bash", "fish"] {
-            if let Some(p) = which(name) {
+            // An app started from the Dock has launchd's PATH, without Homebrew.
+            let found = which(name).or_else(|| ["/opt/homebrew/bin", "/usr/local/bin"].iter().map(|d| Path::new(d).join(name)).find(|p| p.is_file()));
+            if let Some(p) = found.filter(|p| !same(p, &login)) {
                 add(name, name, p, &["-l"], &[], Quoting::Posix);
             }
         }
@@ -267,9 +345,11 @@ fn wsl_distros() -> Vec<String> {
     String::from_utf16_lossy(&words).lines().map(|l| l.trim_matches(['\0', ' ', '\r']).to_string()).filter(|l| !l.is_empty()).collect()
 }
 
+/// This machine's details. tmux is filled in on Windows (Cygwin); elsewhere it's found by
+/// running the hosts' facts script in the login shell (`local_tmux::find_native`), later.
 pub fn facts() -> HostFacts {
     let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default();
-    let machine = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
+    let machine = machine_name();
     let shell = shell_defs().first().map(|d| d.shell.path.clone()).unwrap_or_default();
     HostFacts {
         user,
@@ -284,8 +364,8 @@ pub fn facts() -> HostFacts {
             };
             if machine.is_empty() { os.to_string() } else { format!("{os} · {machine}") }
         },
-        tmux_version: crate::cygwin::Cygwin::find().and_then(|c| tmux_version(&c.tmux())),
-        // tmux runs inside Cygwin's own shell, where plain `tmux` is on PATH.
+        tmux_version: if cfg!(windows) { crate::cygwin::Cygwin::find().and_then(|c| tmux_version(&c.tmux())) } else { None },
+        // Cygwin: tmux runs inside Cygwin's own shell, where plain `tmux` is on PATH.
         tmux_path: None,
     }
 }
@@ -345,14 +425,15 @@ pub fn state_dir() -> PathBuf {
 pub fn ensure_assets() -> Result<Assets, String> {
     let sh = hook_sh().ok_or("Git for Windows (for its sh) wasn't found; hooks need it")?;
     let assets = Assets::with_sh(&home(), &sh);
+    let tmux = TMUX_COMMAND.get().map_or("tmux", String::as_str);
     let version_path = Path::new(&assets.dir).join("VERSION");
-    if std::fs::read_to_string(&version_path).is_ok_and(|v| v == assets::version()) {
+    if std::fs::read_to_string(&version_path).is_ok_and(|v| v == assets::stamp(tmux)) {
         return Ok(assets);
     }
     for dir in assets::dirs(&assets) {
         std::fs::create_dir_all(&dir).map_err(|e| format!("{dir}: {e}"))?;
     }
-    for (path, content, _mode) in assets::files(&assets, "tmux") {
+    for (path, content, _mode) in assets::files(&assets, tmux) {
         std::fs::write(&path, content).map_err(|e| format!("writing {path}: {e}"))?;
         #[cfg(unix)]
         {
@@ -436,6 +517,8 @@ pub(crate) fn pane_env(def: &ShellDef, chm_id: &str) -> Vec<(String, String)> {
     if def.quoting == Quoting::Posix {
         env.push(("TERM".into(), "xterm-256color".into()));
     }
+    #[cfg(unix)]
+    env.extend(locale_env());
     env
 }
 
