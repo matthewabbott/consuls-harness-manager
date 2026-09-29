@@ -1,5 +1,6 @@
 //! Surfacing core alerts: synthesized chimes (played from Rust so they work while the
-//! window is minimized), Windows toasts that open the pane when clicked, and a taskbar flash.
+//! window is minimized), Windows toasts / macOS notifications that open the pane when clicked,
+//! and a taskbar flash (a Dock bounce on macOS).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -174,7 +175,12 @@ fn show_toast(app: &AppHandle, alert: &Alert) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn show_toast(_app: &AppHandle, alert: &Alert) {
+    crate::mac_notify::show(&alert.title, &alert.body, alert.key);
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn show_toast(_app: &AppHandle, _alert: &Alert) {}
 
 #[cfg(test)]

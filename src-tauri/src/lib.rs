@@ -3,6 +3,8 @@
 
 mod alerts;
 mod commands;
+#[cfg(target_os = "macos")]
+mod mac_notify;
 mod tray;
 mod vscode;
 
@@ -98,6 +100,8 @@ pub fn run() {
         })
         .setup(|app| {
             tray::install(app.handle())?;
+            #[cfg(target_os = "macos")]
+            mac_notify::init(app.handle());
             let data_dir = app.path().app_data_dir().expect("no app data dir");
             let sink = Arc::new(AppSink {
                 app: app.handle().clone(),

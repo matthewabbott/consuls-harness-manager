@@ -28,3 +28,19 @@ rodio = { version = "0.22", default-features = false, features = ["playback"] }
 
 [target.'cfg(windows)'.dependencies]
 tauri-winrt-notification = "0.8"
+
+# Notification Center (UNUserNotificationCenter), with a click handler.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString", "NSBundle", "NSError", "NSObject"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = [
+  "std",
+  "block2",
+  "UNNotification",
+  "UNNotificationContent",
+  "UNNotificationRequest",
+  "UNNotificationResponse",
+  "UNNotificationTrigger",
+  "UNUserNotificationCenter",
+] }
