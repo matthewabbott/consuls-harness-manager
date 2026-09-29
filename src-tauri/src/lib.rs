@@ -70,7 +70,14 @@ pub fn run() {
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info,russh=warn".into()))
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(tray::app_menu).on_menu_event(|app, event| {
+        if event.id() == tray::APP_QUIT {
+            tray::request_quit(app);
+        }
+    });
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
@@ -174,12 +181,23 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Consuls")
-        .run(|app, event| {
-            // The UI's layout, zoom and drafts are saved in batches; write what's pending.
-            if let tauri::RunEvent::Exit = event
-                && let Some(state) = app.try_state::<AppState>()
-            {
-                state.core.flush_ui_state();
+        .run(|app, event| match event {
+            // The last window going away (it hides instead, so this is a fallback) quits the
+            // tray's way: it asks first while shells on this PC are running. (macOS ⌘Q is the
+            // app menu's own item; the system's terminate never comes through here.)
+            tauri::RunEvent::ExitRequested { code: None, api, .. } => {
+                api.prevent_exit();
+                tray::request_quit(app);
             }
+            // macOS: clicking the Dock icon brings the (hidden) window back.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => tray::show_main(app),
+            // The UI's layout, zoom and drafts are saved in batches; write what's pending.
+            tauri::RunEvent::Exit => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.core.flush_ui_state();
+                }
+            }
+            _ => {}
         });
 }
