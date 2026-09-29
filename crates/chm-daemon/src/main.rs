@@ -1,138 +1,104 @@
-//! consuls-daemon: see the library docs, and docs/DAEMON.md for setting it up.
+//! consuls-notifier: see the library docs, and docs/NOTIFIER.md.
 //!
-//!   consuls-daemon run                                 watch, push, serve the app
-//!   consuls-daemon add-host <id> <user> [--key PATH]   watch another machine (restart to apply)
-//!   consuls-daemon remove-host <id>
-//!   consuls-daemon hosts
-//!   consuls-daemon vapid-public-key
-//!   consuls-daemon probe [seconds]                     start the core, wait, print what it sees
+//!   consuls-notifier run                  wait for a configuration, then watch and push
+//!   consuls-notifier ctl configure        the configuration (JSON) on stdin
+//!   consuls-notifier ctl renew [days]     check in: the lease runs from now
+//!   consuls-notifier ctl status | subscriptions | export | stop
+//!   consuls-notifier ctl set-subscriptions   (JSON array on stdin)
+//!   consuls-notifier import-legacy <dir>  a configuration from the old push daemon's files
+//!   consuls-notifier new-key              a new VAPID private key
+//!   consuls-notifier probe [seconds]      start a core, wait, print what it sees
 //!
-//! The data folder is `$CONSULS_DAEMON_DIR`, else `~/.local/share/consuls-daemon`.
+//! Its run folder (and control socket) is `$CONSULS_NOTIFIER_DIR`, else `/tmp/consuls-<uid>`.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("consuls-notifier runs on macOS and Linux");
+    std::process::exit(2);
+}
 
-use anyhow::{Context, bail};
-use chm_core::model::{Alert, AppConfig, AuthMode, CoreEvent, HostConfig};
-use chm_core::{Core, Sink};
-use chm_daemon::config::{self, DaemonConfig};
-use tracing::info;
-
+#[cfg(unix)]
 fn main() -> anyhow::Result<()> {
+    use std::io::Read;
+    use std::time::Duration;
+
+    use anyhow::bail;
+    use chm_daemon::ctl::{self, Request};
+    use chm_daemon::rundir::RunDir;
+
     tracing_subscriber::fmt()
         .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info,russh=warn".into()))
+        .with_writer(std::io::stderr)
         .init();
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let dir = config::data_dir();
     let runtime = || tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build();
+    let stdin_json = || -> anyhow::Result<serde_json::Value> {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text)?;
+        Ok(serde_json::from_str(&text)?)
+    };
     match args.first().map(String::as_str) {
-        Some("--version") => println!("consuls-daemon {}", env!("CARGO_PKG_VERSION")),
-        Some("run") => runtime()?.block_on(run(dir))?,
-        Some("add-host") => {
-            let (Some(id), Some(user)) = (args.get(1), args.get(2)) else { bail!("usage: consuls-daemon add-host <id> <user> [--key PATH]") };
-            let key = args.iter().position(|a| a == "--key").and_then(|i| args.get(i + 1));
-            add_host(&dir, id, user, key.cloned())?;
+        Some("--version") => println!("consuls-notifier {}", env!("CARGO_PKG_VERSION")),
+        Some("run") => {
+            let dir = RunDir::prepare(RunDir::default_path())?;
+            runtime()?.block_on(chm_daemon::run(dir, Duration::from_secs(60)))?;
         }
-        Some("remove-host") => {
-            let Some(id) = args.get(1) else { bail!("usage: consuls-daemon remove-host <id>") };
-            let mut cfg = load_hosts(&dir)?;
-            cfg.hosts.retain(|h| &h.id != id);
-            save_hosts(&dir, &cfg)?;
-            println!("removed {id}; restart the daemon to apply");
-        }
-        Some("hosts") => {
-            for h in load_hosts(&dir)?.hosts {
-                println!("{} ({}@{})", h.id, h.user, h.address.as_deref().unwrap_or(&h.id));
+        Some("ctl") => {
+            let req = match args.get(1).map(String::as_str) {
+                Some("configure") => Request::Configure { config: Box::new(serde_json::from_value(stdin_json()?)?) },
+                Some("renew") => Request::Renew { days: args.get(2).map(|d| d.parse()).transpose()? },
+                Some("status") => Request::Status,
+                Some("subscriptions") => Request::Subscriptions,
+                Some("set-subscriptions") => Request::SetSubscriptions { subscriptions: serde_json::from_value(stdin_json()?)? },
+                Some("export") => Request::Export,
+                Some("stop") => Request::Stop,
+                _ => bail!("usage: consuls-notifier ctl configure | renew [days] | status | subscriptions | set-subscriptions | export | stop"),
+            };
+            let socket = RunDir::default_path().join("ctl.sock");
+            let data = runtime()?.block_on(ctl::request(&socket, &req))?;
+            if !data.is_null() {
+                println!("{}", serde_json::to_string_pretty(&data)?);
             }
         }
-        Some("vapid-public-key") => {
-            let cfg = DaemonConfig::load(&dir)?;
-            let vapid = chm_daemon::push::vapid::Vapid::load_or_create(&dir.join("vapid.json"), cfg.vapid_subject.unwrap_or_default())?;
-            println!("{}", vapid.public_key());
+        Some("import-legacy") => {
+            let Some(dir) = args.get(1) else { bail!("usage: consuls-notifier import-legacy <dir>") };
+            println!("{}", serde_json::to_string_pretty(&chm_daemon::config::import_legacy(std::path::Path::new(dir))?)?);
         }
+        Some("new-key") => println!("{}", chm_daemon::push::vapid::Vapid::generate_key()),
         Some("probe") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(5);
             runtime()?.block_on(probe(secs))?;
         }
         _ => {
-            eprintln!("usage: consuls-daemon run | add-host <id> <user> [--key PATH] | remove-host <id> | hosts | vapid-public-key | probe [secs] | --version");
+            eprintln!("usage: consuls-notifier run | ctl <verb> | import-legacy <dir> | new-key | probe [secs] | --version");
             std::process::exit(2);
         }
     }
     Ok(())
 }
 
-async fn run(dir: PathBuf) -> anyhow::Result<()> {
-    let daemon = chm_daemon::start(dir).await?;
-    let listener = tokio::net::TcpListener::bind(&daemon.config.listen).await.with_context(|| format!("listening on {}", daemon.config.listen))?;
-    info!("API on http://{} (publish it with: tailscale serve --bg --https=443 http://{})", daemon.config.listen, daemon.config.listen);
-    axum::serve(listener, chm_daemon::http::router(daemon)).with_graceful_shutdown(shutdown()).await?;
-    info!("stopped");
-    Ok(())
-}
+/// Starts a core on a throwaway data folder, waits, and prints what it found.
+#[cfg(unix)]
+async fn probe(secs: u64) -> anyhow::Result<()> {
+    use std::sync::Arc;
 
-async fn shutdown() {
-    #[cfg(unix)]
-    {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
+    use chm_core::model::{Alert, CoreEvent};
+    use chm_core::{Core, Sink};
+
+    struct LogSink;
+    impl Sink for LogSink {
+        fn event(&self, _event: CoreEvent) {}
+        fn frame(&self, _frame: Vec<u8>) {}
+        fn alert(&self, alert: Alert) {
+            tracing::info!(kind = ?alert.kind, "alert: {} — {}", alert.title, alert.body);
         }
     }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
-}
 
-fn load_hosts(dir: &Path) -> anyhow::Result<AppConfig> {
-    match std::fs::read_to_string(dir.join("config.json")) {
-        Ok(text) => Ok(serde_json::from_str(&text)?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppConfig::default()),
-        Err(e) => Err(e.into()),
-    }
-}
-
-fn save_hosts(dir: &Path, cfg: &AppConfig) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dir)?;
-    chm_daemon::files::write_private(&dir.join("config.json"), serde_json::to_string_pretty(cfg)?.as_bytes())
-}
-
-fn add_host(dir: &Path, id: &str, user: &str, key: Option<String>) -> anyhow::Result<()> {
-    let me = tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(config::me());
-    if me.as_ref().is_some_and(|m| m.id.eq_ignore_ascii_case(id)) {
-        bail!("{id} is this machine: its tmux is already watched (as @local)");
-    }
-    let mut cfg = load_hosts(dir)?;
-    cfg.hosts.retain(|h| h.id != id);
-    let mut host = HostConfig::new(id, user);
-    if let Some(path) = key {
-        host.auth = AuthMode::KeyFile { path };
-    }
-    cfg.hosts.push(host);
-    save_hosts(dir, &cfg)?;
-    println!("added {id} ({user}); restart the daemon to apply");
-    Ok(())
-}
-
-/// Discards frames (nothing draws tiles here) and logs alerts.
-struct LogSink;
-
-impl Sink for LogSink {
-    fn event(&self, _event: CoreEvent) {}
-    fn frame(&self, _frame: Vec<u8>) {}
-    fn alert(&self, alert: Alert) {
-        info!(kind = ?alert.kind, "alert: {} — {}", alert.title, alert.body);
-    }
-}
-
-/// Starts the core on a throwaway data dir, waits, and prints what it found.
-async fn probe(secs: u64) -> anyhow::Result<()> {
-    let dir: PathBuf = std::env::temp_dir().join(format!("consuls-daemon-probe-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("consuls-notifier-probe-{}", std::process::id()));
     let core = Core::new(dir.clone(), Arc::new(LogSink));
     core.start();
     core.set_visible_panes(Some(Vec::new()));
-    tokio::time::sleep(Duration::from_secs(secs)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
     let snap = core.snapshot();
     let tailnet = &snap.tailnet;
     println!("tailnet: {} ({} peers){}", tailnet.backend_state, tailnet.peers.len(), tailnet.error.as_deref().map(|e| format!(" error: {e}")).unwrap_or_default());

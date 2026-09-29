@@ -91,11 +91,18 @@ pub struct Policy {
     connected: HashMap<HostId, bool>,
     /// This machine's tailnet name, for `@local` panes.
     self_name: Option<String>,
+    /// A name given instead (wins over the tailnet's).
+    given_name: Option<String>,
 }
 
 impl Policy {
     pub fn new(delays: Delays) -> Self {
         Self { delays, ..Default::default() }
+    }
+
+    /// Names this machine in pushes, instead of its tailnet name.
+    pub fn name_this_machine(&mut self, name: String) {
+        self.given_name = Some(name);
     }
 
     /// Takes in a core event (pane lists, attention, hosts, the tailnet).
@@ -193,7 +200,7 @@ impl Policy {
     /// since the alert, and its machine reachable. One that fails a check is dropped, not put off.
     pub fn due(&mut self, now: Instant) -> Vec<Push> {
         let mut out = Vec::new();
-        let self_name = self.self_name.clone().unwrap_or_else(|| "this machine".into());
+        let self_name = self.given_name.clone().or_else(|| self.self_name.clone()).unwrap_or_else(|| "this machine".into());
         for (&key, p) in self.panes.iter_mut() {
             if !p.pending.as_ref().is_some_and(|pending| pending.due <= now) {
                 continue;
@@ -508,5 +515,9 @@ mod tests {
         assert_eq!(out[0].host, "spark-d683");
         assert_eq!(out[0].tag, "pane:spark-d683/%7");
         assert!(out[0].body.ends_with("Claude Code on spark-d683"), "{}", out[0].body);
+
+        p.name_this_machine("the big one".into());
+        let out = p.alert(&alert(7, AlertKind::Finished, LOCAL_HOST), t, T0 + 60);
+        assert_eq!(out[0].host, "the big one", "a given name wins over the tailnet's");
     }
 }

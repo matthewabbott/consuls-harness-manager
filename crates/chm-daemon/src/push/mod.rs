@@ -119,7 +119,7 @@ impl Sender {
                     return Delivery::Sent;
                 }
                 Ok((status, _)) if status == http::StatusCode::NOT_FOUND || status == http::StatusCode::GONE => {
-                    let _ = self.store.remove(&sub.endpoint);
+                    self.store.remove(&sub.endpoint);
                     return Delivery::Gone;
                 }
                 Ok((status, retry_after)) if (status == http::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()) && attempt < 3 => {
@@ -176,9 +176,7 @@ mod tests {
     use super::*;
 
     fn sender(insecure: bool) -> Sender {
-        let dir = std::env::temp_dir().join(format!("chm-sender-{}-{insecure}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = Arc::new(Store::load(dir.join("s.json")).unwrap());
+        let store = Arc::new(Store::new(Vec::new()));
         Sender::new(Vapid::new(p256::elliptic_curve::Generate::generate(), "https://x".into()), store, insecure).unwrap()
     }
 

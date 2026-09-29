@@ -1,6 +1,5 @@
 //! The phones (browsers) that asked for pushes, in `subscriptions.json`.
 
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -35,19 +34,14 @@ pub struct SubscriptionKeys {
     pub auth: String,
 }
 
+/// The subscriptions, in memory: whoever started the notifier keeps the lasting copy.
 pub struct Store {
-    path: PathBuf,
     subs: Mutex<Vec<Subscription>>,
 }
 
 impl Store {
-    pub fn load(path: PathBuf) -> anyhow::Result<Self> {
-        let subs = match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(e.into()),
-        };
-        Ok(Self { path, subs: Mutex::new(subs) })
+    pub fn new(subs: Vec<Subscription>) -> Self {
+        Self { subs: Mutex::new(subs) }
     }
 
     pub fn list(&self) -> Vec<Subscription> {
@@ -59,7 +53,7 @@ impl Store {
     }
 
     /// Adds a subscription, or refreshes the one with the same endpoint.
-    pub fn add(&self, mut sub: Subscription, now: u64) -> anyhow::Result<()> {
+    pub fn add(&self, mut sub: Subscription, now: u64) {
         let mut subs = self.subs.lock().unwrap();
         match subs.iter_mut().find(|s| s.endpoint == sub.endpoint) {
             Some(existing) => {
@@ -74,30 +68,23 @@ impl Store {
                 subs.push(sub);
             }
         }
-        self.save(&subs)
     }
 
-    pub fn remove(&self, endpoint: &str) -> anyhow::Result<bool> {
+    pub fn remove(&self, endpoint: &str) -> bool {
         let mut subs = self.subs.lock().unwrap();
         let before = subs.len();
         subs.retain(|s| s.endpoint != endpoint);
-        let removed = subs.len() != before;
-        if removed {
-            self.save(&subs)?;
-        }
-        Ok(removed)
+        subs.len() != before
+    }
+
+    pub fn replace(&self, subs: Vec<Subscription>) {
+        *self.subs.lock().unwrap() = subs;
     }
 
     pub fn delivered(&self, endpoint: &str, now: u64) {
-        let mut subs = self.subs.lock().unwrap();
-        if let Some(s) = subs.iter_mut().find(|s| s.endpoint == endpoint) {
+        if let Some(s) = self.subs.lock().unwrap().iter_mut().find(|s| s.endpoint == endpoint) {
             s.last_ok = Some(now);
-            let _ = self.save(&subs);
         }
-    }
-
-    fn save(&self, subs: &[Subscription]) -> anyhow::Result<()> {
-        crate::files::write_private(&self.path, serde_json::to_string_pretty(subs)?.as_bytes())
     }
 }
 
@@ -116,26 +103,19 @@ mod tests {
     }
 
     #[test]
-    fn dedups_by_endpoint_and_persists() {
-        let dir = std::env::temp_dir().join(format!("chm-store-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("subscriptions.json");
-        let store = Store::load(path.clone()).unwrap();
-        store.add(sub("https://web.push.apple.com/1", "k1"), 100).unwrap();
-        store.add(sub("https://web.push.apple.com/1", "k2"), 200).unwrap();
-        store.add(sub("https://web.push.apple.com/2", "k3"), 300).unwrap();
-        let again = Store::load(path.clone()).unwrap();
-        let list = again.list();
+    fn dedups_by_endpoint() {
+        let store = Store::new(Vec::new());
+        store.add(sub("https://web.push.apple.com/1", "k1"), 100);
+        store.add(sub("https://web.push.apple.com/1", "k2"), 200);
+        store.add(sub("https://web.push.apple.com/2", "k3"), 300);
+        let list = store.list();
         assert_eq!(list.len(), 2);
         assert_eq!((list[0].keys.p256dh.as_str(), list[0].added), ("k2", 100), "same endpoint: new keys, first seen kept");
-        assert!(again.remove("https://web.push.apple.com/1").unwrap());
-        assert!(!again.remove("https://web.push.apple.com/1").unwrap());
-        assert_eq!(Store::load(path.clone()).unwrap().list().len(), 1);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-        }
-        let _ = std::fs::remove_dir_all(dir);
+        assert!(store.remove("https://web.push.apple.com/1"));
+        assert!(!store.remove("https://web.push.apple.com/1"));
+        store.delivered("https://web.push.apple.com/2", 400);
+        assert_eq!(store.get("https://web.push.apple.com/2").unwrap().last_ok, Some(400));
+        store.replace(vec![]);
+        assert!(store.list().is_empty());
     }
 }

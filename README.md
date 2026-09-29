@@ -20,8 +20,8 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   notification if Consuls isn't focused; clicking it opens the pane); its tile glows until you
   look, then shows "Waiting on you". Ctrl+Shift+Space (⇧⌘Space on a Mac) jumps to the next
   waiting pane.
-- **Push to your phone**: with the push daemon running on an always-on machine
-  ([docs/DAEMON.md](docs/DAEMON.md)), flip the phone icon on an agent's tile (or its switch in
+- **Push to your phone**: with the notifier running on one of your machines
+  ([docs/NOTIFIER.md](docs/NOTIFIER.md); started from another, nothing installed), flip the phone icon on an agent's tile (or its switch in
   the phone app) and it pushes to your phone when it's still waiting for you after a few
   minutes — not if you answered, or looked at it on a desktop, meanwhile. The phone app is a
   Home Screen web app served over your tailnet: no App Store, no Apple developer account.

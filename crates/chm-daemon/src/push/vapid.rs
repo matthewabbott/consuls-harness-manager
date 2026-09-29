@@ -1,8 +1,8 @@
-//! VAPID (RFC 8292): the daemon's identity toward push services. One P-256 key for the daemon's
-//! whole life, kept in `vapid.json`: every subscription is bound to it, so it's never rotated.
+//! VAPID (RFC 8292): the notifiers' identity toward push services. One P-256 key, handed to
+//! each notifier when it starts and kept by whoever starts them: every subscription is bound to
+//! it, so it's never rotated.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Mutex;
 
 use anyhow::{Context, anyhow};
@@ -12,19 +12,11 @@ use p256::SecretKey;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{Signature, SigningKey};
 use p256::elliptic_curve::Generate;
-use serde::{Deserialize, Serialize};
 
 /// Tokens last this long (push services allow up to 24 h).
 const LIFETIME: u64 = 12 * 3600;
 /// A cached token is signed again once it has less than this left.
 const REFRESH: u64 = 3600;
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct KeyFile {
-    /// The P-256 private scalar, base64url.
-    private_key: String,
-}
 
 pub struct Vapid {
     key: SigningKey,
@@ -37,22 +29,15 @@ pub struct Vapid {
 }
 
 impl Vapid {
-    /// Loads `path`, or makes a new key there (0600).
-    pub fn load_or_create(path: &Path, subject: String) -> anyhow::Result<Self> {
-        let secret = match std::fs::read_to_string(path) {
-            Ok(text) => {
-                let file: KeyFile = serde_json::from_str(&text).with_context(|| format!("{}", path.display()))?;
-                SecretKey::from_slice(&URL_SAFE_NO_PAD.decode(file.private_key)?).context("bad VAPID key")?
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let secret = SecretKey::generate();
-                let file = KeyFile { private_key: URL_SAFE_NO_PAD.encode(secret.to_bytes()) };
-                crate::files::write_private(path, serde_json::to_string_pretty(&file)?.as_bytes())?;
-                secret
-            }
-            Err(e) => return Err(e).with_context(|| format!("{}", path.display())),
-        };
-        Ok(Self::new(secret, subject))
+    /// From a base64url private key (as in `NotifierConfig`).
+    pub fn from_base64(private_key: &str, subject: String) -> anyhow::Result<Self> {
+        let bytes = URL_SAFE_NO_PAD.decode(private_key.trim_end_matches('=')).context("bad VAPID key")?;
+        Ok(Self::new(SecretKey::from_slice(&bytes).context("bad VAPID key")?, subject))
+    }
+
+    /// A new key, base64url (for a first setup).
+    pub fn generate_key() -> String {
+        URL_SAFE_NO_PAD.encode(SecretKey::generate().to_bytes())
     }
 
     pub fn new(secret: SecretKey, subject: String) -> Self {
@@ -133,18 +118,11 @@ mod tests {
     }
 
     #[test]
-    fn the_key_survives_restarts() {
-        let dir = std::env::temp_dir().join(format!("chm-vapid-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("vapid.json");
-        let a = Vapid::load_or_create(&path, "https://x".into()).unwrap();
-        let b = Vapid::load_or_create(&path, "https://x".into()).unwrap();
+    fn keys_round_trip() {
+        let key = Vapid::generate_key();
+        let a = Vapid::from_base64(&key, "https://x".into()).unwrap();
+        let b = Vapid::from_base64(&key, "https://x".into()).unwrap();
         assert_eq!(a.public_key(), b.public_key());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-        }
-        let _ = std::fs::remove_dir_all(dir);
+        assert!(Vapid::from_base64("not a key", "https://x".into()).is_err());
     }
 }

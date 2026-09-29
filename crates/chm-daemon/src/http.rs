@@ -1,6 +1,7 @@
-//! The phone's API and web app. It listens on 127.0.0.1; `tailscale serve` publishes it to the
-//! tailnet over HTTPS and adds who's asking (`Tailscale-User-Login`, which it strips from what
-//! clients send), so only the machine's owner gets in.
+//! The phone's web app and its API, on the web app's home. It listens on 127.0.0.1;
+//! `tailscale serve` (the notifier's child) publishes it to the tailnet over HTTPS and adds who's
+//! asking (`Tailscale-User-Login`, which it strips from what clients send), so only the owner
+//! gets in. Every request from the owner is a check-in: it renews the notifier's lease.
 
 use std::sync::Arc;
 
@@ -86,12 +87,13 @@ fn reject(status: StatusCode, why: &str) -> Response {
 /// request from your devices, so a page elsewhere mustn't be able to post here).
 async fn guard(State(d): State<Arc<Daemon>>, req: Request, next: Next) -> Response {
     if d.owners.is_empty() {
-        return reject(StatusCode::SERVICE_UNAVAILABLE, "no owner: set ownerLogins in daemon.json");
+        return reject(StatusCode::SERVICE_UNAVAILABLE, "no owner: set web.ownerLogins in the notifier's configuration");
     }
     let login = req.headers().get("tailscale-user-login").and_then(|v| v.to_str().ok()).unwrap_or_default();
     if !d.owners.iter().any(|o| o.eq_ignore_ascii_case(login)) {
         return reject(StatusCode::FORBIDDEN, "not yours: open it from your own tailnet device, through tailscale serve");
     }
+    d.lease.renew(None);
     if req.method() != Method::GET
         && req.method() != Method::HEAD
         && let Err(why) = same_origin_json(req.headers(), &d)
@@ -113,7 +115,7 @@ fn same_origin_json(h: &HeaderMap, d: &Daemon) -> Result<(), &'static str> {
     }
     if let Some(origin) = text(header::ORIGIN)
         && origin != d.origin
-        && !d.config.allow_origins.iter().any(|o| o == origin)
+        && !d.config.web.as_ref().is_some_and(|w| w.allow_origins.iter().any(|o| o == origin))
     {
         return Err("wrong origin");
     }
@@ -136,7 +138,7 @@ async fn state(State(d): State<Arc<Daemon>>) -> Json<DaemonState> {
         })
         .collect();
     Json(DaemonState {
-        self_host: d.me.id.clone(),
+        self_host: d.self_name.clone(),
         snapshot: d.core.snapshot(),
         pending,
         vapid_public_key: d.sender.vapid_public_key().to_string(),
@@ -171,25 +173,18 @@ async fn subscribe(State(d): State<Arc<Daemon>>, Json(sub): Json<Subscription>) 
     if let Err(e) = d.sender.check_endpoint(&sub.endpoint) {
         return reject(StatusCode::BAD_REQUEST, &e.to_string());
     }
-    match d.sender.store().add(sub, crate::push::now()) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => reject(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
-    }
+    d.sender.store().add(sub, crate::push::now());
+    StatusCode::NO_CONTENT.into_response()
 }
 
 async fn unsubscribe(State(d): State<Arc<Daemon>>, Json(req): Json<EndpointRequest>) -> StatusCode {
-    match d.sender.store().remove(&req.endpoint) {
-        Ok(true) => StatusCode::NO_CONTENT,
-        Ok(false) => StatusCode::NOT_FOUND,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
+    if d.sender.store().remove(&req.endpoint) { StatusCode::NO_CONTENT } else { StatusCode::NOT_FOUND }
 }
 
 /// A test notification to one device.
 async fn test(State(d): State<Arc<Daemon>>, Json(req): Json<EndpointRequest>) -> Response {
     let Some(sub) = d.sender.store().get(&req.endpoint) else { return reject(StatusCode::NOT_FOUND, "not subscribed") };
-    let host = if d.me.id.is_empty() { "the push daemon".to_string() } else { d.me.id.clone() };
-    let payload = Payload { title: format!("Hello from {host}"), body: "Notifications work.".into(), tag: "test".into(), url: "/".into() };
+    let payload = Payload { title: format!("Hello from {}", d.self_name), body: "Notifications work.".into(), tag: "test".into(), url: "/".into() };
     match d.sender.to(&sub, &payload, Urgency::High).await {
         Delivery::Sent => StatusCode::NO_CONTENT.into_response(),
         Delivery::Gone => reject(StatusCode::GONE, "this device's subscription has expired; enable notifications again"),

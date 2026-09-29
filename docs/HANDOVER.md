@@ -110,7 +110,8 @@ Roughly in order. Each is small-to-medium and self-contained.
   - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH
     server lands in cmd/PowerShell, so `exec`'s `$SHELL -lc` wrapper would need a Cygwin-aware
     variant.
-- The push daemon (branch `push-daemon`, 2026-09-29). docs/DAEMON.md has the runbook.
+- The push daemon (branch `push-daemon`, 2026-09-29), now the transient notifier.
+  docs/NOTIFIER.md has the runbook.
   - The user's calls:
     - The phone app is a Home Screen web app served by the daemon, with Web Push: no Apple
       account. A native wrapper (APNs) is possible later behind the same API.
@@ -129,6 +130,22 @@ Roughly in order. Each is small-to-medium and self-contained.
       (`2.1.284`), so harness detection by command misses it unless `@chm_harness` is set.
     - spark-d683 was hidden while it had no agents (the list skips an empty `@local`).
     - The switch has no visible label, and panes can't be opened yet.
+    (All but the last fixed in the notifier round, below.)
+  - 2026-09-29, the user's new direction (plan: phone-first, no always-on service):
+    - A native iOS app (Tauri 2 mobile, free Apple tier: Personal Team, re-signed weekly, no
+      APNs) that connects to the machines itself, like the desktop apps. Pushes stay on the
+      Home Screen web app (Web Push is free; APNs needs the paid program).
+    - Nothing on the machines but Tailscale and tmux: no systemd, nothing restarting at boot.
+      Notifiers are transient, started by the app, and end at reboot, when turned off (in a
+      settings menu, not the main screen) or after 7 days without a check-in, deleting their
+      files.
+    - Each machine will watch itself (Phase 2); until then spark-d683 watches the others.
+    - Phases: 0a systemd removed (done); 0b the transient `consuls-notifier`, driven from the
+      Mac by `scripts/notifier.sh`, plus PWA fixes (Claude Code's version-number process title
+      detected as Claude, every machine listed, a labelled Notify switch, an offline shell,
+      notification links only to login.tailscale.com); 1 the iOS app (Xcode, build probe,
+      `CoreOptions` without a local machine, the tailnet learned via a machine, `src/mobile/`);
+      2 the app starts one notifier per machine and keeps the VAPID key in the Keychain.
   - Roadmap:
     1. Per-agent modes in a context menu for tracked agents: any turn end / after a delay /
        finished only. The policy already has all three (`NotifyMode`); only the UI is missing.
