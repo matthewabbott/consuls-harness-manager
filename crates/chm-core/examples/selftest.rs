@@ -194,6 +194,30 @@ async fn main() -> anyhow::Result<()> {
     assert_eq!(naming().await?.split('|').skip(1).collect::<Vec<_>>(), ["", "1", ""], "tmux names the window again");
     println!("ok   pane names (window renamed and given back)");
 
+    // --- a session destroyed under our control client (its last pane closed) must not crash
+    // tmux <= 3.6: an all-panes subscription's timer dereferences the NULL session. Freezing
+    // our client keeps it around after its session is gone, as a slow connection would.
+    core.exec(&host, &format!("{tmux} -L {socket} new-session -d -s doomed 'bash --norc --noprofile'")).await.map_err(anyhow::Error::msg)?;
+    wait_for("second session's pane discovered", Duration::from_secs(10), || {
+        rec.panes.lock().unwrap().iter().any(|p| p.tmux.as_ref().is_some_and(|t| t.session_name == "doomed"))
+    })
+    .await;
+    let script = format!(
+        r#"T="{tmux} -L {socket}"
+pid=$($T list-clients -F '#{{client_pid}} #{{client_session}} #{{client_control_mode}}' | awk '$2=="doomed" && $3==1 {{print $1; exit}}')
+[ -n "$pid" ] || {{ echo "no control client on doomed"; exit 1; }}
+kill -STOP "$pid"; $T kill-session -t doomed; sleep 2.5
+if $T ls >/dev/null 2>&1; then echo ALIVE; else echo CRASHED; fi
+kill -CONT "$pid""#
+    );
+    let out = core.exec(&host, &script).await.map_err(anyhow::Error::msg)?;
+    assert!(out.stdout_str().contains("ALIVE"), "tmux survived its session closing under our client: {}", out.stdout_str().trim());
+    wait_for("pane of the closed session removed", Duration::from_secs(10), || {
+        !rec.panes.lock().unwrap().iter().any(|p| p.tmux.as_ref().is_some_and(|t| t.session_name == "doomed"))
+    })
+    .await;
+    println!("ok   tmux survives a session closing under our control client");
+
     // --- pasted images: saved under ~/.cache/consuls/pastes, never overwriting
     let image: Vec<u8> = (0..70_000u32).map(|i| (i % 251) as u8).collect();
     let path = core.save_paste(&host, image.clone(), "PNG").await.map_err(anyhow::Error::msg)?;

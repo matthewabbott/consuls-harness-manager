@@ -40,6 +40,12 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   Seeding uses `:pause` / `:continue` (pause discards the queue); their `%pause`/`%continue`
   lines arrive inside those commands' reply blocks. Stress test:
   `cargo run -p chm-core --example crashhunt` (private server, see its header).
+- **Never subscribe to all panes (`refresh-client -B name:%*:…`).** In tmux ≤ 3.6 its timer
+  reads the client's session, which is NULL once that session is destroyed (its last pane
+  closed, or its shell exited) until the client has gone; if the timer fires in between, the
+  server segfaults (`control_check_subs_all_panes`, fixed in 3.7). Subscribe per pane
+  (`chm-<id>:%<id>:…`, `sync_subscriptions`): that check skips a NULL session. The selftest
+  reproduces it by freezing our control client (SIGSTOP) and killing its session.
 - Panes (and plain shells) start the user's login shell: rc files may start daemons (e.g.
   `ssh-agent`) that outlive the pane. Tests use bare shells or clean up after themselves.
 - Claude Code only runs hooks in folders it trusts (the trust prompt blocks them).
@@ -189,7 +195,8 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 ## Testing
 
 - Core end-to-end: `cargo run -p chm-core --example selftest -- <host> <user>` (private tmux
-  socket; covers sizing, labels, names, pasted images, direct shells, reconnect, hooks).
+  socket; covers sizing, labels, names, pasted images, a session closing under our client,
+  direct shells, reconnect, hooks).
 - This PC shells: `cargo run -p chm-core --example localtest` (every local shell: typing,
   resize, hook routing, exit → ended, dismiss).
 - This PC tmux: `cargo run -p chm-core --example localtmux` (private socket, scratch state

@@ -65,8 +65,11 @@ pub(crate) enum PaneCmd {
 
 const SEP_STR: &str = crate::tmux::formats::SEP;
 
-/// Subscription reporting per-pane fields that change without any other notification.
-const SUB_NAME: &str = "chm";
+/// Subscriptions reporting per-pane fields that change without any other notification: one
+/// per pane, named `chm-<pane id>`. Never `%*` (all panes): in tmux <= 3.6 its timer
+/// dereferences the client's session, which is NULL for a moment after that session is
+/// destroyed (e.g. its last pane closed), and the whole server crashes (fixed in 3.7).
+const SUB_PREFIX: &str = "chm-";
 const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{pane_title}";
 
 struct Client {
@@ -90,6 +93,8 @@ struct Pane {
     last_output: Option<Instant>,
     burst_start: Option<Instant>,
     heuristic_working: bool,
+    /// The client holding this pane's subscription.
+    subscribed: Option<ClientKey>,
 }
 
 pub(crate) struct TmuxManager {
@@ -222,10 +227,6 @@ impl TmuxManager {
             match ControlClient::attach(&self.link, &self.server, &target, key, self.events_tx.clone()).await {
                 Ok(client) => {
                     debug!(host = %self.host, "attached control client {key} to {} ({group_key})", session.name);
-                    let sub = format!("refresh-client -B {}", quote(&format!("{SUB_NAME}:%*:{SUB_FORMAT}")));
-                    if let Err(e) = client.command(&sub).await {
-                        warn!(host = %self.host, "subscription failed: {e}");
-                    }
                     self.clients.insert(key, Client { client: Arc::new(client), group_key });
                 }
                 Err(e) => warn!(host = %self.host, "attach to {} failed: {e}", session.name),
@@ -251,6 +252,15 @@ impl TmuxManager {
             }
         }
 
+        // Subscriptions of panes that are gone (or moved to another client) are dropped.
+        let mut unsubscribe: Vec<(ClientKey, PaneId)> = Vec::new();
+        for (id, p) in &self.panes {
+            if let Some(held) = p.subscribed
+                && rows.get(id).is_none_or(|(client, _)| *client != held)
+            {
+                unsubscribe.push((held, *id));
+            }
+        }
         self.panes.retain(|id, _| rows.contains_key(id));
         let mut to_seed = Vec::new();
         for (id, (client, row)) in rows {
@@ -281,6 +291,7 @@ impl TmuxManager {
                         last_output: None,
                         burst_start: None,
                         heuristic_working: false,
+                        subscribed: None,
                     };
                     self.panes.insert(id, pane);
                     to_seed.push(id);
@@ -290,7 +301,43 @@ impl TmuxManager {
         for id in to_seed {
             self.seed(id).await;
         }
+        self.sync_subscriptions(unsubscribe).await;
         self.publish();
+    }
+
+    /// Subscribes each pane on its client (and drops `stale` subscriptions), one command line
+    /// per client.
+    async fn sync_subscriptions(&mut self, stale: Vec<(ClientKey, PaneId)>) {
+        let mut lines: BTreeMap<ClientKey, (Vec<String>, Vec<PaneId>)> = BTreeMap::new();
+        for (client, id) in stale {
+            lines.entry(client).or_default().0.push(format!("refresh-client -B {}", quote(&format!("{SUB_PREFIX}{id}"))));
+        }
+        for (id, p) in self.panes.iter_mut() {
+            if p.subscribed != Some(p.client) {
+                p.subscribed = None;
+                let sub = format!("{SUB_PREFIX}{id}:%{id}:{SUB_FORMAT}");
+                let entry = lines.entry(p.client).or_default();
+                entry.0.push(format!("refresh-client -B {}", quote(&sub)));
+                entry.1.push(*id);
+            }
+        }
+        for (key, (commands, subscribed)) in lines {
+            let Some(client) = self.clients.get(&key).map(|c| c.client.clone()) else { continue };
+            match client.commands(&commands.join(" ; "), commands.len()).await {
+                Ok(replies) if replies.iter().all(|r| r.ok) => {
+                    for id in subscribed {
+                        if let Some(p) = self.panes.get_mut(&id) {
+                            p.subscribed = Some(key);
+                        }
+                    }
+                }
+                Ok(replies) => {
+                    let err = replies.iter().find(|r| !r.ok).map(|r| r.text()).unwrap_or_default();
+                    warn!(host = %self.host, "subscriptions on client {key} failed: {err}");
+                }
+                Err(e) => debug!(host = %self.host, "subscriptions on client {key} failed: {e}"),
+            }
+        }
     }
 
     async fn seed(&mut self, id: PaneId) {
@@ -449,7 +496,7 @@ impl TmuxManager {
                 debug!(host = %self.host, "pane %{pane} paused (client fell behind); re-seeding");
                 self.seed(pane).await;
             }
-            ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name == SUB_NAME => {
+            ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name.starts_with(SUB_PREFIX) => {
                 let mut parts = value.splitn(7, crate::tmux::formats::SEP);
                 let cmd = parts.next().unwrap_or_default().to_string();
                 let alt = parts.next() == Some("1");
