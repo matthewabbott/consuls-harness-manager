@@ -34,14 +34,16 @@ impl Harness {
     }
 
     /// Best guess from what tmux tells us. An explicit `@chm_harness` tag (set when the app
-    /// launched the pane) wins; otherwise the pane's foreground process name.
+    /// launched the pane) wins; otherwise the pane's foreground process name. Claude Code names
+    /// its process after its version (`2.1.284`), which counts as Claude.
     pub fn detect(current_command: &str, tagged: Option<&str>) -> Option<Self> {
         if let Some(h) = tagged.and_then(Self::from_name)
             && (h == Harness::Shell || !Self::is_shell(current_command))
         {
             return Some(h);
         }
-        Self::from_name(current_command.trim_start_matches('-'))
+        let name = current_command.trim_start_matches('-');
+        Self::from_name(name).or_else(|| is_version_title(name).then_some(Harness::Claude))
     }
 
     fn is_shell(cmd: &str) -> bool {
@@ -182,6 +184,14 @@ pub(crate) fn prompt_steps(text: &str, images: &[String], harness: Option<Harnes
     steps
 }
 
+/// A process named like a version: `2.1.284`, `2.1.284-beta.1` (three numeric parts, then an
+/// optional `-suffix`). Claude Code sets its process title that way.
+fn is_version_title(cmd: &str) -> bool {
+    let core = cmd.split_once('-').map_or(cmd, |(v, _)| v);
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +223,13 @@ mod tests {
         // An app-launched claude pane whose harness exited back to the shell reads as a shell.
         assert_eq!(Harness::detect("bash", Some("claude")), Some(Harness::Shell));
         assert_eq!(Harness::detect("node", Some("codex")), Some(Harness::Codex));
+        // Claude Code's process title is its version.
+        assert_eq!(Harness::detect("2.1.284", None), Some(Harness::Claude));
+        assert_eq!(Harness::detect("2.1.284-beta.1", None), Some(Harness::Claude));
+        assert_eq!(Harness::detect("1.2", None), None);
+        assert_eq!(Harness::detect("python3.12", None), None);
+        assert_eq!(Harness::detect("1.2.x", None), None);
+        assert_eq!(Harness::detect("2.1.284", Some("codex")), Some(Harness::Codex), "a tag still wins");
     }
 
     #[test]
