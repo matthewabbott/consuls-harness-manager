@@ -159,3 +159,27 @@ control clients to the same sessions:
 
 Update `CLAUDE.md`: its "tmux on This PC" section says macOS is "not yet". Also update README
 "Not yet" and `docs/HANDOVER.md`. Then ask the user before committing on `mac`.
+
+## Status (2026-09-28, first session on the Mac)
+
+Done on branch `mac`: §1 (native tmux), §3 (notifications) and §4 (app behaviour) are built;
+§2's automated checks pass (`localtest`, `localtmux`, `cargo test`, vitest); keyboard is
+Mac-native. See `docs/HANDOVER.md` for the details and `CLAUDE.md` "macOS app" for the gotchas.
+
+Also passing from the Mac: `selftest -- spark-d683 consulear` (after approving Tailscale SSH's
+check for this machine). 2026-09-29: the user ran `Consuls.app` and reports it working well;
+the items below weren't confirmed one by one.
+
+To check by hand in `Consuls.app` (`npm run tauri build -- --bundles app`, launched from the
+Finder):
+- [ ] Notifications: allow them at the first prompt; an agent finishing while the app is in the
+      background posts one; clicking it opens the pane. Recording mode keeps them generic.
+- [ ] The tailnet and remote machines show up (Tailscale CLI found from launchd's PATH).
+- [ ] This PC lists the real tmux sessions; a new tmux pane on This PC starts, takes typing,
+      reports hooks.
+- [ ] Closing the window hides it; the Dock icon brings it back; the menu bar icon's menu works.
+- [ ] ⌘Q with a plain shell open on This PC asks first; without one it quits at once.
+- [ ] Keyboard: ⌘F, ⌘C/⇧⌘C/⌘V in the terminal, Ctrl+C interrupts with a selection, Option+B/F
+      in a tmux pane, ⌘-click on a link and a `file:line` reference, ⌘[ ⌘] and ⌘⌫ in the explorer.
+- [ ] Reveal in Finder, Open in VS Code (local; Remote-SSH to the Mac from Windows is separate).
+- [ ] Chimes play.

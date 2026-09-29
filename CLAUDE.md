@@ -78,12 +78,27 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Local hooks run through Git for Windows' `sh.exe`; `CHM_STATE_DIR` tells `chm-hook.sh` where
   the events file is (the core polls it). Templates use `__RUN__`/`__SH__` placeholders.
 
-## tmux on This PC (Cygwin)
+## tmux on This PC
 
-- `TmuxManager` runs over a `link::Link`: `Ssh`, or `Local(LocalSh)` for this machine. On
-  Windows that's Cygwin's bash (`cygwin.rs`, found via its setup's registry key). Scripts reach
-  it base64-encoded (`BOOT`), so Windows command-line quoting and Cygwin's globbing never see
-  them. `hub/local_tmux.rs` drives it; its panes join `@local` next to the plain shells.
+- `TmuxManager` runs over a `link::Link`: `Ssh`, or `Local(LocalSh)` for this machine.
+  `hub/local_tmux.rs` drives it (`Flavor::Cygwin` / `Flavor::Native`); its panes join `@local`
+  next to the plain shells.
+- `tmux -vv` logs record the whole environment (tokens included): delete them after debugging.
+
+### macOS / Linux (native)
+
+- Found by running the hosts' `FACTS_SCRIPT` locally through `LocalSh::posix` (`/bin/sh` →
+  `$SHELL -lc`, as over SSH), a moment after start-up. So this app and one watching this machine
+  over SSH resolve the same tmux, and write identical hook assets: `VERSION` is
+  `assets::stamp` (content hash + the tmux the hook calls) for every writer.
+- No path map, no pty for control clients. Pane env is `CHM_STATE_DIR` only, and the user's
+  server gets no `set-environment -g` (hooks there already default to our events file).
+- Control clients exit on stdin EOF, so they die with the app, `kill -9` included.
+
+### Windows (Cygwin)
+
+- Cygwin's bash (`cygwin.rs`, found via its setup's registry key). Scripts reach it
+  base64-encoded (`BOOT`), so Windows command-line quoting and Cygwin's globbing never see them.
 - Cygwin's tmux can't use a pipe for a control client (its replies never arrive), so control
   clients run under `script -qfec 'stty raw -echo; exec tmux -C …' /dev/null`. They're in a
   kill-on-close job object (`end_with_this_app`), so they die with the app. Scripts aren't in
@@ -94,9 +109,32 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   - Our panes get `-e CHERE_INVOKING=1` (Cygwin's profile `cd`s home otherwise) and
     `CHM_STATE_DIR`, so hooks write to this PC's events file.
   - A running server also gets `set-environment -g CHM_STATE_DIR`, for hand-made panes.
-- `tmux -vv` logs record the whole environment (tokens included): delete them after debugging.
-- Not yet: tmux on a local macOS/Linux (`local_tmux::find` is Windows-only). It would be a
-  `LocalSh` with `/bin/sh`, no pty, no path map.
+
+## macOS app
+
+- Apps started from the Finder or Dock get launchd's environment: PATH `/usr/bin:/bin:/usr/sbin:/sbin`
+  (no Homebrew), no `LANG`, maybe no `$SHELL`. Tools are looked up by absolute path (Tailscale,
+  VS Code, Homebrew shells); `local::user_shell()` falls back to the password database; shells
+  and tmux servers we start get a UTF-8 `LANG` (`local::locale_env`).
+- Programs we start never inherit `local::private_var`s (`TMUX`, `TMUX_PANE`, `CHM_*`,
+  `__CFBundleIdentifier`, `XPC_*`). Started from inside tmux, a plain shell's hook would
+  otherwise report to — and set `@chm_state` on — the tmux pane the app itself runs in.
+- ⌘Q: tao doesn't implement `applicationShouldTerminate:`, so the system's terminate ends the app
+  without an `ExitRequested`. The app menu's Quit is our own item (`tray::app_menu`), which goes
+  through `request_quit`; the Dock's Quit and logout can't be intercepted.
+- Notifications: `UNUserNotificationCenter` (`mac_notify.rs`) only works in an app bundle (it
+  throws for a bare binary), so `tauri dev` only chimes. Build `Consuls.app`
+  (`npm run tauri build -- --bundles app`) to test them. The Dock icon brings the window back
+  (`RunEvent::Reopen`); the menu bar icon is a template image drawn in code.
+- Keyboard: ⌘ for the app's shortcuts, Ctrl always goes to the terminal (`lib/platform.ts`:
+  `appMod`, `keyLabel`, `historyStep`, `isDeleteKey`). Ctrl+click is a right click on macOS, so
+  links open with ⌘-click. Option is Meta (`macOptionIsMeta`); in tmux panes `tmuxKey` rebuilds
+  the key from `keyCode`, since Option+B reports `e.key` "∫".
+- tmux 3.7 can leave its socket file behind when the server ends with its last session: tests
+  remove theirs.
+- The agent's shell can't `screencapture` (no Screen Recording permission), and WKWebView has
+  no CDP, so `scripts/e2e` doesn't run here: check UI logic against the mock backend
+  (`npm run dev`) and ask the user to try the real app.
 
 ## Files
 
@@ -217,11 +255,11 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   socket; covers sizing, labels, names, pasted images, a session closing under our client,
   direct shells, reconnect, hooks).
 - This PC shells: `cargo run -p chm-core --example localtest` (every local shell: typing,
-  resize, hook routing, exit → ended, dismiss).
-- This PC tmux: `cargo run -p chm-core --example localtmux` (private socket, scratch state
-  dir). For the real app, start it with `CHM_TMUX_SOCKET=<private>` and run
-  `scripts/e2e/local-tmux.mjs`.
-- Real UI end-to-end: start the app with
+  resize, hook routing, exit → ended, dismiss; scratch state dir, private tmux socket).
+- This PC tmux: `cargo run -p chm-core --example localtmux` (Cygwin, or the native tmux on
+  macOS/Linux; private socket, scratch state dir). For the real app, start it with
+  `CHM_TMUX_SOCKET=<private>` (and, on Windows, run `scripts/e2e/local-tmux.mjs`).
+- Real UI end-to-end (Windows only: WebView2's DevTools protocol): start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
   `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `cwd.mjs`; `paste.mjs` (names, image paste); `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
@@ -230,6 +268,9 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 
 ## Remote shell gotchas
 
+- Tailscale SSH in check mode stalls a new source machine's connections until someone opens
+  the URL it prints (the app shows it as a button; OpenSSH prints "Tailscale SSH requires an
+  additional check"). The selftest just times out "waiting for host details".
 - Tailscale SSH on macOS runs commands through `/usr/bin/login`, which **always exits 0**.
   `exec::run` therefore runs scripts under `sh` (inside the login shell, for PATH) and takes
   the exit status from a marker the script prints last — never from SSH.

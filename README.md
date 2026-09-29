@@ -17,8 +17,9 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   pane keeps its name in `@chm_name`, so every device running Consuls shows it; tmux's own
   window and session names are left alone.
 - **Attention**: when an agent finishes its turn or needs permission, you get a ping (and a
-  toast if Consuls isn't focused); its tile glows until you look, then shows "Waiting on you".
-  Ctrl+Shift+Space jumps to the next waiting pane.
+  notification if Consuls isn't focused; clicking it opens the pane); its tile glows until you
+  look, then shows "Waiting on you". Ctrl+Shift+Space (⇧⌘Space on a Mac) jumps to the next
+  waiting pane.
 - **Labels**: tag panes (right-click a tile, or drag it onto a label in the sidebar), then
   group the grid by label, project, status or machine and sort by attention, name or recency.
   Labels are stored on the tmux pane (`@chm_labels`), so every device sees the same tags.
@@ -40,7 +41,8 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   (it asks first); closing the window keeps them running in the tray. With
   [Cygwin](https://cygwin.com)'s `tmux` package installed, This PC gets tmux sessions too —
   they keep running when Consuls quits, like on any other machine, and their Windows programs
-  (Claude Code, Codex) get a real console.
+  (Claude Code, Codex) get a real console. On a Mac, This PC offers your login shell, zsh, bash
+  and fish, and your own tmux (e.g. Homebrew's): its sessions show up like any other machine's.
 - **Files**: a VS Code–style explorer in the left sidebar, following the open pane's folder (or
   pinned anywhere on any machine). One-click places (your default folder for that machine, home,
   each drive on This PC or `/`), back / forward (also Alt+←/→ and the mouse's side buttons), the
@@ -106,10 +108,11 @@ remote host: tmux ≥ 3.2, and (uploaded on demand) ~/.local/share/consuls/{chm-
 
 ## Requirements
 
-- Windows 11 (macOS should work but is untested), Tailscale installed.
+- Windows 11 or macOS 12+, Tailscale installed (the app, or Homebrew's `tailscale`).
 - Remote machines: tmux ≥ 3.2 and either Tailscale SSH (no keys needed) or regular sshd with a
   key in your ssh-agent / `~/.ssh`.
-- To build: Node 22+, Rust (pinned in `rust-toolchain.toml`), MSVC Build Tools + WebView2 on Windows.
+- To build: Node 22+, Rust (pinned in `rust-toolchain.toml`), MSVC Build Tools + WebView2 on
+  Windows, the Xcode Command Line Tools on macOS.
 
 ## Develop
 
@@ -129,7 +132,9 @@ cargo run -p chm-core --example selftest -- spark2 <user>             # full pip
 cargo run -p chm-core --example selftest -- spark-d683 <user> claude /path/to/trusted/dir
 ```
 
-Build an installer: `npm run tauri build` (NSIS; the installed app also gets proper toast identity).
+Build an installer: `npm run tauri build` — NSIS on Windows (the installed app also gets proper
+toast identity); `Consuls.app` and a DMG on macOS (`-- --bundles app` for just the app).
+Notifications on macOS need the `.app`: `npm run tauri dev` only plays the chimes.
 
 ## Keyboard
 
@@ -139,11 +144,17 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 | Terminal | keys go straight to the pane · **Ctrl+B** then a key: tmux's keys on tmux panes (**d** back to grid, **c** new window, **%** / **"** split, **n**/**p** windows, **,** / **$** rename; **Ctrl+B ?** lists them) · **Ctrl+F** search · **Ctrl+C** smart copy (with a selection) · **Ctrl+Shift+C** copy as shown · **Ctrl+V** paste · **Ctrl+Enter** jump to composer |
 | Composer | **Enter** send · **Shift+Enter** new line · **↑/↓** prompt history · **Ctrl+V** also pastes images · **Esc** (empty) interrupts the agent |
 
+On a Mac the app's own shortcuts use **⌘** instead of Ctrl (⌘F search, ⌘C smart copy, ⇧⌘C copy
+as shown, ⌘V paste, ⌘↩ composer, ⇧⌘G grid, ⇧⌘B sidebar, ⌘-click links, ⌘[ / ⌘] back and forward
+in the explorer, ⌘⌫ delete), and **Ctrl always goes to the terminal**: Ctrl+C interrupts even
+with text selected, Ctrl+B is still tmux's prefix. Option works as Meta (Option+B / Option+F move
+by word).
+
 ## Not yet
 
 Next up:
-- tmux on This PC when that's a Mac or Linux box (Windows has it through Cygwin already).
-- Reaching this PC from another Consuls (e.g. the Mac) over SSH.
+- Reaching a Windows PC from another Consuls (e.g. the Mac) over SSH.
+- tmux on This PC when that's a Linux box: written (it's the macOS code), not yet tried.
 
 Bigger: the iPhone app and push notifications, a transcript-backed conversation view,
 sub-agent panes, per-harness expandable regions.

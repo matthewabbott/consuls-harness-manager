@@ -19,7 +19,7 @@ settings. Since then:
 | This PC (`@local`) | Windows 11 | pwsh 7, Windows PowerShell, Git Bash (`D:/Program Files/Git`), cmd; `claude`, `codex`, `omp` installed; VS Code at `D:\Users\Matthew Abbott\AppData\Local\Programs\Microsoft VS Code` with Remote-SSH |
 | spark-d683 | Linux (DGX), tmux 3.4 | Tailscale SSH, user `consulear`; serves a model with only a few GB of RAM free — keep tests light |
 | spark2 | Linux (DGX), tmux 3.4 | same setup |
-| mbas-macbook-pro | macOS, tmux 3.7c in `~/.homebrew/bin` | Tailscale SSH, user `matthewabbott` |
+| mbas-macbook-pro | macOS 26, tmux 3.7c in `/opt/homebrew` | Tailscale SSH, user `matthewabbott`. Standard Homebrew since 2026-09-28 (Tailscale's daemon too); the old `~/.homebrew` stays until the user restarts their tmux server, then goes. Runs its own Consuls now (branch `mac`) |
 
 **Build, run, test**
 
@@ -85,9 +85,28 @@ Roughly in order. Each is small-to-medium and self-contained.
   - tmux prefix keys (Ctrl+B …) in the expanded view, handled by the app with tmux's stock
     meanings, aimed at the pane on screen.
   - Wrapped URLs (Claude Code's sign-in link) copy and Ctrl+click whole.
+- The Mac round (branch `mac`, from `docs/HANDOVER-MAC.md`), 2026-09-28:
+  - Mac set up for development: standard Homebrew, rustup, Node 26; PATH in `~/.zprofile`.
+  - The workspace built and tested clean on macOS on the first try (the unix branches had
+    never compiled before).
+  - tmux on This PC, natively: `local_tmux::Flavor::Native`, found by the hosts' facts script
+    through `LocalSh::posix`, so both apps write identical hook assets (`assets::stamp`).
+    Verified by `localtmux` (also from an empty environment, like a Dock launch) and by a
+    `kill -9` of the real app (its control client exits).
+  - Local shells: `localtest` passes for zsh and bash. Fixed: shells inherited the app's
+    `TMUX_PANE` (a hook routed to the tmux pane the app ran in); zsh was listed twice; no
+    `LANG`/`$SHELL` when started from the Dock.
+  - Mac-native keyboard (`lib/platform.ts`): ⌘ for the app, Ctrl for the terminal; Option as
+    Meta in tmux panes (from `keyCode`).
+  - App behaviour: ⌘Q through the app menu's own Quit (asks first), the Dock icon reopens the
+    window, a template menu bar icon, `tauri.macos.conf.json` (`Consuls.app` + DMG, ad-hoc
+    signed).
+  - Notification Center (`mac_notify.rs`), bundle-only; clicking opens the pane.
+  - The SSH selftest (`spark-d683 consulear`) passes from the Mac too.
+  - The user ran `Consuls.app` and reports it working well; the individual checks are listed
+    in `docs/HANDOVER-MAC.md`.
 - Future (from the user, 2026-09-28):
-  - The Mac app watching its own tmux (a native `LocalSh`). Next, on the Mac itself:
-    `docs/HANDOVER-MAC.md`.
+  - ~~The Mac app watching its own tmux~~ (done on `mac`, above).
   - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH
     server lands in cmd/PowerShell, so `exec`'s `$SHELL -lc` wrapper would need a Cygwin-aware
     variant.
