@@ -8,6 +8,7 @@ import { backend } from "../ipc/backend";
 import { hostLabel, isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { parentPath } from "../lib/paths";
+import { keyLabel } from "../lib/platform";
 import { buffers, useEditor } from "../store/editor";
 import { useRedact } from "../store/recording";
 import { statusOf, useFiles } from "../store/files";
@@ -47,7 +48,7 @@ export default function FileView({ id }: { id: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col px-5 pb-4">
       <header className="flex h-12 shrink-0 items-center gap-3">
-        <button onClick={back} title="Back to grid (Ctrl+Shift+G)" className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100">
+        <button onClick={back} title={`Back to grid (${keyLabel("Mod+Shift+G")})`} className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100">
           <ArrowLeft className="h-4 w-4" />
         </button>
         {file.kind === "image" ? <ImageIcon className="h-5 w-5 text-sky-400/80" /> : <FileText className="h-5 w-5 text-sky-400/80" />}
@@ -83,7 +84,7 @@ export default function FileView({ id }: { id: string }) {
             <button
               onClick={() => void editor().save(id)}
               disabled={!file.dirty || file.saving}
-              title="Save (Ctrl+S)"
+              title={`Save (${keyLabel("Mod+S")})`}
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-ink-700 hover:text-mist-100 disabled:opacity-40"
             >
               {file.saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save

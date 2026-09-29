@@ -33,4 +33,16 @@ describe("tmuxKey", () => {
     expect(tmuxKey(k("@", { ctrlKey: true, altKey: true }))).toBeNull(); // AltGr
     expect(tmuxKey(k("Shift", { shiftKey: true }))).toBeNull();
   });
+
+  it("treats Option as Meta on macOS", () => {
+    // Option+B reports "∫", Option+E a dead key: the key code says which key it was.
+    expect(tmuxKey(k("∫", { altKey: true, keyCode: 66 }), true)).toBe("M-b");
+    expect(tmuxKey(k("Dead", { altKey: true, keyCode: 69 }), true)).toBe("M-e");
+    expect(tmuxKey(k("ı", { altKey: true, shiftKey: true, keyCode: 66 }), true)).toBe("M-B");
+    expect(tmuxKey(k("≥", { altKey: true, keyCode: 190 }), true)).toBe("M-.");
+    expect(tmuxKey(k("ArrowLeft", { altKey: true, keyCode: 37 }), true)).toBe("M-Left");
+    // Ctrl stays the terminal's, ⌘ the app's.
+    expect(tmuxKey(k("c", { ctrlKey: true, keyCode: 67 }), true)).toBe("C-c");
+    expect(tmuxKey(k("c", { metaKey: true, keyCode: 67 }), true)).toBeNull();
+  });
 });

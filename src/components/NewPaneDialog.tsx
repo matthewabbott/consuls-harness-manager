@@ -8,6 +8,7 @@ import type { LocalShell } from "../ipc/bindings/LocalShell";
 import { canBack, canForward, emptyHistory, pushHistory, stepHistory } from "../lib/history";
 import { hostLabel, isLocal, shortPath } from "../lib/hosts";
 import { isRoot, joinPath, parentPath, sameFolder } from "../lib/paths";
+import { historyStep } from "../lib/platform";
 import { uiStorage } from "../lib/uiState";
 import { useApp } from "../store/app";
 import { useRedact } from "../store/recording";
@@ -228,9 +229,10 @@ export default function NewPaneDialog() {
               <div
                 className="border-b border-ink-700 px-1.5 py-1.5"
                 onKeyDown={(e) => {
-                  if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+                  const dir = historyStep(e);
+                  if (dir) {
                     e.preventDefault();
-                    step(e.key === "ArrowLeft" ? -1 : 1);
+                    step(dir);
                   }
                 }}
               >

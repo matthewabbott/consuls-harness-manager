@@ -1,5 +1,6 @@
 import { Files, Server, Settings, Video } from "lucide-react";
 
+import { keyLabel } from "../lib/platform";
 import { useApp } from "../store/app";
 import { updateUiPrefs } from "../store/prefs";
 import { useUi, type SidebarTab } from "../store/ui";
@@ -28,7 +29,7 @@ export default function ActivityBar() {
     <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-ink-700/80 bg-ink-950/70 py-2.5">
       <button
         onClick={() => useUi.getState().toggleSidebar()}
-        title={collapsed ? "Show sidebar (Ctrl+Shift+B)" : "Hide sidebar (Ctrl+Shift+B)"}
+        title={`${collapsed ? "Show" : "Hide"} sidebar (${keyLabel("Mod+Shift+B")})`}
         className="mb-2 rounded-lg p-1 transition-opacity hover:opacity-80"
       >
         <img src="/app-icon.svg" alt="Consul's Harness Manager" className="h-7 w-7" />

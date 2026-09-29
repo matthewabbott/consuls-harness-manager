@@ -13,6 +13,7 @@ import { theme } from "../term/palette";
 import { rawCopy, selectionRows, smartCopy } from "../term/smartCopy";
 import { attachStream } from "../term/streams";
 import { paneIdentity } from "../lib/panes";
+import { appMod, isMac, keyLabel } from "../lib/platform";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
@@ -183,9 +184,10 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     fitRef.current = fit;
     const zoomBy = (dir: 1 | -1) => zoom(id, term.options.fontSize ?? 13, dir);
 
-    // Ctrl+wheel zooms the terminal (never the page).
+    // Ctrl+wheel zooms the terminal (never the page); on macOS a pinch (which arrives as
+    // Ctrl+wheel) or ⌘+wheel.
     term.attachCustomWheelEventHandler((ev) => {
-      if (!ev.ctrlKey) return true;
+      if (!ev.ctrlKey && !(isMac && ev.metaKey)) return true;
       ev.preventDefault();
       zoomBy(ev.deltaY < 0 ? 1 : -1);
       return false;
@@ -262,8 +264,8 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
           return false;
         }
       }
-      const mod = e.ctrlKey || e.metaKey;
-      // App shortcuts first.
+      // App shortcuts first: ⌘ on macOS (where Ctrl belongs to the terminal), Ctrl elsewhere.
+      const mod = appMod(e);
       if (mod && e.key.toLowerCase() === "f") {
         e.preventDefault();
         onSearch();
@@ -274,16 +276,16 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
         onBack();
         return false;
       }
-      // Ctrl+= / Ctrl+- / Ctrl+0: text zoom (handled here so they never reach the pane).
+      // Mod+= / Mod+- / Mod+0: text zoom (handled here so they never reach the pane).
       if (mod && !e.altKey && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "_" || e.key === "0")) {
         e.preventDefault();
         if (e.key === "0") useViewPrefs.getState().setFontSize(id, null);
         else zoomBy(e.key === "-" || e.key === "_" ? -1 : 1);
         return false;
       }
-      if (mod && (e.key.toLowerCase() === "c" || e.key === "Insert") && (e.shiftKey || term.hasSelection())) {
+      if (mod && (e.key.toLowerCase() === "c" || (!isMac && e.key === "Insert")) && (e.shiftKey || term.hasSelection())) {
         if (term.hasSelection()) {
-          // Ctrl+Shift+C copies exactly what's on screen; Ctrl+C un-wraps agent output.
+          // Mod+Shift+C copies exactly what's on screen; Mod+C un-wraps agent output.
           const rows = selectionRows(term);
           navigator.clipboard.writeText(e.shiftKey ? rawCopy(rows) : smartCopy(rows, term.cols));
           term.clearSelection();
@@ -403,17 +405,17 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
             style={{ left: menu.x, top: menu.y }}
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <MenuItem disabled={!hasSel} hint="Ctrl+C" onClick={() => { copy(true); setMenu(null); }}>
+            <MenuItem disabled={!hasSel} hint={keyLabel("Mod+C")} onClick={() => { copy(true); setMenu(null); }}>
               Copy
             </MenuItem>
-            <MenuItem disabled={!hasSel} hint="Ctrl+Shift+C" onClick={() => { copy(false); setMenu(null); }}>
+            <MenuItem disabled={!hasSel} hint={keyLabel("Mod+Shift+C")} onClick={() => { copy(false); setMenu(null); }}>
               Copy exactly as shown
             </MenuItem>
-            <MenuItem hint="Ctrl+V" onClick={() => { void pasteFromClipboard(); setMenu(null); }}>
+            <MenuItem hint={keyLabel("Mod+V")} onClick={() => { void pasteFromClipboard(); setMenu(null); }}>
               Paste
             </MenuItem>
             <div className="my-1 h-px bg-ink-700" />
-            <MenuItem hint="Ctrl+F" onClick={() => { onSearch(); setMenu(null); }}>
+            <MenuItem hint={keyLabel("Mod+F")} onClick={() => { onSearch(); setMenu(null); }}>
               Search conversation
             </MenuItem>
           </div>
@@ -472,11 +474,11 @@ async function openPath(pane: PaneInfo, ref: string, line?: number, col?: number
 }
 
 /**
- * Ctrl+click links: URLs (and OSC 8 hyperlinks) and file references like `src/App.tsx:42`,
+ * Ctrl+click (⌘-click on macOS) links: URLs (and OSC 8 hyperlinks) and file references like `src/App.tsx:42`,
  * resolved against the pane's working directory and opened in the editor.
  */
 function installLinks(term: Terminal, pane: () => PaneInfo) {
-  const withMod = (e: MouseEvent) => e.ctrlKey || e.metaKey;
+  const withMod = (e: MouseEvent) => appMod(e);
   // URLs, whole even when wrapped across rows (by the terminal, or by the program itself).
   term.registerLinkProvider({
     provideLinks(y, callback) {

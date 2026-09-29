@@ -26,6 +26,7 @@ import { useApp } from "../store/app";
 import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
 import { useRedact } from "../store/recording";
 import { isDirect, paneIdentity, paneWhere } from "../lib/panes";
+import { keyLabel, wheelZoomLabel } from "../lib/platform";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
 import { useAttachmentsOf } from "../store/attachments";
 import ResizeHandle from "./ResizeHandle";
@@ -115,7 +116,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
         <header className="flex h-12 shrink-0 items-center gap-3">
           <button
             onClick={back}
-            title="Back to grid (Ctrl+Shift+G)"
+            title={`Back to grid (${keyLabel("Mod+Shift+G")})`}
             className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -147,17 +148,17 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             {keys.pending && keys.prefix && <PrefixPending prefix={keys.prefix} />}
             <SizeMenu pane={pane} sizing={sizing} />
             <div className="mr-1 flex items-center rounded-lg ring-1 ring-ink-700">
-              <HeaderIcon onClick={() => zoom(id, currentFont(), -1)} title="Smaller text (Ctrl+−, Ctrl+wheel)">
+              <HeaderIcon onClick={() => zoom(id, currentFont(), -1)} title={`Smaller text (${keyLabel("Mod+−")}, ${wheelZoomLabel})`}>
                 <ZoomOut className="h-3.5 w-3.5" />
               </HeaderIcon>
               <button
                 onClick={() => useViewPrefs.getState().setFontSize(id, null)}
-                title={fontPref ? "Reset to auto-fit (Ctrl+0)" : "Text size fits the pane width"}
+                title={fontPref ? `Reset to auto-fit (${keyLabel("Mod+0")})` : "Text size fits the pane width"}
                 className="min-w-10 px-1 text-center font-mono text-[11px] text-mist-400 hover:text-mist-100"
               >
                 {fontPref ? `${fontPref}px` : "auto"}
               </button>
-              <HeaderIcon onClick={() => zoom(id, currentFont(), 1)} title="Larger text (Ctrl+=, Ctrl+wheel)">
+              <HeaderIcon onClick={() => zoom(id, currentFont(), 1)} title={`Larger text (${keyLabel("Mod+=")}, ${wheelZoomLabel})`}>
                 <ZoomIn className="h-3.5 w-3.5" />
               </HeaderIcon>
             </div>
@@ -192,7 +193,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             </button>
             <button
               onClick={() => setSearching(true)}
-              title="Search (Ctrl+F)"
+              title={`Search (${keyLabel("Mod+F")})`}
               className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-ink-700 hover:text-mist-100"
             >
               <Search className="h-3.5 w-3.5" /> Search
@@ -291,7 +292,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
         <div className={`mt-2.5 flex shrink-0 items-center gap-3 ${ended ? "pointer-events-none opacity-40" : ""}`}>
           <QuickKeys paneKey={pane.key} harness={pane.harness} />
           <span className="ml-auto text-[11px] text-mist-500">
-            Click the terminal to type into it directly · Ctrl+F search · Ctrl+Shift+G grid
+            Click the terminal to type into it directly · {keyLabel("Mod+F")} search · {keyLabel("Mod+Shift+G")} grid
           </span>
         </div>
         <ResizeHandle

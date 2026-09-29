@@ -29,6 +29,7 @@ import { canBack, canForward } from "../lib/history";
 import { hostLabel, isLocal, LOCAL_HOST } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { joinPath, parentPath } from "../lib/paths";
+import { historyStep, isDeleteKey, keyLabel } from "../lib/platform";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { startFolder, statusOf, useFiles } from "../store/files";
@@ -222,11 +223,13 @@ export default function FilesPanel() {
   const copy = (text: string) => void navigator.clipboard.writeText(text);
   const relative = (path: string) => (git && path.startsWith(git.root) ? path.slice(git.root.length + 1) : root ? path.slice(root.path.length + 1) : path);
 
-  // Keyboard: Alt+←/→ back/forward, F2 rename, Delete delete, Enter/Space toggles folders.
+  // Keyboard: Alt+←/→ (also ⌘[ ⌘] on macOS) back/forward, F2 rename, Delete (⌘⌫ on macOS)
+  // delete, Enter/Space toggles folders.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    const step = historyStep(e);
+    if (step) {
       e.preventDefault();
-      if (e.key === "ArrowLeft") files().back();
+      if (step < 0) files().back();
       else files().forward();
       return;
     }
@@ -234,7 +237,7 @@ export default function FilesPanel() {
     const row = rows.find((r) => r.kind === "entry" && r.path === selected);
     if (!row || row.kind !== "entry") return;
     if (e.key === "F2") setEdit({ kind: "rename", path: selected });
-    else if (e.key === "Delete") askDelete(selected, row.entry.isDir);
+    else if (isDeleteKey(e)) askDelete(selected, row.entry.isDir);
     else if ((e.key === "Enter" || e.key === " ") && row.entry.isDir) files().toggle(selected);
     else return;
     e.preventDefault();
@@ -483,7 +486,7 @@ export default function FilesPanel() {
               <MenuItem icon={<Pencil className="h-3.5 w-3.5" />} hint="F2" onClick={() => setEdit({ kind: "rename", path: menu.path! })}>
                 Rename…
               </MenuItem>
-              <MenuItem icon={<Trash2 className="h-3.5 w-3.5" />} hint="Del" danger onClick={() => askDelete(menu.path!, menu.isDir)}>
+              <MenuItem icon={<Trash2 className="h-3.5 w-3.5" />} hint={keyLabel("Delete")} danger onClick={() => askDelete(menu.path!, menu.isDir)}>
                 Delete…
               </MenuItem>
             </>

@@ -2,6 +2,8 @@
 // pane's real terminal modes (cursor-key mode, keypad mode, …). Plain printable text is
 // left to xterm's onData (which also handles IME) and sent with `send-keys -l`.
 
+import { isMac } from "../lib/platform";
+
 const NAMED: Record<string, string> = {
   Enter: "Enter",
   Tab: "Tab",
@@ -37,12 +39,45 @@ export interface KeyLike {
   altKey: boolean;
   shiftKey: boolean;
   metaKey: boolean;
+  /** The layout's key code: on macOS, Option+key reports a composed character (Option+B is
+   * "∫", Option+E a dead key) and this is how to get the key back. */
+  keyCode?: number;
+}
+
+/** Punctuation key codes: the character without and with Shift (US layout). */
+const PUNCT: Record<number, [string, string]> = {
+  186: [";", ":"],
+  187: ["=", "+"],
+  188: [",", "<"],
+  189: ["-", "_"],
+  190: [".", ">"],
+  191: ["/", "?"],
+  192: ["`", "~"],
+  219: ["[", "{"],
+  220: ["\\", "|"],
+  221: ["]", "}"],
+  222: ["'", '"'],
+};
+
+/** The key under Option on macOS, where Option acts as Meta (like xterm's `macOptionIsMeta`). */
+function optionBase(e: KeyLike): string | null {
+  const c = e.keyCode;
+  if (c === undefined) return null;
+  if (c >= 65 && c <= 90) {
+    const ch = String.fromCharCode(c);
+    return e.shiftKey ? ch : ch.toLowerCase();
+  }
+  if (c >= 48 && c <= 57 && !e.shiftKey) return String.fromCharCode(c);
+  if (c === 32) return "Space";
+  const p = PUNCT[c];
+  return p ? p[e.shiftKey ? 1 : 0] : null;
 }
 
 /** Returns the tmux key to send, or `null` to let the key produce text normally. */
-export function tmuxKey(e: KeyLike): string | null {
-  // AltGr on many keyboards reports Ctrl+Alt; those produce characters, not shortcuts.
-  const altGr = e.ctrlKey && e.altKey && e.key.length === 1;
+export function tmuxKey(e: KeyLike, mac = isMac): string | null {
+  // AltGr on many keyboards reports Ctrl+Alt; those produce characters, not shortcuts. (⌘ is
+  // the app's, on macOS.)
+  const altGr = !mac && e.ctrlKey && e.altKey && e.key.length === 1;
   if (altGr || e.metaKey) return null;
 
   const named = NAMED[e.key];
@@ -54,6 +89,10 @@ export function tmuxKey(e: KeyLike): string | null {
     return `${e.ctrlKey ? "C-" : ""}${e.altKey ? "M-" : ""}${e.shiftKey && named !== "Tab" ? "S-" : ""}${named}`;
   }
 
+  if (mac && e.altKey && !e.ctrlKey) {
+    const base = optionBase(e);
+    if (base) return `M-${base}`;
+  }
   if (e.key.length !== 1) return null; // Shift, Control, dead keys, …
 
   if (e.ctrlKey && !e.altKey) {

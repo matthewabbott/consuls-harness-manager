@@ -10,6 +10,7 @@ import DragGhost from "./components/DragGhost";
 import TileMenu from "./components/TileMenu";
 import Modal, { Button } from "./components/Modal";
 import { paneIdentity } from "./lib/panes";
+import { appMod } from "./lib/platform";
 import TerminateDialog from "./components/TerminateDialog";
 import Grid from "./components/Grid";
 import Notices from "./components/Notices";
@@ -123,16 +124,17 @@ export default function App() {
     };
   }, []);
 
-  // Global shortcuts: Ctrl+Shift+G back to grid, Ctrl+Shift+Space jump to the next waiting pane.
+  // Global shortcuts (⌘ on macOS, Ctrl elsewhere): Mod+Shift+G back to grid, Mod+Shift+Space jump
+  // to the next waiting pane.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
+      const mod = appMod(e);
       if (mod && e.shiftKey && e.key.toLowerCase() === "g") {
         e.preventDefault();
         useEditor.getState().setActive(null);
         useApp.getState().setExpanded(null);
       }
-      // Ctrl+Shift+B toggles the sidebar (plain Ctrl+B is tmux's prefix, so it stays with the pane).
+      // Mod+Shift+B toggles the sidebar (plain Ctrl+B is tmux's prefix, so it stays with the pane).
       if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         useUi.getState().toggleSidebar();

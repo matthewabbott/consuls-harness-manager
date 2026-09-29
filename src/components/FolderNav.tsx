@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { driveName, useDrives } from "../lib/drives";
 import { hostLabel } from "../lib/hosts";
 import { baseName, crumbsOf, isWithin, rootOf, sameFolder } from "../lib/paths";
+import { isMac, keyLabel } from "../lib/platform";
 import { useApp } from "../store/app";
 import { setDefaultFolder, useDefaultFolder } from "../store/prefs";
 import { useRedact } from "../store/recording";
@@ -34,10 +35,10 @@ export default function FolderNav({ host, path, onGo, canBack, canForward, onBac
 
   return (
     <div className="flex min-w-0 items-center gap-0.5 font-mono text-[11px] text-mist-500">
-      <NavButton title="Back (Alt+←)" disabled={!canBack} onClick={onBack}>
+      <NavButton title={`Back (${keyLabel(isMac ? "Mod+[" : "Alt+←")})`} disabled={!canBack} onClick={onBack}>
         <ArrowLeft className="h-3.5 w-3.5" />
       </NavButton>
-      <NavButton title="Forward (Alt+→)" disabled={!canForward} onClick={onForward}>
+      <NavButton title={`Forward (${keyLabel(isMac ? "Mod+]" : "Alt+→")})`} disabled={!canForward} onClick={onForward}>
         <ArrowRight className="h-3.5 w-3.5" />
       </NavButton>
       {path && root && (
