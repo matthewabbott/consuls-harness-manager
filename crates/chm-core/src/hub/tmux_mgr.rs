@@ -712,10 +712,14 @@ impl TmuxManager {
         let r = &p.row;
         let detected = Harness::detect(&r.current_command, r.chm_harness.as_deref());
         let cleaned = r.title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
-        // Shells title themselves with the hostname or user@host:path — not useful labels.
+        // Shells title themselves with the hostname or user@host:path, and a program that sets
+        // no title leaves tmux's default, the hostname (`<name>.local` on macOS): not useful labels.
+        let hostname = cleaned.eq_ignore_ascii_case(&self.host)
+            || cleaned.to_ascii_lowercase().ends_with(".local")
+            || (self.host == crate::local::LOCAL_HOST && cleaned.eq_ignore_ascii_case(&crate::local::machine_name()));
         let title = if let Some(name) = &r.name {
             name.clone()
-        } else if matches!(detected, Some(Harness::Shell) | None) || cleaned.is_empty() || cleaned.contains('@') {
+        } else if matches!(detected, Some(Harness::Shell) | None) || cleaned.is_empty() || cleaned.contains('@') || hostname {
             r.window_name.clone()
         } else {
             cleaned.chars().take(60).collect()

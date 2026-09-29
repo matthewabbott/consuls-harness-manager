@@ -221,7 +221,7 @@ pub(crate) fn locale_env() -> Option<(String, String)> {
 
 /// This machine's name as its shell prompt shows it (`MBAs-MacBook-Pro`), from the environment
 /// on Windows and `gethostname` elsewhere (apps don't get `$HOSTNAME`).
-fn machine_name() -> String {
+pub(crate) fn machine_name() -> String {
     if let Some(name) = ["COMPUTERNAME", "HOSTNAME"].iter().find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty())) {
         return name;
     }

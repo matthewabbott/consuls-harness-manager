@@ -40,8 +40,9 @@ export function displayTitle(p: PaneInfo): string {
   if (p.name) return p.name;
   const t = cleanTitle(p.title);
   // Shells title themselves with the host, user@host:path, or (Windows) their exe path /
-  // `MINGW64:/…`; none of those beat the folder.
-  const noise = /^[\w.-]+@[\w.-]+:/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^MINGW(32|64):/.test(t);
+  // `MINGW64:/…`; a program that sets no title leaves tmux's default, the hostname
+  // (`MBAs-MacBook-Pro.local` on macOS). None of those beat the folder.
+  const noise = /^[\w.-]+@[\w.-]+:/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^MINGW(32|64):/.test(t) || /^[\w-]+\.local$/i.test(t);
   if (t && t !== p.host && !t.startsWith(p.host + ":") && !noise) return t;
   if (p.harness === "shell" || p.harness === null) return shortPath(p.currentPath);
   return paneName(p);
