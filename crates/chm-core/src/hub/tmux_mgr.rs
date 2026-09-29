@@ -43,8 +43,9 @@ pub(crate) enum PaneCmd {
     Input { key: u32, data: Vec<u8> },
     /// Paste text (bracketed if the app asked for it).
     Paste { key: u32, text: String },
-    /// Composer prompt: paste it, give the TUI a moment, then press Enter.
-    Submit { key: u32, text: String },
+    /// Composer prompt: paste it (after any images, see [`crate::harness::prompt_steps`]),
+    /// give the TUI a moment, then press Enter.
+    Submit { key: u32, text: String, images: Vec<String> },
     /// Resize the pane's tmux window so the pane is `cols`×`rows` (pins window-size).
     Resize { key: u32, cols: u16, rows: u16, reply: tokio::sync::oneshot::Sender<Result<ResizeOutcome, String>> },
     /// Undo our pin: give the window back to tmux's automatic sizing.
@@ -55,6 +56,9 @@ pub(crate) enum PaneCmd {
     SetBell { key: u32, bell: Option<bool> },
     /// Hide/unhide (stored in tmux as `@chm_hidden`, so every device agrees).
     Hide { key: u32, hidden: bool },
+    /// Name the pane (`None` clears it). tmux: `@chm_name`, plus the window's name when the
+    /// pane has the window to itself.
+    Rename { key: u32, name: Option<String> },
     /// Quit the harness gracefully, then close the pane (or kill it outright with `force`).
     Terminate { key: u32, force: bool, reply: tokio::sync::oneshot::Sender<Result<TerminateOutcome, String>> },
 }
@@ -63,7 +67,7 @@ const SEP_STR: &str = crate::tmux::formats::SEP;
 
 /// Subscription reporting per-pane fields that change without any other notification.
 const SUB_NAME: &str = "chm";
-const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{pane_title}";
+const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{pane_title}";
 
 struct Client {
     client: Arc<ControlClient>,
@@ -351,6 +355,7 @@ impl TmuxManager {
             current_command: r.current_command.clone(),
             current_path: self.path_map.as_ref().map_or_else(|| r.current_path.clone(), |m| m.to_windows(&r.current_path)),
             title: r.title.clone(),
+            name: r.name.clone(),
             harness: Harness::detect(&r.current_command, r.chm_harness.as_deref()),
             alternate_on: r.alternate_on,
             chm_id: r.chm_id.clone(),
@@ -445,12 +450,13 @@ impl TmuxManager {
                 self.seed(pane).await;
             }
             ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name == SUB_NAME => {
-                let mut parts = value.splitn(6, crate::tmux::formats::SEP);
+                let mut parts = value.splitn(7, crate::tmux::formats::SEP);
                 let cmd = parts.next().unwrap_or_default().to_string();
                 let alt = parts.next() == Some("1");
                 let hidden = parts.next() == Some("1");
                 let labels = crate::tmux::formats::parse_labels(parts.next().unwrap_or_default());
                 let bell = crate::tmux::formats::parse_bell(parts.next().unwrap_or_default());
+                let name = parts.next().filter(|n| !n.is_empty()).map(str::to_string);
                 let title = parts.next().unwrap_or_default().to_string();
                 let mut reseed = false;
                 if let Some(p) = self.panes.get_mut(&pane)
@@ -459,7 +465,8 @@ impl TmuxManager {
                         || p.row.alternate_on != alt
                         || p.row.chm_hidden != hidden
                         || p.row.labels != labels
-                        || p.row.bell != bell)
+                        || p.row.bell != bell
+                        || p.row.name != name)
                 {
                     reseed = p.row.alternate_on != alt;
                     p.row.current_command = cmd;
@@ -468,6 +475,7 @@ impl TmuxManager {
                     p.row.chm_hidden = hidden;
                     p.row.labels = labels;
                     p.row.bell = bell;
+                    p.row.name = name;
                     self.publish_due = true;
                 }
                 if reseed {
@@ -574,7 +582,9 @@ impl TmuxManager {
         let detected = Harness::detect(&r.current_command, r.chm_harness.as_deref());
         let cleaned = r.title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
         // Shells title themselves with the hostname or user@host:path — not useful labels.
-        let title = if matches!(detected, Some(Harness::Shell) | None) || cleaned.is_empty() || cleaned.contains('@') {
+        let title = if let Some(name) = &r.name {
+            name.clone()
+        } else if matches!(detected, Some(Harness::Shell) | None) || cleaned.is_empty() || cleaned.contains('@') {
             r.window_name.clone()
         } else {
             cleaned.chars().take(60).collect()
@@ -908,13 +918,13 @@ impl TmuxManager {
                     self.ctx.notice(Some(&self.host), NoticeLevel::Error, format!("Paste failed: {e}"));
                 }
             }
-            PaneCmd::Submit { key, text } => {
+            PaneCmd::Submit { key, text, images } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };
                 let harness = self.panes.get(&id).and_then(|p| Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref()));
                 let ctx = self.ctx.clone();
                 let host = self.host.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = submit(&client, id, &text, harness).await {
+                    if let Err(e) = submit(&client, id, &text, &images, harness).await {
                         ctx.notice(Some(&host), NoticeLevel::Error, format!("Couldn't send prompt: {e}"));
                     }
                 });
@@ -979,6 +989,22 @@ impl TmuxManager {
                 }
                 self.publish();
             }
+            PaneCmd::Rename { key, name } => {
+                let Some((id, client)) = self.pane_by_key(key) else { return };
+                let Some(p) = self.panes.get(&id) else { return };
+                let name = name.as_deref().and_then(crate::model::clean_pane_name);
+                let row = p.row.clone();
+                let line = rename_line(id, &row, name.as_deref(), &window_naming(&client, id).await);
+                if let Err(e) = client.command(&line).await {
+                    self.ctx.notice(Some(&self.host), NoticeLevel::Error, format!("Couldn't rename pane: {e}"));
+                    return;
+                }
+                if let Some(p) = self.panes.get_mut(&id) {
+                    p.row.name = name;
+                }
+                self.publish();
+                self.schedule_relist();
+            }
             PaneCmd::Terminate { key, force, reply } => {
                 let Some((id, client)) = self.pane_by_key(key) else {
                     let _ = reply.send(Ok(TerminateOutcome::Closed));
@@ -994,24 +1020,72 @@ impl TmuxManager {
     }
 }
 
-/// Pastes a prompt (bracketed, so newlines don't submit early) and presses Enter.
-///
-/// The pause matters: Codex treats keystrokes arriving within ~120 ms of a paste burst as
-/// part of the paste, and Claude Code needs a beat to collapse large pastes.
-async fn submit(client: &ControlClient, pane: PaneId, text: &str, harness: Option<Harness>) -> Result<(), crate::tmux::TmuxError> {
-    let text = text.trim_end_matches(['\n', '\r']);
-    if text.is_empty() {
-        return Ok(());
+/// Pastes a prompt (bracketed, so newlines don't submit early), after any images, and
+/// presses Enter; the pauses are [`crate::harness::prompt_steps`]'s.
+async fn submit(client: &ControlClient, pane: PaneId, text: &str, images: &[String], harness: Option<Harness>) -> Result<(), crate::tmux::TmuxError> {
+    use crate::harness::PromptStep;
+    for step in crate::harness::prompt_steps(text, images, harness) {
+        match step {
+            PromptStep::Paste(text) => paste(client, pane, &text).await?,
+            PromptStep::WaitMs(ms) => tokio::time::sleep(Duration::from_millis(ms)).await,
+            PromptStep::Enter => {
+                client.command(&format!("send-keys -t {} Enter", quote(&format!("%{pane}")))).await?;
+            }
+        }
     }
-    paste(client, pane, text).await?;
-    let settle = match harness {
-        Some(Harness::Codex) => 350,
-        _ if text.len() > 800 || text.contains('\n') => 300,
-        _ => 180,
-    };
-    tokio::time::sleep(Duration::from_millis(settle)).await;
-    client.command(&format!("send-keys -t {} Enter", quote(&format!("%{pane}")))).await?;
     Ok(())
+}
+
+/// How a pane's window is named, as far as naming the pane goes.
+#[derive(Debug, Default)]
+struct WindowNaming {
+    /// The window's name from before we named it after its pane (`@chm_window_name`): empty
+    /// when tmux was naming it after the running command, `None` when we haven't named it.
+    saved: Option<String>,
+    /// tmux names the window after the running command (`automatic-rename`).
+    automatic: bool,
+}
+
+async fn window_naming(client: &ControlClient, pane: PaneId) -> WindowNaming {
+    let line = format!("display-message -p -t {} '#{{@chm_window_name}}|~|#{{automatic-rename}}'", quote(&format!("%{pane}")));
+    let text = client.command(&line).await.map(|r| r.text()).unwrap_or_default();
+    let Some((saved, automatic)) = text.trim_end().rsplit_once(SEP_STR) else { return WindowNaming::default() };
+    // Saved with a leading `=`, so an automatic name (empty) still counts as saved.
+    WindowNaming { saved: saved.strip_prefix('=').map(str::to_string), automatic: matches!(automatic, "1" | "on") }
+}
+
+/// One command line that names (or un-names) a pane. A pane alone in its window names the
+/// window too, so plain tmux clients show it; the window's own name is kept in
+/// `@chm_window_name`, and clearing the pane's name puts it back.
+fn rename_line(pane: PaneId, row: &crate::tmux::formats::PaneRow, name: Option<&str>, naming: &WindowNaming) -> String {
+    let target = quote(&format!("%{pane}"));
+    // rename-window expands formats: a literal `#` is `##`.
+    let rename = |to: &str| format!(" ; rename-window -t {target} {}", quote(&to.replace('#', "##")));
+    match name {
+        Some(name) => {
+            let mut line = format!("set-option -p -t {target} @chm_name {}", quote(name));
+            if row.window_panes <= 1 {
+                if naming.saved.is_none() {
+                    let was = if naming.automatic { "" } else { row.window_name.as_str() };
+                    line += &format!(" ; set-option -w -t {target} @chm_window_name {}", quote(&format!("={was}")));
+                }
+                line += &rename(name);
+            }
+            line
+        }
+        None => {
+            let mut line = format!("set-option -p -u -t {target} @chm_name");
+            if let Some(was) = &naming.saved {
+                if was.is_empty() {
+                    line += &format!(" ; set-option -w -u -t {target} automatic-rename");
+                } else {
+                    line += &rename(was);
+                }
+                line += &format!(" ; set-option -w -u -t {target} @chm_window_name");
+            }
+            line
+        }
+    }
 }
 
 /// tmux session/window names: keep them shell- and target-friendly.
@@ -1117,7 +1191,37 @@ pub(crate) async fn paste(client: &ControlClient, pane: PaneId, text: &str) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::{chunk_str, sanitize_name};
+    use super::{WindowNaming, chunk_str, rename_line, sanitize_name};
+    use crate::tmux::formats::parse_pane_row;
+
+    #[test]
+    fn rename_lines() {
+        let row = |panes: u32| {
+            let line = format!("%3|~|@2|~|$1|~|s|~|1|~|my win|~|0|~|80|~|24|~|bash|~|/|~|1|~|0|~|0|~|1|~|1|~||~||~||~||~|{panes}|~|80|~|24|~||~||~||~||~|t");
+            parse_pane_row(&line).unwrap()
+        };
+        let fresh = WindowNaming { saved: None, automatic: false };
+        assert_eq!(
+            rename_line(3, &row(1), Some("PR #1"), &fresh),
+            "set-option -p -t '%3' @chm_name 'PR #1' ; set-option -w -t '%3' @chm_window_name '=my win' ; rename-window -t '%3' 'PR ##1'"
+        );
+        // Named before: the window's original name is already saved.
+        let named = WindowNaming { saved: Some(String::new()), automatic: false };
+        assert_eq!(rename_line(3, &row(1), Some("x"), &named), "set-option -p -t '%3' @chm_name x ; rename-window -t '%3' x");
+        // A split window keeps its name.
+        assert_eq!(rename_line(3, &row(2), Some("x"), &fresh), "set-option -p -t '%3' @chm_name x");
+        // Clearing gives tmux the name back.
+        assert_eq!(
+            rename_line(3, &row(1), None, &named),
+            "set-option -p -u -t '%3' @chm_name ; set-option -w -u -t '%3' automatic-rename ; set-option -w -u -t '%3' @chm_window_name"
+        );
+        let was = WindowNaming { saved: Some("my win".into()), automatic: false };
+        assert_eq!(
+            rename_line(3, &row(1), None, &was),
+            "set-option -p -u -t '%3' @chm_name ; rename-window -t '%3' 'my win' ; set-option -w -u -t '%3' @chm_window_name"
+        );
+        assert_eq!(rename_line(3, &row(1), None, &fresh), "set-option -p -u -t '%3' @chm_name");
+    }
 
     #[test]
     fn names_are_sanitized() {

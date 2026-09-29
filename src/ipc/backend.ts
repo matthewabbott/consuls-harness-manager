@@ -57,6 +57,9 @@ export interface Backend {
   vscodeStatus(): Promise<VsCodeStatus>;
   /** Opens a file (at a line) or folder in VS Code; other machines go through Remote-SSH. */
   openInVscode(host: string, path: string, line?: number, col?: number): Promise<void>;
+  /** The UI's per-device state (see lib/uiState.ts). */
+  getUiState(): Promise<Record<string, string>>;
+  setUiState(key: string, value: string | null): Promise<void>;
   /** Default folders and recording mode (kept in the core's config; comes back as a Config event). */
   setUiPrefs(prefs: UiPrefs): Promise<void>;
   setVisiblePanes(keys: number[] | null): Promise<void>;
@@ -66,13 +69,18 @@ export interface Backend {
   pasteText(key: number, text: string): Promise<void>;
   /** Raw terminal input in xterm's own encoding (direct panes). */
   sendInput(key: number, data: string): Promise<void>;
-  submitPrompt(key: number, text: string): Promise<void>;
+  /** `images`: paths on the pane's machine (from savePaste), pasted before the text. */
+  submitPrompt(key: number, text: string, images?: string[]): Promise<void>;
+  /** Saves a pasted image on the machine (a week-long cache) and returns its path. */
+  savePaste(host: string, bytes: Uint8Array, ext: string): Promise<string>;
   createPane(spec: NewPaneSpec): Promise<number>;
   setPaneHidden(key: number, hidden: boolean): Promise<void>;
   createLabel(name: string, color: string): Promise<LabelDef>;
   updateLabel(label: LabelDef): Promise<void>;
   deleteLabel(id: string): Promise<void>;
   setPaneLabels(key: number, labels: string[]): Promise<void>;
+  /** Name a pane; null (or blank) clears it. A tmux pane alone in its window names the window too. */
+  renamePane(key: number, name: string | null): Promise<void>;
   /** Ping on the pane's terminal bell; null = default (on for irssi, weechat, …). */
   setPaneBell(key: number, bell: boolean | null): Promise<void>;
   resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
@@ -155,13 +163,18 @@ async function tauriBackend(): Promise<Backend> {
     sendText: (key, text) => invoke("send_text", { key, text }),
     pasteText: (key, text) => invoke("paste_text", { key, text }),
     sendInput: (key, data) => invoke("send_input", { key, data }),
-    submitPrompt: (key, text) => invoke("submit_prompt", { key, text }),
+    submitPrompt: (key, text, images) => invoke("submit_prompt", { key, text, images: images ?? [] }),
+    // Raw bytes as the request body; the rest as headers.
+    getUiState: () => invoke("get_ui_state"),
+    setUiState: (key, value) => invoke("set_ui_state", { key, value }),
+    savePaste: (host, bytes, ext) => invoke("save_paste", bytes, { headers: { "chm-host": host, "chm-ext": ext } }),
     createPane: (spec) => invoke("create_pane", { spec }),
     setPaneHidden: (key, hidden) => invoke("set_pane_hidden", { key, hidden }),
     createLabel: (name, color) => invoke("create_label", { name, color }),
     updateLabel: (label) => invoke("update_label", { label }),
     deleteLabel: (id) => invoke("delete_label", { id }),
     setPaneLabels: (key, labels) => invoke("set_pane_labels", { key, labels }),
+    renamePane: (key, name) => invoke("rename_pane", { key, name }),
     setPaneBell: (key, bell) => invoke("set_pane_bell", { key, bell }),
     resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
     releasePaneSize: (key) => invoke("release_pane_size", { key }),

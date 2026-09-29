@@ -1,3 +1,14 @@
+// Page-side snippet: in the new-pane dialog, picks "No tmux (plain shell)" when the machine has
+// tmux (This PC does, through Cygwin); the shell picker only shows for plain shells.
+export const noTmux = `
+const sel = [...document.querySelectorAll("select")].find((s) => [...s.options].some((o) => o.textContent.includes("No tmux")));
+if (!sel || sel.disabled) return false;
+const opt = [...sel.options].find((o) => o.textContent.includes("No tmux"));
+Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, opt.value);
+sel.dispatchEvent(new Event("change", { bubbles: true }));
+return true;
+`;
+
 // Page-side snippet: finds the xterm Terminal behind the expanded view (via React's fiber
 // tree) and returns its size, whether it's on the alternate screen, and the last `n`
 // non-empty lines of its buffer.

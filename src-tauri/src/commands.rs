@@ -278,8 +278,19 @@ pub fn set_pane_muted(state: State<'_, AppState>, key: u32, muted: bool) {
 }
 
 #[tauri::command]
-pub fn submit_prompt(state: State<'_, AppState>, key: u32, text: String) {
-    state.core.submit_prompt(key, text);
+pub fn submit_prompt(state: State<'_, AppState>, key: u32, text: String, images: Option<Vec<String>>) {
+    state.core.submit_prompt(key, text, images.unwrap_or_default());
+}
+
+/// An image pasted into the composer: the raw bytes are the request body (not a JSON array);
+/// the machine and image type come as headers. Returns the saved file's path.
+#[tauri::command]
+pub async fn save_paste(state: State<'_, AppState>, request: tauri::ipc::Request<'_>) -> CmdResult<String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("expected the image's bytes".into()) };
+    let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok()).map(str::to_string);
+    let host = header("chm-host").ok_or("which machine?")?;
+    let ext = header("chm-ext").ok_or("what kind of image?")?;
+    state.core.save_paste(&host, bytes.clone(), &ext).await
 }
 
 #[tauri::command]
@@ -321,6 +332,11 @@ pub fn set_pane_labels(state: State<'_, AppState>, key: u32, labels: Vec<String>
 }
 
 #[tauri::command]
+pub fn rename_pane(state: State<'_, AppState>, key: u32, name: Option<String>) {
+    state.core.rename_pane(key, name);
+}
+
+#[tauri::command]
 pub fn set_pane_hidden(state: State<'_, AppState>, key: u32, hidden: bool) {
     state.core.set_pane_hidden(key, hidden);
 }
@@ -333,6 +349,17 @@ pub async fn terminate_pane(state: State<'_, AppState>, key: u32, force: bool) -
 #[tauri::command]
 pub async fn list_dir(state: State<'_, AppState>, host: String, path: String) -> CmdResult<DirListing> {
     state.core.list_dir(&host, &path).await
+}
+
+/// The UI's per-device state (layout, zoom, composer drafts and history).
+#[tauri::command]
+pub fn get_ui_state(state: State<'_, AppState>) -> std::collections::BTreeMap<String, String> {
+    state.core.ui_state()
+}
+
+#[tauri::command]
+pub fn set_ui_state(state: State<'_, AppState>, key: String, value: Option<String>) {
+    state.core.set_ui_state(key, value);
 }
 
 #[tauri::command]

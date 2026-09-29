@@ -8,6 +8,7 @@ import type { LocalShell } from "../ipc/bindings/LocalShell";
 import { canBack, canForward, emptyHistory, pushHistory, stepHistory } from "../lib/history";
 import { hostLabel, isLocal, shortPath } from "../lib/hosts";
 import { isRoot, joinPath, parentPath, sameFolder } from "../lib/paths";
+import { uiStorage } from "../lib/uiState";
 import { useApp } from "../store/app";
 import { useRedact } from "../store/recording";
 import FolderNav from "./FolderNav";
@@ -28,13 +29,8 @@ const LAST_SHELL = "consuls.newPane.localShell";
 const DIRECT = "\u0000direct";
 
 function loadLastHarness(): Harness {
-  try {
-    const v = localStorage.getItem(LAST_HARNESS) as Harness | null;
-    if (v && HARNESSES.some((h) => h.id === v)) return v;
-  } catch {
-    /* storage unavailable */
-  }
-  return "claude";
+  const v = uiStorage.getItem(LAST_HARNESS) as Harness | null;
+  return v && HARNESSES.some((h) => h.id === v) ? v : "claude";
 }
 
 export default function NewPaneDialog() {
@@ -73,13 +69,7 @@ export default function NewPaneDialog() {
   const noTmux = !!hosts[host]?.facts && !hosts[host]?.facts?.tmuxVersion;
   const direct = noTmux || session === DIRECT;
   const [shells, setShells] = useState<LocalShell[]>([]);
-  const [shell, setShell] = useState<string>(() => {
-    try {
-      return localStorage.getItem(LAST_SHELL) ?? "";
-    } catch {
-      return "";
-    }
-  });
+  const [shell, setShell] = useState<string>(() => uiStorage.getItem(LAST_SHELL) ?? "");
   useEffect(() => {
     if (local && shells.length === 0) void backend().then((b) => b.localShells()).then(setShells);
   }, [local, shells.length]);
@@ -125,12 +115,8 @@ export default function NewPaneDialog() {
     setCreating(true);
     setError(null);
     try {
-      try {
-        localStorage.setItem(LAST_HARNESS, harness);
-        if (local && shellId) localStorage.setItem(LAST_SHELL, shellId);
-      } catch {
-        /* ignore */
-      }
+      uiStorage.setItem(LAST_HARNESS, harness);
+      if (local && shellId) uiStorage.setItem(LAST_SHELL, shellId);
       const key = await (await backend()).createPane({
         host,
         cwd,

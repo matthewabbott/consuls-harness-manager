@@ -146,6 +146,7 @@ function pane(key: number, host: string, extra: PaneExtra, lines: Seg[][], curso
       currentCommand: "bash",
       currentPath: "/home/consulear",
       title: "",
+      name: null,
       harness: "shell",
       alternateOn: false,
       chmId: null,
@@ -367,8 +368,29 @@ export function mockBackend(): Backend {
     sendText: async (key, text) => {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(text)));
     },
-    submitPrompt: async (key, text) => {
-      if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(text.replace(/\n/g, "\r\n") + "\r\n")));
+    submitPrompt: async (key, text, images = []) => {
+      const shown = [...images.map((_, i) => `[Image #${i + 1}] `), text].join("");
+      if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(shown.replace(/\n/g, "\r\n") + "\r\n")));
+    },
+    // The mock keeps the UI's state in one localStorage entry.
+    getUiState: async () => {
+      try {
+        return JSON.parse(localStorage.getItem("consuls.mock.uistate") ?? "{}");
+      } catch {
+        return {};
+      }
+    },
+    setUiState: async (key, value) => {
+      const all = JSON.parse(localStorage.getItem("consuls.mock.uistate") ?? "{}");
+      if (value === null) delete all[key];
+      else all[key] = value;
+      localStorage.setItem("consuls.mock.uistate", JSON.stringify(all));
+    },
+    savePaste: async (host, bytes, ext) => {
+      await new Promise((r) => setTimeout(r, 600));
+      if (bytes.length > 20 * 1024 * 1024) throw "that image is over 20 MB";
+      const home = hosts.find((h) => h.id === host)?.facts?.home ?? "/home/consulear";
+      return `${home}/.cache/consuls/pastes/paste-${Math.floor(Date.now() / 1000)}-${Math.random().toString(16).slice(2, 8)}.${ext}`;
     },
     createPane: async (spec) => {
       const key = 100 + panes.length;
@@ -444,6 +466,14 @@ export function mockBackend(): Backend {
       const p = panes.find((p) => p.info.key === key);
       if (!p) return;
       p.info = { ...p.info, labels };
+      emitPanes(p.info.host);
+    },
+    renamePane: async (key, name) => {
+      const p = panes.find((p) => p.info.key === key);
+      if (!p) return;
+      const clean = name?.replace(/\s+/g, " ").trim().slice(0, 60) || null;
+      const t = p.info.tmux;
+      p.info = { ...p.info, name: clean, tmux: t && t.windowPanes <= 1 ? { ...t, windowName: clean ?? t.windowName } : t };
       emitPanes(p.info.host);
     },
     setPaneHidden: async (key, hidden) => {

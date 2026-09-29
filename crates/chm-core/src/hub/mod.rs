@@ -9,7 +9,7 @@ mod host;
 mod local_tmux;
 mod tmux_mgr;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -63,7 +63,20 @@ pub struct Core {
     rt: OnceLock<tokio::runtime::Handle>,
     /// tmux on This PC (Cygwin), when there is one.
     local_tmux: OnceLock<LocalTmux>,
+    /// The UI's own per-device state (layout, zoom, composer drafts and history), kept in
+    /// `ui-state.json`: the webview's storage can lose recent writes when the app quits.
+    ui_state: Mutex<UiState>,
 }
+
+#[derive(Default)]
+struct UiState {
+    values: BTreeMap<String, String>,
+    /// A save is scheduled (or [`Core::flush_ui_state`] has something to write).
+    dirty: bool,
+}
+
+/// Largest value the UI may store under one key.
+const UI_VALUE_LIMIT: usize = 4 * 1024 * 1024;
 
 impl Core {
     /// Loads config from `data_dir`. Call [`Core::start`] from within a tokio runtime.
@@ -71,6 +84,10 @@ impl Core {
         let _ = std::fs::create_dir_all(&data_dir);
         let known_hosts = Arc::new(KnownHosts::load(data_dir.join("known_hosts.json")));
         let config = load_config(&data_dir.join("config.json"));
+        let ui_values = std::fs::read(data_dir.join("ui-state.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).map_err(|e| warn!("ui-state.json is unreadable ({e}); starting afresh")).ok())
+            .unwrap_or_default();
         Arc::new(Self {
             ctx: Arc::new(Ctx::new(sink, known_hosts)),
             git_inflight: Mutex::new(HashMap::new()),
@@ -79,6 +96,7 @@ impl Core {
             hosts: Mutex::new(HashMap::new()),
             rt: OnceLock::new(),
             local_tmux: OnceLock::new(),
+            ui_state: Mutex::new(UiState { values: ui_values, dirty: false }),
         })
     }
 
@@ -174,6 +192,60 @@ impl Core {
             Err(e) => warn!("failed to serialise config: {e}"),
         }
         self.ctx.emit(CoreEvent::Config { config });
+    }
+
+    /// Everything the UI stored with [`Core::set_ui_state`].
+    pub fn ui_state(&self) -> BTreeMap<String, String> {
+        self.ui_state.lock().unwrap().values.clone()
+    }
+
+    /// Stores (or with `None` removes) one of the UI's values. Saving is batched: the file is
+    /// written a moment later, and by [`Core::flush_ui_state`] when the app exits.
+    pub fn set_ui_state(self: &Arc<Self>, key: String, value: Option<String>) {
+        if value.as_ref().is_some_and(|v| v.len() > UI_VALUE_LIMIT) {
+            warn!("ui state {key} is too large to keep");
+            return;
+        }
+        let schedule = {
+            let mut st = self.ui_state.lock().unwrap();
+            let changed = match value {
+                Some(v) if st.values.get(&key) == Some(&v) => false,
+                Some(v) => {
+                    st.values.insert(key, v);
+                    true
+                }
+                None => st.values.remove(&key).is_some(),
+            };
+            changed && !std::mem::replace(&mut st.dirty, true)
+        };
+        if !schedule {
+            return;
+        }
+        match self.rt.get() {
+            Some(rt) => {
+                let core = self.clone();
+                rt.spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                    core.flush_ui_state();
+                });
+            }
+            None => self.flush_ui_state(),
+        }
+    }
+
+    /// Writes `ui-state.json` if anything changed since it was last written.
+    pub fn flush_ui_state(&self) {
+        // Held while writing, so two flushes can't interleave.
+        let mut st = self.ui_state.lock().unwrap();
+        if !std::mem::replace(&mut st.dirty, false) {
+            return;
+        }
+        let path = self.data_dir.join("ui-state.json");
+        let tmp = path.with_extension("json.tmp");
+        let written = serde_json::to_vec(&st.values).map_err(std::io::Error::other).and_then(|b| std::fs::write(&tmp, b)).and_then(|_| std::fs::rename(&tmp, &path));
+        if let Err(e) = written {
+            warn!("failed to save {}: {e}", path.display());
+        }
     }
 
     pub fn snapshot(&self) -> CoreSnapshot {
@@ -333,9 +405,10 @@ impl Core {
         self.pane(key, PaneCmd::Text { key, text });
     }
 
-    /// Sends a composer prompt: bracketed paste, a short pause, then Enter.
-    pub fn submit_prompt(&self, key: u32, text: String) {
-        self.pane(key, PaneCmd::Submit { key, text });
+    /// Sends a composer prompt: bracketed paste, a short pause, then Enter. `images` are paths
+    /// on the pane's machine ([`Core::save_paste`]); they're pasted first.
+    pub fn submit_prompt(&self, key: u32, text: String, images: Vec<String>) {
+        self.pane(key, PaneCmd::Submit { key, text, images });
     }
 
     /// Pastes text into a pane (bracketed paste when the app supports it).
@@ -421,6 +494,12 @@ impl Core {
 
     pub fn set_pane_labels(&self, key: u32, labels: Vec<String>) {
         self.pane(key, PaneCmd::SetLabels { key, labels });
+    }
+
+    /// Names a pane (`None` or a blank name clears it). A tmux pane alone in its window names
+    /// the window too.
+    pub fn rename_pane(&self, key: u32, name: Option<String>) {
+        self.pane(key, PaneCmd::Rename { key, name });
     }
 
     /// Ping (or not) when the pane rings the terminal bell; `None` restores the default (on for
@@ -644,6 +723,21 @@ impl Core {
         rx.await.map_err(|_| "host not found".to_string())?
     }
 
+    /// Saves an image pasted into the composer on the pane's machine and returns its path, for
+    /// the prompt. `ext` is the image type (png, jpg, gif, webp).
+    pub async fn save_paste(&self, host: &str, bytes: Vec<u8>, ext: &str) -> Result<String, String> {
+        let name = crate::fs::paste_name(ext).ok_or_else(|| format!("{ext} images can't be sent to agents"))?;
+        if bytes.len() as u64 > crate::fs::BYTES_LIMIT {
+            return Err("that image is over 20 MB".into());
+        }
+        if host == LOCAL_HOST {
+            return tokio::task::spawn_blocking(move || crate::fs::local::save_paste(&name, &bytes)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::SavePaste { name, bytes, reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
     /// Size and mtime of a file (None if it doesn't exist), to notice outside changes.
     pub async fn stat_file(&self, host: &str, path: &str) -> Result<Option<crate::fs::FileStamp>, String> {
         if host == LOCAL_HOST {
@@ -720,6 +814,20 @@ mod tests {
             self.0.lock().unwrap().push(event);
         }
         fn frame(&self, _frame: Vec<u8>) {}
+    }
+
+    #[test]
+    fn ui_state_is_kept_on_disk() {
+        let dir = std::env::temp_dir().join(format!("chm-ui-state-test-{}", std::process::id()));
+        let sink = Arc::new(Collect(Mutex::new(Vec::new())));
+        let core = Core::new(dir.clone(), sink.clone());
+        core.set_ui_state("consuls.ui.v1".into(), Some("{\"a\":1}".into()));
+        core.set_ui_state("gone".into(), Some("x".into()));
+        core.set_ui_state("gone".into(), None);
+        core.flush_ui_state();
+        let again = Core::new(dir.clone(), sink);
+        assert_eq!(again.ui_state().into_iter().collect::<Vec<_>>(), [("consuls.ui.v1".to_string(), "{\"a\":1}".to_string())]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

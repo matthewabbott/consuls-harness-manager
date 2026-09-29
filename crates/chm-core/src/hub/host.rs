@@ -44,6 +44,7 @@ pub(crate) enum HostCmd {
     StatFile { path: String, reply: oneshot::Sender<Result<Option<FileStamp>, String>> },
     WriteFile { path: String, text: String, bom: bool, expect: Option<FileStamp>, reply: oneshot::Sender<Result<FileStamp, SaveError>> },
     Exec { script: String, reply: oneshot::Sender<Result<ExecOutput, String>> },
+    SavePaste { name: String, bytes: Vec<u8>, reply: oneshot::Sender<Result<String, String>> },
     Shutdown,
 }
 
@@ -64,6 +65,7 @@ impl HostCmd {
             HostCmd::StatFile { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::WriteFile { reply, .. } => drop(reply.send(Err(SaveError::Failed { message: why }))),
             HostCmd::Exec { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::SavePaste { reply, .. } => drop(reply.send(Err(why))),
             _ => {}
         }
     }
@@ -467,6 +469,12 @@ async fn connected_phase(
                     let (conn, sftp) = (conn.clone(), sftp.clone());
                     tokio::spawn(async move {
                         let _ = reply.send(rfs::write(&conn, &sftp, &path, &text, bom, expect).await);
+                    });
+                }
+                Some(HostCmd::SavePaste { name, bytes, reply }) => {
+                    let conn = conn.clone();
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::save_paste(&conn, &name, &bytes).await);
                     });
                 }
                 Some(HostCmd::Git { dir, reply }) => {

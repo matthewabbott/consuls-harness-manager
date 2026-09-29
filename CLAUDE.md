@@ -130,9 +130,14 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   is held back (≤ 30 ms). Toggling the mode re-requests a RESET (`streamPane(key, true)`).
 - The editor draws masks with replace decorations (`editor/redaction.ts`); toasts go generic
   (the shell reads `config.ui.recording` from Config events). E2E: `scripts/e2e/recording.mjs`.
-- **Preferences that must survive go in `config.json` (`AppConfig.ui`, `store/prefs.ts`), not
-  localStorage**: the release app once lost everything it had in WebView2's localStorage.
-  localStorage is for conveniences (layout, zoom, composer history) only.
+- **Nothing that should survive goes in localStorage**: WebView2 can drop recent writes when
+  the app quits, and the release app once lost everything it had there.
+  - Preferences shared with the core go in `config.json` (`AppConfig.ui`, `store/prefs.ts`).
+  - The UI's own state (layout, zoom, composer drafts and history, the new-pane dialog's last
+    choices) goes through `lib/uiState.ts` into the core's `ui-state.json`. Saves are batched
+    (300 ms) and flushed on exit (`RunEvent::Exit`). Persisted zustand stores use
+    `uiStorage` with `skipHydration`; `main.tsx` loads the state, rehydrates, then renders.
+  - Unsaved editor buffers are still in IndexedDB (`lib/drafts.ts`).
 
 ## Editor
 
@@ -156,6 +161,24 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
   the pane's cwd. Ctrl+click only. URLs go through `open_external`, which stays https-only;
   other schemes are copied instead.
 
+## Pane names and pasted images
+
+- A pane's name is `@chm_name` (tmux) or kept in memory (plain shells); `displayTitle` shows it
+  in place of the title. A tmux pane alone in its window also renames the window, saving the
+  old name in the window option `@chm_window_name` (`=` + the name, or just `=` when tmux was
+  naming it automatically) so clearing puts it back. **`rename-window` expands formats**
+  (3.4 and 3.7 alike): a literal `#` must be sent as `##`. `@chm_name` is before `pane_title`
+  in both formats, so names can't contain `|~|` (`clean_pane_name`).
+- Pasted images are saved on the pane's machine (`~/.cache/consuls/pastes/` over one exec with
+  the bytes on stdin; This PC: the OS cache folder) and removed after a week. The UI sends the
+  bytes as a raw IPC body with `chm-host`/`chm-ext` headers (`save_paste`).
+- Claude Code and Codex attach an image only when a paste is *just* its path, so each image is
+  its own paste before the text (`harness::prompt_steps`). Claude Code reads it asynchronously
+  and drops an Enter that arrives meanwhile, hence the wait before Enter. Other programs get
+  the paths after the text. A pasted path stays as it is when it's a Windows one (Codex takes
+  `C:/…` literally, spaces and all) and is shell-quoted otherwise if it has spaces (Codex
+  splits those like a shell): `harness::pasted_path`, `pastedPath` in the UI.
+
 ## Bells
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
@@ -166,7 +189,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 ## Testing
 
 - Core end-to-end: `cargo run -p chm-core --example selftest -- <host> <user>` (private tmux
-  socket; covers sizing, labels, direct shells, reconnect, hooks).
+  socket; covers sizing, labels, names, pasted images, direct shells, reconnect, hooks).
 - This PC shells: `cargo run -p chm-core --example localtest` (every local shell: typing,
   resize, hook routing, exit → ended, dismiss).
 - This PC tmux: `cargo run -p chm-core --example localtmux` (private socket, scratch state
@@ -175,7 +198,7 @@ Desktop dashboard (Tauri 2 + React) for coding agents in tmux on the user's tail
 - Real UI end-to-end: start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,
-  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `cwd.mjs`; `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
+  `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `cwd.mjs`; `paste.mjs` (names, image paste); `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
 

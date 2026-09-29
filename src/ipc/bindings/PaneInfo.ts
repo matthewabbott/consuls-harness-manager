@@ -14,7 +14,12 @@ key: number, host: string, kind: PaneKind,
 /**
  * Set for [`PaneKind::Tmux`] panes.
  */
-tmux: TmuxLoc | null, width: number, height: number, currentCommand: string, currentPath: string, title: string, harness: Harness | null, alternateOn: boolean, 
+tmux: TmuxLoc | null, width: number, height: number, currentCommand: string, currentPath: string, title: string, 
+/**
+ * The name the user gave the pane (tmux: `@chm_name`, so every device agrees). Shown
+ * instead of the title.
+ */
+name: string | null, harness: Harness | null, alternateOn: boolean, 
 /**
  * Stable identity: set on panes the app created (and on tmux panes the user has
  * expanded), used to key per-pane preferences.

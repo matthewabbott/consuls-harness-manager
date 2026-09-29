@@ -27,11 +27,13 @@ import { COMPOSER, FILMSTRIP, useUi } from "../store/ui";
 import { useRedact } from "../store/recording";
 import { isDirect, paneIdentity, paneWhere } from "../lib/panes";
 import { useViewPrefs, zoom } from "../store/viewPrefs";
+import { useAttachmentsOf } from "../store/attachments";
 import ResizeHandle from "./ResizeHandle";
 import Composer, { type ComposerHandle } from "./Composer";
 import HarnessBadge, { harnessLabel, isAgent } from "./HarnessBadge";
 import { displayTitle } from "./MiniTile";
 import MiniTile from "./MiniTile";
+import PaneNameField, { renameHint } from "./PaneNameField";
 import QuickKeys from "./QuickKeys";
 import SearchBar from "./SearchBar";
 import TerminalView, { type TerminalHandle } from "./TerminalView";
@@ -55,6 +57,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   const [searching, setSearching] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const home = hosts[pane.host]?.facts?.home;
   const vscode = useVsCode();
   const r = useRedact();
@@ -74,6 +77,7 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
   const filmstripCollapsed = useUi((s) => s.filmstripCollapsed);
   const maximized = useUi((s) => s.maximized);
   const composerHeight = useUi((s) => s.composerHeight);
+  const attachments = useAttachmentsOf(paneIdentity(pane));
   const ui = useUi.getState;
   const id = paneIdentity(pane);
   const fontPref = useViewPrefs((s) => s.prefs[id]?.fontSize);
@@ -111,7 +115,17 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           </button>
           <HarnessBadge harness={pane.harness} size={26} />
           <div className="min-w-0">
-            <div className="truncate text-[14.5px] font-semibold text-mist-100">{r(displayTitle(pane))}</div>
+            {renaming ? (
+              <PaneNameField pane={pane} saveOnBlur onDone={() => setRenaming(false)} className="w-80 max-w-full py-0.5 text-[14px] font-semibold" />
+            ) : (
+              <div
+                className="truncate text-[14.5px] font-semibold text-mist-100"
+                title={`Double-click to rename. ${renameHint(pane)}`}
+                onDoubleClick={() => setRenaming(true)}
+              >
+                {r(displayTitle(pane))}
+              </div>
+            )}
             <div className="truncate font-mono text-[11px] text-mist-500">
               {harnessLabel(pane.harness)} · {r(hostLabel(pane.host))} ·{" "}
               {direct ? <span className="text-rose-300/80">{pane.currentCommand} · no tmux</span> : r(paneWhere(pane, true))} ·{" "}
@@ -273,7 +287,8 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
           resetTo={COMPOSER.default}
           className="mt-0.5"
         />
-        <div className={`shrink-0 ${ended ? "pointer-events-none opacity-40" : ""}`} style={{ height: composerHeight }}>
+        {/* Pasted images get their own row on top of the text. */}
+        <div className={`shrink-0 ${ended ? "pointer-events-none opacity-40" : ""}`} style={{ height: composerHeight + (attachments.length ? 60 : 0) }}>
           <Composer
             ref={composerRef}
             pane={pane}

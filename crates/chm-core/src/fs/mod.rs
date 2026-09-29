@@ -36,8 +36,26 @@ pub const EDIT_LIMIT: u64 = 5 * 1024 * 1024;
 /// Files up to this size also get a content hash in their stamp (mtime has 1 s resolution,
 /// so a same-size edit within the same second would otherwise go unnoticed).
 pub const HASH_LIMIT: u64 = 2 * 1024 * 1024;
-/// Largest file sent as raw bytes (image preview).
+/// Largest file sent as raw bytes (image preview, pasted images).
 pub const BYTES_LIMIT: u64 = 20 * 1024 * 1024;
+
+/// Pasted images older than this are removed when the next one is saved.
+pub(crate) const PASTE_DAYS: u64 = 7;
+
+/// A fresh file name for an image pasted into the composer, or `None` for a type agents
+/// can't read (they take PNG, JPEG, GIF and WebP).
+pub(crate) fn paste_name(ext: &str) -> Option<String> {
+    let ext = match ext.to_ascii_lowercase().as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" => "jpg",
+        "gif" => "gif",
+        "webp" => "webp",
+        _ => return None,
+    };
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    Some(format!("paste-{secs}-{}.{ext}", &id[..6]))
+}
 
 /// What a file looked like when read or written, to notice changes made by someone else.
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

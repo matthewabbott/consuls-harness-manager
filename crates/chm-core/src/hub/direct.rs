@@ -67,6 +67,7 @@ pub(crate) fn spawn(ctx: &Arc<Ctx>, rt: &tokio::runtime::Handle, spec: DirectSpe
         current_command: spec.command,
         current_path: spec.cwd,
         title: String::new(),
+        name: None,
         harness: spec.harness.or(Some(Harness::Shell)),
         alternate_on: false,
         chm_id: Some(spec.chm_id),
@@ -269,22 +270,25 @@ impl Direct {
             PaneCmd::Text { text, .. } => self.write(text.into_bytes()),
             PaneCmd::Input { data, .. } => self.write(data),
             PaneCmd::Paste { text, .. } => self.write(paste_bytes(&text, bracketed)),
-            PaneCmd::Submit { text, .. } => {
-                let text = text.trim_end_matches(['\n', '\r']).to_string();
-                if text.is_empty() || self.info.ended.is_some() {
+            PaneCmd::Submit { text, images, .. } => {
+                if self.info.ended.is_some() {
                     return true;
                 }
-                let settle = match self.info.harness {
-                    Some(Harness::Codex) => 350,
-                    _ if text.len() > 800 || text.contains('\n') => 300,
-                    _ => 180,
-                };
+                let steps = crate::harness::prompt_steps(&text, &images, self.info.harness);
                 let input = self.input.clone();
-                let bytes = paste_bytes(&text, bracketed);
                 tokio::spawn(async move {
-                    let _ = input.send(PtyInput::Data(bytes));
-                    tokio::time::sleep(Duration::from_millis(settle)).await;
-                    let _ = input.send(PtyInput::Data(b"\r".to_vec()));
+                    use crate::harness::PromptStep;
+                    for step in steps {
+                        let bytes = match step {
+                            PromptStep::Paste(text) => paste_bytes(&text, bracketed),
+                            PromptStep::WaitMs(ms) => {
+                                tokio::time::sleep(Duration::from_millis(ms)).await;
+                                continue;
+                            }
+                            PromptStep::Enter => b"\r".to_vec(),
+                        };
+                        let _ = input.send(PtyInput::Data(bytes));
+                    }
                 });
             }
             PaneCmd::Resize { cols, rows, reply, .. } => {
@@ -312,6 +316,10 @@ impl Direct {
                 self.info.hidden = hidden;
                 self.publish();
             }
+            PaneCmd::Rename { name, .. } => {
+                self.info.name = name.as_deref().and_then(crate::model::clean_pane_name);
+                self.publish();
+            }
             PaneCmd::SetBell { bell, .. } => {
                 self.info.bell = bell;
                 self.info.bell_pings = crate::harness::bell_pings(bell, &self.info.current_command);
@@ -328,7 +336,11 @@ impl Direct {
 
     fn label(&self) -> PaneLabel {
         let cleaned = self.info.title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
-        let title = if cleaned.is_empty() || cleaned.contains('@') { self.info.current_command.clone() } else { cleaned.chars().take(60).collect() };
+        let title = match &self.info.name {
+            Some(name) => name.clone(),
+            None if cleaned.is_empty() || cleaned.contains('@') => self.info.current_command.clone(),
+            None => cleaned.chars().take(60).collect(),
+        };
         let host = if self.info.host == crate::local::LOCAL_HOST { "this PC".to_string() } else { self.info.host.clone() };
         PaneLabel { title, harness: display_name(self.info.harness).into(), host }
     }

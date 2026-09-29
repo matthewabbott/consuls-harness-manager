@@ -94,6 +94,25 @@ mod tests {
     }
 
     #[test]
+    fn pasted_images() {
+        let dir = std::env::temp_dir().join(format!("chm-paste-test-{}", std::process::id()));
+        let path = save_paste_in(&dir, "paste-1-a.png", b"png").unwrap();
+        assert!(path.ends_with("/paste-1-a.png") && !path.contains('\\'));
+        assert!(save_paste_in(&dir, "paste-1-a.png", b"x").is_err(), "never overwrites");
+        // A week-old paste goes when the next one arrives; other files stay.
+        let old = std::fs::File::options().write(true).open(dir.join("paste-1-a.png")).unwrap();
+        old.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 3600)).unwrap();
+        drop(old);
+        std::fs::write(dir.join("notes.txt"), "keep").unwrap();
+        save_paste_in(&dir, "paste-2-b.png", b"png").unwrap();
+        assert!(!dir.join("paste-1-a.png").exists() && dir.join("notes.txt").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(super::super::paste_name("PNG").unwrap().ends_with(".png"));
+        assert!(super::super::paste_name("jpeg").unwrap().ends_with(".jpg"));
+        assert_eq!(super::super::paste_name("svg"), None);
+    }
+
+    #[test]
     fn head_versions() {
         let here = crate::local::to_slash(Path::new(env!("CARGO_MANIFEST_DIR")));
         match git_head(&format!("{here}/Cargo.toml")).unwrap() {
@@ -250,4 +269,31 @@ pub(crate) fn git_head(path: &str) -> Result<git::HeadVersion, String> {
     }
     let out = git_cmd().args(["-C", &dir, "show", &spec]).output().map_err(|e| e.to_string())?;
     Ok(if out.status.success() { git::head_from_bytes(out.stdout) } else { git::HeadVersion::NotInRepo })
+}
+
+/// Where images pasted into the composer are kept on This PC.
+fn paste_dir() -> std::path::PathBuf {
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("consuls").join("pastes")
+}
+
+/// Saves an image pasted into the composer and returns its path (forward slashes). Pastes
+/// older than a week are removed first.
+pub(crate) fn save_paste(name: &str, bytes: &[u8]) -> Result<String, String> {
+    save_paste_in(&paste_dir(), name, bytes)
+}
+
+fn save_paste_in(dir: &Path, name: &str, bytes: &[u8]) -> Result<String, String> {
+    use std::io::Write;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let week = std::time::Duration::from_secs(super::PASTE_DAYS * 24 * 3600);
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let old = entry.metadata().ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > week);
+        if old && entry.file_name().to_string_lossy().starts_with("paste-") {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let path = dir.join(name);
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(err(name))?;
+    file.write_all(bytes).map_err(err(name))?;
+    Ok(crate::local::to_slash(&path))
 }

@@ -4,6 +4,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import { uiStorage } from "../lib/uiState";
+
 /**
  * - `fit`: resize the tmux window to fill the view (default the first time a pane is expanded).
  * - `fixed`: keep a size the user chose (drag handle / "keep this size").
@@ -55,7 +57,8 @@ export const useViewPrefs = create<ViewPrefsState>()(
           return { prefs };
         }),
     }),
-    { name: "consuls.viewprefs.v1", storage: createJSONStorage(() => localStorage) },
+    // Loaded by main.tsx once the core has handed the state over.
+    { name: "consuls.viewprefs.v1", storage: createJSONStorage(() => uiStorage), skipHydration: true },
   ),
 );
 

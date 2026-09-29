@@ -148,6 +148,7 @@ pub fn run() {
             commands::write_file,
             commands::quit_app,
             commands::submit_prompt,
+            commands::save_paste,
             commands::set_focus,
             commands::set_sound_prefs,
             commands::test_chime,
@@ -162,11 +163,22 @@ pub fn run() {
             commands::update_label,
             commands::delete_label,
             commands::set_pane_labels,
+            commands::rename_pane,
             commands::resize_pane,
             commands::release_pane_size,
             commands::terminate_pane,
             commands::list_dir,
+            commands::get_ui_state,
+            commands::set_ui_state,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Consuls");
+        .build(tauri::generate_context!())
+        .expect("error while building Consuls")
+        .run(|app, event| {
+            // The UI's layout, zoom and drafts are saved in batches; write what's pending.
+            if let tauri::RunEvent::Exit = event
+                && let Some(state) = app.try_state::<AppState>()
+            {
+                state.core.flush_ui_state();
+            }
+        });
 }

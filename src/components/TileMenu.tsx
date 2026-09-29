@@ -1,4 +1,4 @@
-import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Plus, Power, SquareCode, Tag } from "lucide-react";
+import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Pencil, Plus, Power, SquareCode, Tag } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -7,6 +7,7 @@ import { isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
 import { LabelEditor } from "./LabelsPanel";
+import PaneNameField, { renameHint } from "./PaneNameField";
 
 export interface TileMenuState {
   pane: PaneInfo;
@@ -20,6 +21,7 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
   // Read the live pane so toggles reflect immediately.
   const pane = useApp((s) => Object.values(s.panes).flat().find((p) => p.key === menu.pane.key)) ?? menu.pane;
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const vscode = useVsCode();
 
   useEffect(() => {
@@ -47,6 +49,18 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
         <MenuItem icon={<Maximize2 className="h-3.5 w-3.5" />} onClick={() => { backend().then((b) => b.ackPane(pane.key)); useApp.getState().setExpanded(pane.key); onClose(); }}>
           Open
         </MenuItem>
+        {renaming ? (
+          <div className="px-1.5 py-1">
+            <PaneNameField pane={pane} onDone={onClose} className="w-full text-[12.5px]" />
+            <div className="px-0.5 pt-1 text-[10.5px] leading-snug text-mist-500">
+              {renameHint(pane)} Enter saves; empty for the automatic name.
+            </div>
+          </div>
+        ) : (
+          <MenuItem icon={<Pencil className="h-3.5 w-3.5" />} onClick={() => setRenaming(true)}>
+            Rename…
+          </MenuItem>
+        )}
         <div className="my-1 h-px bg-ink-700" />
         <div className="px-2.5 pt-1 pb-0.5 text-[10.5px] font-semibold tracking-wide text-mist-500 uppercase">Labels</div>
         {labels.map((l) => (

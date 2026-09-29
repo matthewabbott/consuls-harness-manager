@@ -20,6 +20,7 @@ function cleanTitle(title: string): string {
 }
 
 export function displayTitle(p: PaneInfo): string {
+  if (p.name) return p.name;
   const t = cleanTitle(p.title);
   // Shells title themselves with the host, user@host:path, or (Windows) their exe path /
   // `MINGW64:/…`; none of those beat the folder.

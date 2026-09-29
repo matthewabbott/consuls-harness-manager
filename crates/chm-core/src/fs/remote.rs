@@ -245,6 +245,27 @@ pub(crate) async fn read_bytes(conn: &SshConnection, pool: &SftpPool, path: &str
     read_all(conn, pool, path).await
 }
 
+/// Saves an image pasted into the composer under `~/.cache/consuls/pastes/` (removing pastes
+/// older than a week) and returns its path. One exec: the image arrives on stdin.
+pub(crate) async fn save_paste(conn: &SshConnection, name: &str, bytes: &[u8]) -> Result<String, String> {
+    let script = format!(
+        r#"d="${{XDG_CACHE_HOME:-$HOME/.cache}}/consuls/pastes"
+mkdir -p "$d" || exit 5
+find "$d" -type f -name 'paste-*' -mtime +{days} -exec rm -f {{}} + 2>/dev/null
+f="$d/"{name}
+(set -C; cat > "$f") || exit 6
+printf 'PASTE %s\n' "$f""#,
+        days = super::PASTE_DAYS,
+        name = sh_quote(name),
+    );
+    let out = exec::run_with_stdin(conn, &script, Some(bytes), Duration::from_secs(60)).await.map_err(|e| e.to_string())?;
+    let stdout = out.stdout_str();
+    match stdout.lines().rev().find_map(|l| l.strip_prefix("PASTE ")) {
+        Some(path) if out.success() => Ok(path.to_string()),
+        _ => Err(format!("couldn't save the image: {}", out.stderr_str().trim())),
+    }
+}
+
 /// The save script: resolves symlinks, keeps the mode, lands the new content atomically
 /// (temp file + mv), except in place for files with other hard links, owned by someone else,
 /// or in a folder we can't write. Reads the content from stdin; prints the new size and mtime.

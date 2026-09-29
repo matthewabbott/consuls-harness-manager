@@ -73,16 +73,18 @@ Roughly in order. Each is small-to-medium and self-contained.
     - Path mapping, the job object, and `hub/local_tmux.rs`.
     - Verified by `localtmux`, a real-app E2E, a crash test (the server survives, the client
       dies) and the SSH selftest.
+- After v3 was merged (on `master`):
+  - Renaming panes: `@chm_name`, plus the tmux window while the pane has it to itself (the old
+    name comes back when the name is cleared). Not `select-pane -T`: agents overwrite pane
+    titles constantly.
+  - Image paste into the composer or the terminal, saved on the pane's machine.
+  - The UI's layout, zoom and composer drafts/history moved from localStorage to the core's
+    `ui-state.json`.
 - Future (from the user, 2026-09-28):
-  - The Mac app watching its own tmux (a native `LocalSh`).
+  - The Mac app watching its own tmux (a native `LocalSh`). Likely next.
   - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH
     server lands in cmd/PowerShell, so `exec`'s `$SHELL -lc` wrapper would need a Cygwin-aware
     variant.
-  - Renaming panes (and their tmux windows).
-- Roadmap (minor, added 2026-09-28): rename panes from the app.
-  - For tmux panes, also run `rename-window` (or `select-pane -T` for a split pane's title) on the
-    host, so it shows everywhere.
-  - Plain shells keep the name in the registry.
 
 ### 1. Sidebars (done in V3-1)
 - Right sidebar (the filmstrip beside an expanded pane, `ExpandedPane.tsx`): its collapse toggle

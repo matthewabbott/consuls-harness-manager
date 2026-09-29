@@ -342,6 +342,9 @@ pub struct PaneInfo {
     pub current_command: String,
     pub current_path: String,
     pub title: String,
+    /// The name the user gave the pane (tmux: `@chm_name`, so every device agrees). Shown
+    /// instead of the title.
+    pub name: Option<String>,
     pub harness: Option<crate::harness::Harness>,
     pub alternate_on: bool,
     /// Stable identity: set on panes the app created (and on tmux panes the user has
@@ -356,6 +359,17 @@ pub struct PaneInfo {
     pub bell: Option<bool>,
     /// Whether a bell pings: the user's choice, else on for chat clients (irssi, weechat, …).
     pub bell_pings: bool,
+}
+
+/// A pane name as the user typed it, made safe to store: one line, no control characters,
+/// at most 60 characters. `None` when nothing is left (which clears the name).
+pub fn clean_pane_name(input: &str) -> Option<String> {
+    let one_line: String = input.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    // `|~|` separates fields in tmux's replies (`formats::SEP`).
+    let words: Vec<&str> = one_line.split_whitespace().collect();
+    let name: String = words.join(" ").replace(crate::tmux::formats::SEP, "|-|").chars().take(60).collect();
+    let name = name.trim_end().to_string();
+    (!name.is_empty()).then_some(name)
 }
 
 /// Result of a resize request.
@@ -541,4 +555,17 @@ pub struct Alert {
 pub struct FocusState {
     pub expanded: Option<u32>,
     pub window_focused: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_pane_name;
+
+    #[test]
+    fn pane_names() {
+        assert_eq!(clean_pane_name("  PR #12\treview \n").as_deref(), Some("PR #12 review"));
+        assert_eq!(clean_pane_name("a|~|b").as_deref(), Some("a|-|b"));
+        assert_eq!(clean_pane_name(" \x1b\n "), None);
+        assert_eq!(clean_pane_name(&"é".repeat(80)).map(|n| n.chars().count()), Some(60));
+    }
 }

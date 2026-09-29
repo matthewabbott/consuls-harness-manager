@@ -10,6 +10,12 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   `src/App.tsx:42` in the editor at that line, on the pane's machine and relative to its folder.
 - **Composer**: a mouse-friendly prompt box — click to place the cursor, select, cut/paste,
   undo/redo, Shift+Enter for new lines, ↑ for prompt history, drafts kept per pane.
+- **Image paste**: paste a screenshot into the composer (or straight into the terminal) and
+  it's saved on the pane's machine (`~/.cache/consuls/pastes/`, cleared after a week).
+  Claude Code and Codex get it as an attachment; other programs get its path.
+- **Names**: rename a pane from its tile menu, or double-click its title when it's open. A tmux
+  pane keeps its name in `@chm_name` and, when it has its window to itself, names the window too,
+  so other tmux clients see it. Clearing the name gives the window its old name back.
 - **Attention**: when an agent finishes its turn or needs permission, you get a ping (and a
   toast if Consuls isn't focused); its tile glows until you look, then shows "Waiting on you".
   Ctrl+Shift+Space jumps to the next waiting pane.
@@ -131,15 +137,13 @@ Build an installer: `npm run tauri build` (NSIS; the installed app also gets pro
 |---|---|
 | Anywhere | **Ctrl+Shift+Space** next waiting pane · **Ctrl+Shift+G** back to grid |
 | Terminal | keys go straight to the pane · **Ctrl+F** search · **Ctrl+C** smart copy (with a selection) · **Ctrl+Shift+C** copy as shown · **Ctrl+V** paste · **Ctrl+Enter** jump to composer |
-| Composer | **Enter** send · **Shift+Enter** new line · **↑/↓** prompt history · **Esc** (empty) interrupts the agent |
+| Composer | **Enter** send · **Shift+Enter** new line · **↑/↓** prompt history · **Ctrl+V** also pastes images · **Esc** (empty) interrupts the agent |
 
 ## Not yet
 
-Next up (small):
-- Rename panes from the app (tile menu / pane header); for tmux panes this renames the tmux
-  window too (`rename-window`), so other clients see the new name.
+Next up:
 - tmux on This PC when that's a Mac or Linux box (Windows has it through Cygwin already).
 - Reaching this PC from another Consuls (e.g. the Mac) over SSH.
 
-Bigger: the iPhone app and push notifications, a transcript-backed conversation view, image
-paste, sub-agent panes, per-harness expandable regions.
+Bigger: the iPhone app and push notifications, a transcript-backed conversation view,
+sub-agent panes, per-harness expandable regions.

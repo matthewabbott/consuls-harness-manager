@@ -15,7 +15,7 @@ import { useEditor } from "../store/editor";
 
 function matches(p: PaneInfo, q: string, labelNames: string): boolean {
   if (!q) return true;
-  const hay = `${p.title} ${paneName(p)} ${paneWhere(p)} ${p.currentPath} ${p.currentCommand} ${hostLabel(p.host)} ${labelNames}`.toLowerCase();
+  const hay = `${p.name ?? ""} ${p.title} ${paneName(p)} ${paneWhere(p)} ${p.currentPath} ${p.currentCommand} ${hostLabel(p.host)} ${labelNames}`.toLowerCase();
   return q
     .toLowerCase()
     .split(/\s+/)

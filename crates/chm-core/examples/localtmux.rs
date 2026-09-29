@@ -123,6 +123,17 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
     core.resize_pane(key, 100, 30).await.map_err(anyhow::Error::msg)?;
     wait_for("resized to 100x30", Duration::from_secs(10), || pane(key).is_some_and(|p| (p.width, p.height) == (100, 30))).await?;
 
+    // Naming the pane names its window; clearing the name gives the window its old name back.
+    let window = |k: u32| pane(k).and_then(|p| p.tmux).map(|t| t.window_name).unwrap_or_default();
+    let original = window(key);
+    core.rename_pane(key, Some("issue #9 · naïve".into()));
+    wait_for("pane and window named", Duration::from_secs(10), || {
+        pane(key).is_some_and(|p| p.name.as_deref() == Some("issue #9 · naïve")) && window(key) == "issue #9 · naïve"
+    })
+    .await?;
+    core.rename_pane(key, None);
+    wait_for("window name given back", Duration::from_secs(10), || pane(key).is_some_and(|p| p.name.is_none()) && window(key) == original).await?;
+
     // The hook, from inside the pane, as a harness would run it (Git's sh on Windows).
     let assets = local::ensure_assets().map_err(anyhow::Error::msg)?;
     core.send_text(key, format!("'{}' '{}' claude Stop </dev/null", assets.sh, assets.hook));

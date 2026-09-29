@@ -1,10 +1,11 @@
 // Layout preferences (panel sizes, collapsed state, active sidebar tab). Per device, so they
-// live in localStorage rather than the core's config.
+// live in the UI's own state (lib/uiState.ts) rather than the core's config.
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { GroupBy, SortBy } from "../lib/organize";
+import { uiStorage } from "../lib/uiState";
 
 export type SidebarTab = "machines" | "files";
 
@@ -76,7 +77,9 @@ export const useUi = create<UiState>()(
     }),
     {
       name: "consuls.ui.v1",
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => uiStorage),
+      // Loaded by main.tsx once the core has handed the state over.
+      skipHydration: true,
       // Maximize is a momentary view state, not a preference.
       partialize: ({ maximized: _m, ...rest }) => rest,
     },

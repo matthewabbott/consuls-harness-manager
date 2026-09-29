@@ -28,6 +28,7 @@ const pane = (key: number, extra: Partial<PaneInfo> = {}): PaneInfo => ({
   currentCommand: "bash",
   currentPath: "/home/u/proj",
   title: "",
+  name: null,
   harness: "shell",
   alternateOn: false,
   chmId: null,

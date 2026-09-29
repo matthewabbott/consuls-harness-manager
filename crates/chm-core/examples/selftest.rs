@@ -171,6 +171,39 @@ async fn main() -> anyhow::Result<()> {
     core.set_pane_labels(key, vec![]);
     wait_for("labels cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.labels.is_empty())).await;
 
+    // --- names: `@chm_name`, and the window's name while the pane has it to itself (put back
+    // when the name is cleared)
+    wait_for("window back to one pane", Duration::from_secs(5), || pane(key).is_some_and(|p| p.tmux.as_ref().is_some_and(|t| t.window_panes == 1))).await;
+    let naming = || async {
+        let out = core
+            .exec(&host, &format!("{tmux} -L {socket} display -p -t '{pane_id}' '#{{window_name}}|#{{@chm_name}}|#{{automatic-rename}}|#{{@chm_window_name}}'"))
+            .await
+            .map_err(anyhow::Error::msg)?;
+        anyhow::Ok(out.stdout_str().trim_end().to_string())
+    };
+    core.rename_pane(key, Some("  PR #7\tfix ".into()));
+    wait_for("pane named", Duration::from_secs(5), || {
+        pane(key).is_some_and(|p| p.name.as_deref() == Some("PR #7 fix") && p.tmux.as_ref().is_some_and(|t| t.window_name == "PR #7 fix"))
+    })
+    .await;
+    assert_eq!(naming().await?, "PR #7 fix|PR #7 fix|0|=", "window renamed, automatic name saved");
+    core.exec(&host, &format!("{tmux} -L {socket} set-option -p -t '{pane_id}' @chm_name elsewhere")).await.map_err(anyhow::Error::msg)?;
+    wait_for("name set by another client seen", Duration::from_secs(5), || pane(key).is_some_and(|p| p.name.as_deref() == Some("elsewhere"))).await;
+    core.rename_pane(key, Some(" ".into()));
+    wait_for("name cleared", Duration::from_secs(5), || pane(key).is_some_and(|p| p.name.is_none())).await;
+    assert_eq!(naming().await?.split('|').skip(1).collect::<Vec<_>>(), ["", "1", ""], "tmux names the window again");
+    println!("ok   pane names (window renamed and given back)");
+
+    // --- pasted images: saved under ~/.cache/consuls/pastes, never overwriting
+    let image: Vec<u8> = (0..70_000u32).map(|i| (i % 251) as u8).collect();
+    let path = core.save_paste(&host, image.clone(), "PNG").await.map_err(anyhow::Error::msg)?;
+    assert!(path.contains("/.cache/consuls/pastes/paste-") && path.ends_with(".png"), "paste saved at {path}");
+    let back = core.read_bytes(&host, &path).await.map_err(anyhow::Error::msg)?;
+    assert_eq!(back, image, "pasted image arrives byte for byte");
+    assert!(core.save_paste(&host, vec![1], "svg").await.is_err(), "only types agents read");
+    core.exec(&host, &format!("rm -f '{path}'")).await.map_err(anyhow::Error::msg)?;
+    println!("ok   pasted image saved on the host ({path})");
+
     // --- bells: off by default for a shell; once on, a real BEL pings (a BEL that only ends
     // an OSC title doesn't)
     let bell_alerts = || rec.alerts.lock().unwrap().iter().filter(|a| a.kind == AlertKind::Bell && a.key == Some(key)).count();

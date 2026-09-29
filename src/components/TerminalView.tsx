@@ -19,6 +19,7 @@ import { useEditor } from "../store/editor";
 import { useRecording } from "../store/recording";
 import { findPaths, resolvePath } from "../term/links";
 import { StreamRedactor } from "../term/redactStream";
+import { imageFiles, pasteImagesInto } from "../store/attachments";
 import type React from "react";
 
 const FONT = `"Cascadia Mono", "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace`;
@@ -109,6 +110,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
   useEffect(() => {
     const el = hostRef.current!;
     const key = pane.key;
+    const host = pane.host;
     const term = new Terminal({
       cols: pane.width,
       rows: pane.height,
@@ -296,9 +298,13 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       e.preventDefault();
       e.stopPropagation();
       const text = e.clipboardData?.getData("text/plain") ?? "";
+      const images = imageFiles(e.clipboardData);
       if (text && b) {
         flushText();
         b.pasteText(key, text.replace(/\r\n/g, "\n"));
+      } else if (images.length) {
+        flushText();
+        void pasteImagesInto(key, host, images);
       }
     };
     el.addEventListener("paste", onPaste, true);
@@ -332,7 +338,16 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
   };
   const pasteFromClipboard = async () => {
     const text = await navigator.clipboard.readText().catch(() => "");
-    if (text) (await backend()).pasteText(pane.key, text.replace(/\r\n/g, "\n"));
+    if (text) {
+      (await backend()).pasteText(pane.key, text.replace(/\r\n/g, "\n"));
+    } else {
+      // No text: maybe a screenshot.
+      const items = await navigator.clipboard.read().catch(() => []);
+      const images = await Promise.all(
+        items.flatMap((item) => item.types.filter((t) => t.startsWith("image/")).slice(0, 1).map((t) => item.getType(t))),
+      );
+      if (images.length) void pasteImagesInto(pane.key, pane.host, images);
+    }
     termRef.current?.focus();
   };
   const hasSel = termRef.current?.hasSelection() ?? false;

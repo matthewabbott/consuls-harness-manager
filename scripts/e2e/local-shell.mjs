@@ -2,7 +2,7 @@
 // real UI (Windows: PowerShell by default; SHELL=git-bash etc. picks another).
 //
 //   node scripts/e2e/cdp.mjs scripts/e2e/local-shell.mjs
-import { bufferOf } from "./term.mjs";
+import { bufferOf, noTmux } from "./term.mjs";
 
 const SHELL = process.env.SHELL_NAME ?? "PowerShell";
 
@@ -29,6 +29,8 @@ export default async function ({ js, text, key, sleep, log }) {
 
   await until("This PC section", () => js(`return [...document.querySelectorAll("main section h2")].some(h => h.textContent === "This PC")`), 15000);
   await js(`[...document.querySelectorAll("main section")].find(s => s.querySelector("h2")?.textContent === "This PC").querySelector('button[title^="New pane"]').click(); return true`);
+  await until("dialog", () => js(`return !!document.querySelector("select")`));
+  await js(noTmux);
   await until("dialog with a shell picker", () => click("button", SHELL));
   await until("Shell harness picked", () => js(`const b = [...document.querySelectorAll("button")].find(e => e.textContent.includes("just a terminal")); b?.click(); return !!b`));
   await until("folder listing loaded", () => js(`return [...document.querySelectorAll("button")].some(b => b.textContent.trim() === "Users")`));

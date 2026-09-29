@@ -157,7 +157,7 @@ export const useApp = create<AppStore>((set) => ({
           const text = ev.text;
           void navigator.clipboard
             .writeText(text)
-            .then(() => useApp.getState().notify("info", `Copied ${text.length} character${text.length === 1 ? "" : "s"} from ${pane ? paneName(pane) : "a pane"}.`))
+            .then(() => useApp.getState().notify("info", `Copied ${text.length} character${text.length === 1 ? "" : "s"} from ${pane ? (pane.name ?? paneName(pane)) : "a pane"}.`))
             .catch((e) => useApp.getState().notify("warning", `A pane tried to copy to the clipboard: ${e}`));
           return {};
         }
