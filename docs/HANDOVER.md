@@ -86,7 +86,8 @@ Roughly in order. Each is small-to-medium and self-contained.
     meanings, aimed at the pane on screen.
   - Wrapped URLs (Claude Code's sign-in link) copy and Ctrl+click whole.
 - Future (from the user, 2026-09-28):
-  - The Mac app watching its own tmux (a native `LocalSh`). Likely next.
+  - The Mac app watching its own tmux (a native `LocalSh`). Next, on the Mac itself:
+    `docs/HANDOVER-MAC.md`.
   - This PC reachable over SSH by another Consuls, "tmux-able like any other". Windows' SSH
     server lands in cmd/PowerShell, so `exec`'s `$SHELL -lc` wrapper would need a Cygwin-aware
     variant.
