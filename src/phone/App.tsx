@@ -1,6 +1,7 @@
 // The phone app's first screen: notifications, and every agent on every machine with a switch to
 // track it (tracked agents push when they're still waiting for you after a while).
 
+import { Bell } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { DaemonState } from "../ipc/bindings/DaemonState";
@@ -90,7 +91,14 @@ export default function App() {
       setState(await api.state());
       setError(null);
     } catch (e) {
-      setError(e instanceof ApiError && e.status === 403 ? "This isn't yours: open it from your own device, over Tailscale." : `Can't reach the daemon: ${String(e instanceof Error ? e.message : e)}`);
+      const host = window.location.hostname.split(".")[0];
+      setError(
+        e instanceof ApiError && e.status === 403
+          ? "This isn't yours: open it from your own device, over Tailscale."
+          : e instanceof ApiError
+            ? `The notifier on ${host} said: ${e.message}`
+            : `The notifier isn't running on ${host}. Notifications still arrive from any notifier that's running.`,
+      );
     }
   }, []);
 
@@ -106,7 +114,7 @@ export default function App() {
     };
   }, [refresh]);
 
-  // Notifications: register, see where we stand, and re-tell the daemon about this device.
+  // Notifications: register, see where we stand, and re-tell the notifier about this device.
   useEffect(() => {
     void push.register().then(push.status).then(setPushState).catch(() => setPushState({ status: "unsupported", endpoint: null }));
   }, []);
@@ -153,8 +161,7 @@ export default function App() {
         id,
         phase: state.snapshot.hosts.find((h) => h.id === id)?.phase,
         panes: state.snapshot.panes.filter((p) => p.host === id && trackable(p)).sort((a, b) => displayTitle(a).localeCompare(displayTitle(b))),
-      }))
-      .filter((m) => m.panes.length > 0 || m.id !== "@local");
+      }));
   }, [state]);
 
   const toggle = async (p: PaneInfo) => {
@@ -186,7 +193,7 @@ export default function App() {
     <div className="mx-auto max-w-xl px-4 pt-[max(env(safe-area-inset-top),1rem)] pb-[max(env(safe-area-inset-bottom),2rem)]">
       <header className="flex items-baseline justify-between py-3">
         <h1 className="text-[22px] font-semibold tracking-tight text-mist-100">Consuls</h1>
-        {state && <span className="text-[12px] text-mist-500">via {state.selfHost || "the push daemon"}</span>}
+        {state && <span className="text-[12px] text-mist-500">via {state.selfHost || "the notifier"}</span>}
       </header>
 
       {error && <div className="mb-3 rounded-2xl bg-rose-400/10 px-4 py-3 text-[14px] text-rose-400 ring-1 ring-rose-400/30">{error}</div>}
@@ -261,15 +268,20 @@ export default function App() {
                           {due && <span className="text-mist-400"> · push in {mmss(due.dueInMs)}</span>}
                         </div>
                       </div>
-                      <button
-                        role="switch"
-                        aria-checked={on}
-                        aria-label={on ? "Stop pushing for this agent" : "Push when this agent waits for you"}
-                        onClick={() => void toggle(p)}
-                        className={`relative h-[31px] w-[51px] shrink-0 rounded-full transition-colors ${on ? "bg-jade-400" : "bg-ink-600"}`}
-                      >
-                        <span className={`absolute top-[2px] h-[27px] w-[27px] rounded-full bg-white shadow transition-[left] ${on ? "left-[22px]" : "left-[2px]"}`} />
-                      </button>
+                      <label className="flex shrink-0 flex-col items-center gap-1">
+                        <button
+                          role="switch"
+                          aria-checked={on}
+                          aria-label={on ? "Stop notifying for this agent" : "Notify when this agent waits for you"}
+                          onClick={() => void toggle(p)}
+                          className={`relative h-[31px] w-[51px] rounded-full transition-colors ${on ? "bg-jade-400" : "bg-ink-600"}`}
+                        >
+                          <span className={`absolute top-[2px] h-[27px] w-[27px] rounded-full bg-white shadow transition-[left] ${on ? "left-[22px]" : "left-[2px]"}`} />
+                        </button>
+                        <span className={`flex items-center gap-0.5 text-[10.5px] font-medium ${on ? "text-jade-400" : "text-mist-500"}`}>
+                          <Bell className="h-2.5 w-2.5" /> Notify
+                        </span>
+                      </label>
                     </li>
                   );
                 })}
@@ -282,7 +294,7 @@ export default function App() {
       {state && (
         <footer className="mt-8 text-center text-[11.5px] text-mist-500">
           {state.subscriptions.length} device{state.subscriptions.length === 1 ? "" : "s"} subscribed
-          {state.rssKb !== null && ` · daemon ${Math.round(state.rssKb / 1024)} MB`}
+          {state.rssKb !== null && ` · notifier ${Math.round(state.rssKb / 1024)} MB`}
         </footer>
       )}
     </div>
