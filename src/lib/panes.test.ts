@@ -53,5 +53,9 @@ describe("displayTitle", () => {
     expect(displayTitle(pane({ title: "spark2" }))).toBe("codex");
     expect(displayTitle(pane({ host: "@local", title: "MBAs-MacBook-Pro.local" }))).toBe("codex");
     expect(displayTitle(pane({ title: "consulear@spark2:~/proj" }))).toBe("codex");
+    // A hostname a network handed out.
+    expect(displayTitle(pane({ title: "MBAs-MBP.router93a4f2.com" }))).toBe("codex");
+    expect(displayTitle(pane({ title: "box.lan" }))).toBe("codex");
+    expect(displayTitle(pane({ title: "notes.md" }))).toBe("notes.md");
   });
 });

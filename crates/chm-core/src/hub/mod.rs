@@ -515,6 +515,12 @@ impl Core {
         self.save_config();
     }
 
+    /// Phone push settings (the Consuls server's core reads them back from its Config event).
+    pub fn set_notify_prefs(&self, prefs: crate::model::NotifyPrefs) {
+        self.config.lock().unwrap().notify = prefs.clamped();
+        self.save_config();
+    }
+
     pub fn ui_prefs(&self) -> UiPrefs {
         self.config.lock().unwrap().ui.clone()
     }

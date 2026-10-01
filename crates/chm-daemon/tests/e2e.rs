@@ -29,7 +29,7 @@ use axum::routing::post;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use bytes::Bytes;
-use chm_daemon::config::{DelayConfig, ServerConfig, VapidConfig, WebConfig};
+use chm_daemon::config::{ServerConfig, VapidConfig, WebConfig};
 use chm_daemon::ctl::{self, Request};
 use chm_daemon::http::DaemonState;
 use chm_daemon::push::store::{Subscription, SubscriptionKeys};
@@ -108,8 +108,13 @@ impl Scratch {
         cmd
     }
     fn install(&self, config: &ServerConfig) -> anyhow::Result<()> {
-        std::fs::create_dir_all(self.home())?;
+        std::fs::create_dir_all(self.home().join("core"))?;
         std::fs::write(self.home().join("config.json"), serde_json::to_vec_pretty(config)?)?;
+        // Short push delays, as if set from the app.
+        let core = self.home().join("core/config.json");
+        if !core.exists() {
+            std::fs::write(core, r#"{"notify":{"needsInputSecs":2,"finishedSecs":3}}"#)?;
+        }
         Ok(())
     }
     /// Starts `run` and waits until it serves; returns the API's address.
@@ -306,7 +311,6 @@ async fn run(scratch: &Scratch) -> anyhow::Result<()> {
         subscriptions: vec![sub("phone"), sub("gone")],
         hosts: Vec::new(),
         self_name: Some("e2e-box".into()),
-        delays: DelayConfig { needs_input_secs: 2, finished_secs: 3 },
         web: Some(WebConfig {
             owner_logins: vec!["e2e".into()],
             public_origin: Some(origin.clone()),
@@ -463,6 +467,24 @@ async fn run(scratch: &Scratch) -> anyhow::Result<()> {
     ws3.call("upsert_host", json!({ "config": { "id": "nowhere-e2e", "address": "127.0.0.1", "port": 9, "user": "nobody", "auth": { "kind": "auto" }, "autoConnect": false } })).await?;
     ensure!(ws3.call("upsert_host", json!({ "config": { "id": "", "user": "x" } })).await.is_err(), "a machine needs a name");
 
+    // Settings from the app, applied at once: paused, nothing; resumed with a shorter delay,
+    // the push comes sooner.
+    ws3.call("set_notify_prefs", json!({ "prefs": { "pausedUntil": unix() + 3600, "needsInputSecs": 2, "finishedSecs": 3 } })).await?;
+    hook(&events, &pid, "UserPromptSubmit", next());
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    hook(&events, &pid, "Stop", next());
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    ensure!(pushes().len() == 2, "pushed while paused");
+    ws3.call("set_notify_prefs", json!({ "prefs": { "pausedUntil": null, "needsInputSecs": 2, "finishedSecs": 1 } })).await?;
+    hook(&events, &pid, "UserPromptSubmit", next());
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    let stopped = Instant::now();
+    hook(&events, &pid, "Stop", next());
+    wait_for("a push after the shorter delay", Duration::from_secs(5), async || pushes().len() == 3).await?;
+    let after = pushes()[2].at.duration_since(stopped);
+    ensure!(after < Duration::from_millis(2500), "the new 1 s delay wasn't used ({after:?})");
+    println!("ok   paused from the app: no push; resumed with 1 s: pushed after {after:?}");
+
     // The pane closes before the delay: nothing.
     hook(&events, &pid, "UserPromptSubmit", next());
     tokio::time::sleep(Duration::from_millis(600)).await;
@@ -470,7 +492,7 @@ async fn run(scratch: &Scratch) -> anyhow::Result<()> {
     tokio::time::sleep(Duration::from_millis(800)).await;
     scratch.sh(&format!("kill-pane -t {pid}"));
     tokio::time::sleep(Duration::from_secs(5)).await;
-    ensure!(pushes().len() == 2, "pushed for a closed pane");
+    ensure!(pushes().len() == 3, "pushed for a closed pane");
     println!("ok   pane closed before the delay: no push");
 
     // Stop; what lasts is there on the next run.

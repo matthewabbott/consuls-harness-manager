@@ -4,7 +4,7 @@ import { useState } from "react";
 import { backend, inWebApp } from "../ipc/backend";
 import { phaseText } from "../lib/agents";
 import { useApp } from "../store/app";
-import NotificationSettings from "./NotificationSettings";
+import NotificationSettings, { PushPrefs } from "./NotificationSettings";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -92,7 +92,10 @@ export default function SettingsScreen({ onBack, onAdd }: { onBack(): void; onAd
 
         <Section title="Notifications">
           {inWebApp ? (
-            <NotificationSettings />
+            <>
+              <NotificationSettings />
+              <PushPrefs />
+            </>
           ) : (
             <div className="px-4 py-3 text-[14px] leading-snug text-mist-300">
               Pushes come through the Consuls web app on your Home Screen. Flip Notify on the agents you want to hear from; it's shared

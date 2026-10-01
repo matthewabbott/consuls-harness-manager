@@ -10,6 +10,7 @@ import TerminalView, { type TerminalHandle } from "../components/TerminalView";
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { HARNESS_DOT, HARNESS_NAME, status } from "../lib/agents";
+import { NOTIFY_MODES, setNotifyMode } from "../lib/notifyModes";
 import { displayTitle, isDirect, paneIdentity } from "../lib/panes";
 import { useApp } from "../store/app";
 import { FONT, useViewPrefs } from "../store/viewPrefs";
@@ -247,6 +248,22 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
       </header>
       {menu === "actions" && (
         <Sheet onClose={() => setMenu(null)}>
+          {canTrack(pane) && (
+            <div className="mb-1 border-b border-ink-700 pb-1">
+              <div className="flex items-center gap-1.5 px-3 pt-1 pb-1 text-[12px] font-medium tracking-wide text-mist-500 uppercase">
+                <Bell className="h-3 w-3" /> Notify
+              </div>
+              {NOTIFY_MODES.map((m) => (
+                <SheetAction key={m.label} onClick={() => setNotifyMode(pane.key, m.mode)}>
+                  <span className={`h-4 w-4 shrink-0 rounded-full ring-2 ${pane.notify === m.mode ? "bg-jade-400 ring-jade-400" : "ring-ink-600"}`} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[15.5px]">{m.label}</span>
+                    <span className="block text-[12.5px] text-mist-500">{m.hint}</span>
+                  </span>
+                </SheetAction>
+              ))}
+            </div>
+          )}
           <SheetAction onClick={() => setMenu("rename")}>
             <Pencil className="h-5 w-5 text-mist-400" /> Rename
           </SheetAction>

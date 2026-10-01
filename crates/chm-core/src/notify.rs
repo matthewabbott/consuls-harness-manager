@@ -1,11 +1,12 @@
-//! When to push to your phone (the push daemon's policy). Pure: it's fed the core's events and
+//! When to push to your phone (the Consuls server's policy). It's fed the core's events and
 //! alerts, and returns the pushes to send; the caller owns the clock and the sending.
 //!
 //! Only tracked tmux panes push (`@chm_notify`, see [`NotifyMode`]). The default mode waits:
 //! a push goes out if the agent is *still* waiting after a delay — unless it went back to work,
 //! tracking was turned off, the pane went away, or a device showed it to you meanwhile
 //! (`@chm_seen`). Every piece of shared state lives on the tmux pane, so panes are keyed by the
-//! daemon's own pane keys.
+//! server's own pane keys. The delays and a pause come from the server's settings
+//! ([`NotifyPrefs`], in its core's config), and apply to pushes already waiting.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -15,7 +16,7 @@ use tokio::time::Instant;
 use ts_rs::TS;
 
 use crate::local::LOCAL_HOST;
-use crate::model::{Activity, Alert, AlertKind, CoreEvent, HostId, HostPhase, NotifyMode, PaneKind};
+use crate::model::{Activity, Alert, AlertKind, CoreEvent, HostId, HostPhase, NotifyMode, NotifyPrefs, PaneKind};
 
 /// How long a waiting agent waits before its push, in the default mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,13 +27,27 @@ pub struct Delays {
 
 impl Default for Delays {
     fn default() -> Self {
-        Self { needs_input: Duration::from_secs(60), finished: Duration::from_secs(180) }
+        Self::from(&NotifyPrefs::default())
+    }
+}
+
+impl From<&NotifyPrefs> for Delays {
+    fn from(p: &NotifyPrefs) -> Self {
+        Self { needs_input: Duration::from_secs(p.needs_input_secs), finished: Duration::from_secs(p.finished_secs) }
     }
 }
 
 /// A device's "seen" counts for an alert up to this many seconds before it: clocks differ a
-/// little, and the seen mark and the hook event reach the daemon in either order.
+/// little, and the seen mark and the hook event reach the server in either order.
 const SEEN_SLACK: u64 = 10;
+
+/// The modes that push on a turn's end still wait this long, so a desktop showing the pane
+/// (which marks it seen just after the alert) can cancel it.
+const GRACE: Duration = Duration::from_secs(SEEN_SLACK);
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
 
 /// A notification to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +78,8 @@ pub struct PendingPush {
 #[derive(Debug, Clone)]
 struct Pending {
     kind: AlertKind,
-    due: Instant,
+    /// When the alert came in: its due time follows from the delays and mode at the time.
+    at: Instant,
     /// The daemon's clock (unix seconds) when the alert came in.
     alert_wall: u64,
     title: String,
@@ -82,6 +98,8 @@ struct PaneState {
 #[derive(Default)]
 pub struct Policy {
     delays: Delays,
+    /// No pushes until then (unix seconds).
+    paused_until: Option<u64>,
     panes: HashMap<u32, PaneState>,
     /// Kept apart from `panes`: an attention update can arrive before the pane list.
     activity: HashMap<u32, Activity>,
@@ -103,6 +121,31 @@ impl Policy {
     /// Names this machine in pushes, instead of its tailnet name.
     pub fn name_this_machine(&mut self, name: String) {
         self.given_name = Some(name);
+    }
+
+    /// The server's settings: the delays (for pushes already waiting too) and a pause, which
+    /// drops what's waiting.
+    pub fn set_prefs(&mut self, prefs: &NotifyPrefs, wall: u64) {
+        self.delays = Delays::from(prefs);
+        self.paused_until = prefs.paused_until;
+        if prefs.paused_at(wall) {
+            for p in self.panes.values_mut() {
+                p.pending = None;
+            }
+        }
+    }
+
+    /// When `pending` is due, given the pane's mode now; None: it no longer pushes at all.
+    fn due_at(delays: Delays, mode: Option<NotifyMode>, pending: &Pending) -> Option<Instant> {
+        let delay = match (mode?, pending.kind) {
+            (NotifyMode::Delay, AlertKind::NeedsInput) => delays.needs_input,
+            (NotifyMode::Delay, _) => delays.finished,
+            (NotifyMode::Any, _) => GRACE,
+            (NotifyMode::Finished, AlertKind::Finished) => GRACE,
+            // Questions and permission prompts don't push in this mode.
+            (NotifyMode::Finished, _) => return None,
+        };
+        Some(pending.at + delay)
     }
 
     /// Takes in a core event (pane lists, attention, hosts, the tailnet).
@@ -162,31 +205,26 @@ impl Policy {
                     self.self_name = Some(me.id.clone());
                 }
             }
+            // Comes with every save of the config (labels, machines…): cheap to apply again.
+            CoreEvent::Config { config } => self.set_prefs(&config.notify, unix_now()),
             _ => {}
         }
     }
 
-    /// Takes in an alert. Returns what goes out right away (modes without a delay); the rest
-    /// comes back from [`Policy::due`].
+    /// Takes in an alert. Returns what goes out right away (with a zero delay); the rest comes
+    /// back from [`Policy::due`].
     pub fn alert(&mut self, alert: &Alert, now: Instant, wall: u64) -> Vec<Push> {
         let (Some(key), kind) = (alert.key, alert.kind) else { return Vec::new() };
-        if !matches!(kind, AlertKind::Finished | AlertKind::NeedsInput) {
+        if !matches!(kind, AlertKind::Finished | AlertKind::NeedsInput) || self.paused_until.is_some_and(|t| t > wall) {
             return Vec::new();
         }
         let delays = self.delays;
         let Some(p) = self.panes.get_mut(&key) else { return Vec::new() };
-        let delay = match (p.notify, kind) {
-            (None, _) => return Vec::new(),
-            (Some(NotifyMode::Delay), AlertKind::NeedsInput) => delays.needs_input,
-            (Some(NotifyMode::Delay), _) => delays.finished,
-            (Some(NotifyMode::Any), _) => Duration::ZERO,
-            (Some(NotifyMode::Finished), AlertKind::Finished) => Duration::ZERO,
-            // Questions and permission prompts don't push in this mode.
-            (Some(NotifyMode::Finished), _) => return Vec::new(),
-        };
+        let pending = Pending { kind, at: now, alert_wall: wall, title: alert.title.clone(), body: alert.body.clone() };
+        let Some(due) = Self::due_at(delays, p.notify, &pending) else { return Vec::new() };
         // A newer alert replaces the pending one.
-        p.pending = Some(Pending { kind, due: now + delay, alert_wall: wall, title: alert.title.clone(), body: alert.body.clone() });
-        if delay.is_zero() { self.due(now) } else { Vec::new() }
+        p.pending = Some(pending);
+        if due <= now { self.due(now) } else { Vec::new() }
     }
 
     /// The phone showed you the pane: its pending push is dropped.
@@ -201,9 +239,17 @@ impl Policy {
     pub fn due(&mut self, now: Instant) -> Vec<Push> {
         let mut out = Vec::new();
         let self_name = self.given_name.clone().or_else(|| self.self_name.clone()).unwrap_or_else(|| "this machine".into());
+        let delays = self.delays;
         for (&key, p) in self.panes.iter_mut() {
-            if !p.pending.as_ref().is_some_and(|pending| pending.due <= now) {
-                continue;
+            let Some(pending) = &p.pending else { continue };
+            match Self::due_at(delays, p.notify, pending) {
+                // Its mode no longer pushes it.
+                None => {
+                    p.pending = None;
+                    continue;
+                }
+                Some(due) if due > now => continue,
+                Some(_) => {}
             }
             let Some(pending) = p.pending.take() else { continue };
             let waiting = matches!(self.activity.get(&key), Some(Activity::Idle | Activity::NeedsInput));
@@ -233,7 +279,7 @@ impl Policy {
 
     /// When the next pending push is due.
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.panes.values().filter_map(|p| p.pending.as_ref().map(|q| q.due)).min()
+        self.panes.values().filter_map(|p| p.pending.as_ref().and_then(|q| Self::due_at(self.delays, p.notify, q))).min()
     }
 
     /// Pushes still to come.
@@ -243,7 +289,8 @@ impl Policy {
             .iter()
             .filter_map(|(&key, p)| {
                 let q = p.pending.as_ref()?;
-                Some(PendingPush { key, kind: q.kind, due_in_ms: q.due.saturating_duration_since(now).as_millis().min(u32::MAX as u128) as u32 })
+                let due = Self::due_at(self.delays, p.notify, q)?;
+                Some(PendingPush { key, kind: q.kind, due_in_ms: due.saturating_duration_since(now).as_millis().min(u32::MAX as u128) as u32 })
             })
             .collect();
         out.sort_by_key(|p| p.key);
@@ -465,15 +512,62 @@ mod tests {
     }
 
     #[test]
-    fn immediate_modes() {
+    fn turn_end_modes_push_after_a_short_grace() {
         let t = Instant::now();
         let mut p = setup(Some(NotifyMode::Any));
-        assert_eq!(raise(&mut p, AlertKind::NeedsInput, t).len(), 1);
-        assert_eq!(raise(&mut p, AlertKind::Finished, t).len(), 1);
+        assert!(raise(&mut p, AlertKind::NeedsInput, t).is_empty());
+        assert_eq!(p.due(t + GRACE).len(), 1, "a question, after the grace");
+        assert!(raise(&mut p, AlertKind::Finished, t).is_empty());
+        assert_eq!(p.due(t + GRACE).len(), 1);
 
         let mut p = setup(Some(NotifyMode::Finished));
-        assert!(raise(&mut p, AlertKind::NeedsInput, t).is_empty(), "no questions in finished-only mode");
-        assert_eq!(raise(&mut p, AlertKind::Finished, t).len(), 1);
+        assert!(raise(&mut p, AlertKind::NeedsInput, t).is_empty());
+        assert!(p.due(t + GRACE).is_empty() && p.next_deadline().is_none(), "no questions in finished-only mode");
+        raise(&mut p, AlertKind::Finished, t);
+        assert_eq!(p.due(t + GRACE).len(), 1);
+    }
+
+    #[test]
+    fn a_desktop_showing_the_pane_cancels_a_turn_end_push() {
+        let t = Instant::now();
+        let mut p = setup(Some(NotifyMode::Any));
+        raise(&mut p, AlertKind::Finished, t);
+        // The desktop marks it seen just after the alert.
+        p.event(&panes("spark2", vec![pane(1, "spark2", Some(NotifyMode::Any), Some(T0 + 1))]));
+        assert!(p.due(t + GRACE).is_empty());
+    }
+
+    #[test]
+    fn settings_apply_to_pushes_already_waiting() {
+        let t = Instant::now();
+        let mut p = setup(Some(NotifyMode::Delay));
+        raise(&mut p, AlertKind::Finished, t);
+        assert!(p.due(t + Duration::from_secs(61)).is_empty(), "180 s at first");
+        p.set_prefs(&NotifyPrefs { finished_secs: 60, ..Default::default() }, T0);
+        assert_eq!(p.due(t + Duration::from_secs(61)).len(), 1, "60 s once changed");
+    }
+
+    #[test]
+    fn a_mode_switch_applies_to_a_waiting_push() {
+        let t = Instant::now();
+        let mut p = setup(Some(NotifyMode::Delay));
+        raise(&mut p, AlertKind::NeedsInput, t);
+        p.event(&panes("spark2", vec![pane(1, "spark2", Some(NotifyMode::Finished), None)]));
+        assert!(p.due(t + Duration::from_secs(61)).is_empty(), "finished-only: the question doesn't push");
+        assert!(p.pending(t).is_empty());
+    }
+
+    #[test]
+    fn a_pause_drops_and_refuses_pushes() {
+        let t = Instant::now();
+        let mut p = setup(Some(NotifyMode::Delay));
+        raise(&mut p, AlertKind::NeedsInput, t);
+        p.set_prefs(&NotifyPrefs { paused_until: Some(T0 + 3600), ..Default::default() }, T0);
+        assert!(p.pending(t).is_empty(), "what was waiting is dropped");
+        assert!(raise(&mut p, AlertKind::NeedsInput, t).is_empty() && p.pending(t).is_empty(), "nothing new while paused");
+        p.set_prefs(&NotifyPrefs::default(), T0);
+        raise(&mut p, AlertKind::NeedsInput, t);
+        assert_eq!(p.pending(t).len(), 1, "back on");
     }
 
     #[test]
@@ -510,14 +604,16 @@ mod tests {
         p.event(&panes(LOCAL_HOST, vec![pane(7, LOCAL_HOST, Some(NotifyMode::Any), None)]));
         p.event(&activity(7, Activity::Idle));
         // No Host event for @local: it's always reachable.
-        let out = p.alert(&alert(7, AlertKind::Finished, LOCAL_HOST), t, T0);
+        p.alert(&alert(7, AlertKind::Finished, LOCAL_HOST), t, T0);
+        let out = p.due(t + GRACE);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].host, "spark-d683");
         assert_eq!(out[0].tag, "pane:spark-d683/%7");
         assert!(out[0].body.ends_with("Claude Code on spark-d683"), "{}", out[0].body);
 
         p.name_this_machine("the big one".into());
-        let out = p.alert(&alert(7, AlertKind::Finished, LOCAL_HOST), t, T0 + 60);
+        p.alert(&alert(7, AlertKind::Finished, LOCAL_HOST), t, T0 + 60);
+        let out = p.due(t + GRACE);
         assert_eq!(out[0].host, "the big one", "a given name wins over the tailnet's");
     }
 }

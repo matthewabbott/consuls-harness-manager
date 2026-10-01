@@ -72,7 +72,6 @@ enabling notifications again on every phone.
 |---|---|
 | `vapid` | `privateKey` (P-256, base64url) and `subject` (default: the web app's address). |
 | `selfName` | This machine's name in pushes; default its tailnet name. |
-| `delays` | `needsInputSecs` (60), `finishedSecs` (180). |
 | `web` | `ownerLogins` (default the machine's owner), `publicOrigin`, `allowOrigins`, `tailscaleServe` (true), `httpsPort` (443), `listen` (a TCP address for development; default the unix socket). |
 | `leaseDays` | Days unused before it stops by itself (7). |
 | `hosts`, `subscriptions` | Seeds, imported once when the core's config or `subscriptions.json` is missing. |
@@ -84,6 +83,21 @@ enabling notifications again on every phone.
 3. Open Consuls from the Home Screen. In Settings → Notifications, tap **Enable notifications**,
    then **Send test**.
 4. Flip Notify on the agents you want to hear from.
+
+**When it pushes:**
+- **Per agent** (the agent's ⋯ menu on the phone, or the tile menu on the desktop):
+  - After a delay: the default, if it's still waiting for you then;
+  - Any turn end;
+  - Finished turns only (not questions);
+  - Off.
+
+  "Right away" waits 10 s, so a desktop showing the agent can cancel it.
+- **For everything**, in Settings → Notifications:
+  - pause (for an hour, until 8:00, or until you resume);
+  - under Advanced, the delays: 60 s after a finished turn and 60 s for a question by default.
+
+  These are kept in the server's `core/config.json` (`notify`) and apply at once, to pushes
+  already waiting too.
 
 - This needs iOS 16.4 or later. Pushes only work from the Home Screen app, not a Safari tab.
 - **One device at a time:** opening the app elsewhere takes over, and the first device offers

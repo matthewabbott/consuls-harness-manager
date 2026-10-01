@@ -6,6 +6,7 @@ import { backend } from "../ipc/backend";
 import type { PaneAttention } from "../ipc/bindings/PaneAttention";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { HARNESS_DOT, HARNESS_NAME, phaseText, status, trackable } from "../lib/agents";
+import { pausedText } from "../lib/notifyModes";
 import { displayTitle, paneWhere } from "../lib/panes";
 import { useApp } from "../store/app";
 
@@ -55,6 +56,7 @@ export default function MachinesScreen({ onSettings, onAdd, onNew }: { onSetting
   const selfName = useApp((s) => s.tailnet?.selfNode?.id ?? "this machine");
   // Shells too by default: on the phone they're as much a reason to open the app as agents.
   const [shells, setShells] = useState(true);
+  const paused = useApp((s) => pausedText(s.config.notify.pausedUntil));
   const [showHidden, setShowHidden] = useState(false);
   const hiddenCount = useMemo(() => Object.values(panes).flat().filter((p) => p.hidden).length, [panes]);
 
@@ -80,6 +82,11 @@ export default function MachinesScreen({ onSettings, onAdd, onNew }: { onSetting
       </header>
 
       <main className="safe-bottom min-h-0 flex-1 overflow-y-auto px-4">
+        {paused && (
+          <button onClick={onSettings} className="mt-1 w-full rounded-xl bg-ember-400/10 px-3.5 py-2.5 text-left text-[13.5px] text-ember-300 ring-1 ring-ember-400/30">
+            {paused} · Settings
+          </button>
+        )}
         {machines.length === 0 && (
           <section className="mt-6 rounded-2xl bg-ink-800 px-4 py-5 ring-1 ring-ink-700">
             <h2 className="text-[17px] font-semibold text-mist-100">Add your first machine</h2>

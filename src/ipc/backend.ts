@@ -19,6 +19,7 @@ import type { FileStamp } from "./bindings/FileStamp";
 import type { HeadVersion } from "./bindings/HeadVersion";
 import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { NotifyMode } from "./bindings/NotifyMode";
+import type { NotifyPrefs } from "./bindings/NotifyPrefs";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
@@ -87,6 +88,8 @@ export interface Backend {
   setPaneBell(key: number, bell: boolean | null): Promise<void>;
   /** Push to the phone for this pane (`null`: don't track it). */
   setPaneNotify(key: number, mode: NotifyMode | null): Promise<void>;
+  /** The server's push settings: delays and a pause (the web app only). */
+  setNotifyPrefs(prefs: NotifyPrefs): Promise<void>;
   resizePane(key: number, cols: number, rows: number): Promise<ResizeOutcome>;
   releasePaneSize(key: number): Promise<void>;
   terminatePane(key: number, force: boolean): Promise<TerminateOutcome>;
@@ -175,6 +178,7 @@ export function commands(call: Call) {
     tmuxOp: (key: number, op: TmuxOp) => call<number | null>("tmux_op", { key, op }),
     setPaneBell: (key: number, bell: boolean | null) => call<void>("set_pane_bell", { key, bell }),
     setPaneNotify: (key: number, mode: NotifyMode | null) => call<void>("set_pane_notify", { key, mode }),
+    setNotifyPrefs: (prefs: NotifyPrefs) => call<void>("set_notify_prefs", { prefs }),
     resizePane: (key: number, cols: number, rows: number) => call<ResizeOutcome>("resize_pane", { key, cols, rows }),
     releasePaneSize: (key: number) => call<void>("release_pane_size", { key }),
     terminatePane: (key: number, force: boolean) => call<TerminateOutcome>("terminate_pane", { key, force }),

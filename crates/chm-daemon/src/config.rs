@@ -25,9 +25,8 @@ pub struct ServerConfig {
     /// This machine's name in pushes; default its tailnet name.
     #[serde(default)]
     pub self_name: Option<String>,
-    #[serde(default)]
-    pub delays: DelayConfig,
-    /// Serve the phone's web app and API.
+    /// Serve the phone's web app and API. (The push delays and a pause are set from the app:
+    /// `notify` in the core's own config.)
     #[serde(default)]
     pub web: Option<WebConfig>,
     /// Days without a check-in (using the web app, or `ctl renew`) before it stops by itself (its
@@ -56,23 +55,6 @@ pub struct VapidConfig {
     pub subject: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[serde(rename_all = "camelCase", default)]
-#[ts(export)]
-pub struct DelayConfig {
-    /// How long a tracked agent may wait for input before its push.
-    #[ts(type = "number")]
-    pub needs_input_secs: u64,
-    /// How long after finishing its turn.
-    #[ts(type = "number")]
-    pub finished_secs: u64,
-}
-
-impl Default for DelayConfig {
-    fn default() -> Self {
-        Self { needs_input_secs: 60, finished_secs: 180 }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -111,10 +93,6 @@ fn default_https_port() -> u16 {
 }
 
 impl ServerConfig {
-    pub fn delays(&self) -> chm_core::notify::Delays {
-        chm_core::notify::Delays { needs_input: Duration::from_secs(self.delays.needs_input_secs), finished: Duration::from_secs(self.delays.finished_secs) }
-    }
-
     pub fn lease(&self) -> Duration {
         self.lease_secs.map(Duration::from_secs).unwrap_or(Duration::from_secs(self.lease_days.max(1) * 86_400))
     }
@@ -158,7 +136,9 @@ mod tests {
     #[test]
     fn defaults() {
         let c: ServerConfig = serde_json::from_str(r#"{"vapid":{"privateKey":"x"}}"#).unwrap();
-        assert_eq!((c.lease_days, c.delays.needs_input_secs, c.delays.finished_secs), (7, 60, 180));
+        assert_eq!(c.lease_days, 7);
+        let old: ServerConfig = serde_json::from_str(r#"{"vapid":{"privateKey":"x"},"delays":{"needsInputSecs":60,"finishedSecs":180}}"#).unwrap();
+        assert_eq!(old.lease_days, 7, "an older config with delays still loads (they're set from the app now)");
         assert!(c.web.is_none() && c.hosts.is_empty() && c.subscriptions.is_empty());
         assert_eq!(c.lease(), Duration::from_secs(7 * 86_400));
         let w: WebConfig = serde_json::from_str("{}").unwrap();

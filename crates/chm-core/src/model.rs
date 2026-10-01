@@ -172,6 +172,46 @@ pub struct AppConfig {
     /// Label definitions; panes reference them by `id` (stored in tmux as `@chm_labels`).
     pub labels: Vec<LabelDef>,
     pub ui: UiPrefs,
+    /// Phone pushes (used by the Consuls server's core, which sends them).
+    pub notify: NotifyPrefs,
+}
+
+/// When the Consuls server pushes to the phone (the per-agent mode is `@chm_notify` on the pane).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+#[ts(export)]
+pub struct NotifyPrefs {
+    /// No pushes until then (unix seconds; the year 9999: until turned back on).
+    #[ts(type = "number | null")]
+    pub paused_until: Option<u64>,
+    /// How long an agent waiting for input waits before its push ("after a delay" mode).
+    #[ts(type = "number")]
+    pub needs_input_secs: u64,
+    /// How long after an agent finishes its turn.
+    #[ts(type = "number")]
+    pub finished_secs: u64,
+}
+
+impl Default for NotifyPrefs {
+    fn default() -> Self {
+        Self { paused_until: None, needs_input_secs: 60, finished_secs: 60 }
+    }
+}
+
+impl NotifyPrefs {
+    /// The longest delay the settings allow (15 minutes).
+    pub const MAX_DELAY_SECS: u64 = 900;
+
+    pub fn paused_at(&self, now_unix: u64) -> bool {
+        self.paused_until.is_some_and(|t| t > now_unix)
+    }
+
+    /// Within bounds: delays of at most 15 minutes.
+    pub fn clamped(mut self) -> Self {
+        self.needs_input_secs = self.needs_input_secs.min(Self::MAX_DELAY_SECS);
+        self.finished_secs = self.finished_secs.min(Self::MAX_DELAY_SECS);
+        self
+    }
 }
 
 /// UI preferences that must survive anything (a quit, a crash, a wiped WebView profile), so
@@ -266,6 +306,17 @@ mod config_tests {
         assert_eq!(cfg.hosts[1].user, "matthewabbott");
         assert_eq!(cfg.sound, SoundPrefs::default());
         assert_eq!(cfg.ui, UiPrefs::default());
+        assert_eq!(cfg.notify, NotifyPrefs::default());
+        let partial: AppConfig = serde_json::from_str(r#"{ "notify": { "finishedSecs": 120 } }"#).unwrap();
+        assert_eq!((partial.notify.needs_input_secs, partial.notify.finished_secs, partial.notify.paused_until), (60, 120, None));
+    }
+
+    #[test]
+    fn notify_prefs() {
+        let p = NotifyPrefs { paused_until: Some(100), ..Default::default() };
+        assert!(p.paused_at(99) && !p.paused_at(100));
+        assert!(!NotifyPrefs::default().paused_at(0));
+        assert_eq!(NotifyPrefs { finished_secs: 10_000, ..Default::default() }.clamped().finished_secs, 900);
     }
 
     #[test]

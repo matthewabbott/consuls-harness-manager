@@ -154,7 +154,13 @@ impl Sink for DaemonSink {
         self.clients.event(&event);
         if matches!(
             event,
-            CoreEvent::Panes { .. } | CoreEvent::Attention { .. } | CoreEvent::Host { .. } | CoreEvent::HostRemoved { .. } | CoreEvent::Tailnet { .. }
+            CoreEvent::Panes { .. }
+                | CoreEvent::Attention { .. }
+                | CoreEvent::Host { .. }
+                | CoreEvent::HostRemoved { .. }
+                | CoreEvent::Tailnet { .. }
+                // The push settings (delays, pause), changed from the app.
+                | CoreEvent::Config { .. }
         ) {
             let _ = self.policy.send(Input::Event(Box::new(event)));
         }
@@ -337,7 +343,10 @@ pub async fn start(config: ServerConfig, home: &Home, lease: Arc<Lease>) -> anyh
     core.start();
     // Tiles are only drawn for a desktop's grid.
     core.set_visible_panes(Some(Vec::new()));
-    let mut policy = Policy::new(config.delays());
+    // The push settings are the core's (set from the app), and follow its Config events.
+    let prefs = core.snapshot().config.notify;
+    let mut policy = Policy::new((&prefs).into());
+    policy.set_prefs(&prefs, push::now());
     if let Some(name) = config.self_name.clone().filter(|s| !s.is_empty()) {
         policy.name_this_machine(name);
     }

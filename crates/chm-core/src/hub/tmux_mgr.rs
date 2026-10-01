@@ -715,7 +715,7 @@ impl TmuxManager {
         // Shells title themselves with the hostname or user@host:path, and a program that sets
         // no title leaves tmux's default, the hostname (`<name>.local` on macOS): not useful labels.
         let hostname = cleaned.eq_ignore_ascii_case(&self.host)
-            || cleaned.to_ascii_lowercase().ends_with(".local")
+            || looks_like_hostname(cleaned)
             || (self.host == crate::local::LOCAL_HOST && cleaned.eq_ignore_ascii_case(&crate::local::machine_name()));
         let title = if let Some(name) = &r.name {
             name.clone()
@@ -1326,8 +1326,29 @@ pub(crate) async fn paste(client: &ControlClient, pane: PaneId, text: &str) -> R
         .map(|_| ())
 }
 
+/// A bare hostname (tmux's default pane title): `host.domain.tld` without spaces, or a name on a
+/// home network (`MBAs-MacBook-Pro.local`, `box.lan`). One dot alone (`notes.md`) doesn't count.
+fn looks_like_hostname(t: &str) -> bool {
+    let labels: Vec<&str> = t.split('.').collect();
+    if labels.len() < 2 || labels.iter().any(|l| l.is_empty() || !l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
+        return false;
+    }
+    let last = labels[labels.len() - 1].to_ascii_lowercase();
+    labels.len() >= 3 || matches!(last.as_str(), "local" | "lan" | "home" | "internal" | "localdomain")
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hostname_titles() {
+        for t in ["MBAs-MacBook-Pro.local", "MBAs-MBP.router93a4f2.com", "box.lan", "spark-d683.tail35393d.ts.net"] {
+            assert!(super::looks_like_hostname(t), "{t}");
+        }
+        for t in ["notes.md", "Refactor supervisor", "v1.2", "", "a..b"] {
+            assert!(!super::looks_like_hostname(t), "{t}");
+        }
+    }
     use super::{chunk_str, sanitize_name};
 
     #[test]

@@ -7,7 +7,8 @@ import { isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
 import { LabelEditor } from "./LabelsPanel";
-import { canTrack, notifyTitle, toggleNotify } from "./NotifyToggle";
+import { NOTIFY_MODES, setNotifyMode } from "../lib/notifyModes";
+import { canTrack } from "./NotifyToggle";
 import PaneNameField, { renameHint } from "./PaneNameField";
 
 export interface TileMenuState {
@@ -96,12 +97,20 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
         )}
         <div className="my-1 h-px bg-ink-700" />
         {canTrack(pane) && (
-          <MenuItem icon={<Smartphone className="h-3.5 w-3.5" />} onClick={() => toggleNotify(pane)}>
-            <span className="flex-1" title={notifyTitle(pane)}>
-              Push to phone when waiting
-            </span>
-            {pane.notify && <Check className="h-3.5 w-3.5 text-jade-400" />}
-          </MenuItem>
+          <>
+            <div className="flex items-center gap-2 px-2.5 pt-1 pb-0.5 text-[11px] font-medium tracking-wide text-mist-500 uppercase">
+              <Smartphone className="h-3 w-3" /> Push to phone
+            </div>
+            {NOTIFY_MODES.map((m) => (
+              <MenuItem key={m.label} icon={<span className="block w-3.5" />} onClick={() => setNotifyMode(pane.key, m.mode)}>
+                <span className="flex-1" title={m.hint}>
+                  {m.label}
+                </span>
+                {pane.notify === m.mode && <Check className="h-3.5 w-3.5 text-jade-400" />}
+              </MenuItem>
+            ))}
+            <div className="my-1 h-px bg-ink-700" />
+          </>
         )}
         <MenuItem icon={<BellRing className="h-3.5 w-3.5" />} onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}>
           <span className="flex-1">Ping on terminal bell</span>

@@ -9,6 +9,7 @@ import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { UiPrefs } from "./bindings/UiPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
+import type { NotifyPrefs } from "./bindings/NotifyPrefs";
 import type { LabelDef } from "./bindings/LabelDef";
 import { MOCK_DRIVES, mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
@@ -232,7 +233,8 @@ export function mockBackend(): Backend {
     if (frameCb) frameCb(encodeFrame(FRAME_TILE, p.info.key, encodeTile(screen(p.info.width, p.info.height, p.lines, p.cursor))));
   }, 1000);
 
-  const fullConfig = () => ({ hosts: [...config.hosts], labels: [...config.labels], sound: mockSound, ui: mockUi });
+  let mockNotify: NotifyPrefs = { pausedUntil: null, needsInputSecs: 60, finishedSecs: 60 };
+  const fullConfig = () => ({ hosts: [...config.hosts], labels: [...config.labels], sound: mockSound, ui: mockUi, notify: mockNotify });
   const snapshot = (): CoreSnapshot => ({
     tailnet: { backendState: "Running", authUrl: null, selfNode: null, peers, tailnetName: "consulear@example.com", health: [], error: null, via: null },
     config: fullConfig(),
@@ -464,6 +466,10 @@ export function mockBackend(): Backend {
       if (!p) return;
       p.info = { ...p.info, bell, bellPings: bell ?? p.info.currentCommand === "irssi" };
       emitPanes(p.info.host);
+    },
+    setNotifyPrefs: async (prefs) => {
+      mockNotify = prefs;
+      emitConfig();
     },
     setPaneNotify: async (key, mode) => {
       const p = panes.find((p) => p.info.key === key);

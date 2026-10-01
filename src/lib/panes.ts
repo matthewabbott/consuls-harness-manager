@@ -35,6 +35,14 @@ export function cleanTitle(title: string): string {
   return title.replace(/^[✳✻✶✢·◐◑◒◓⠀-⣿*•]+\s*/u, "").trim();
 }
 
+/**
+ * A bare hostname (tmux's default pane title): `host.domain.tld` with no spaces, or a name on a
+ * home network (`MBAs-MacBook-Pro.local`, `box.lan`). One dot alone (`notes.md`) doesn't count.
+ */
+export function looksLikeHostname(t: string): boolean {
+  return /^[\w-]+(\.[\w-]+){2,}$/.test(t) || /^[\w-]+\.(local|lan|home|internal|localdomain)$/i.test(t);
+}
+
 /** What to call a pane: its name, else a useful title, else its folder or window. */
 export function displayTitle(p: PaneInfo): string {
   if (p.name) return p.name;
@@ -42,7 +50,7 @@ export function displayTitle(p: PaneInfo): string {
   // Shells title themselves with the host, user@host:path, or (Windows) their exe path /
   // `MINGW64:/…`; a program that sets no title leaves tmux's default, the hostname
   // (`MBAs-MacBook-Pro.local` on macOS). None of those beat the folder.
-  const noise = /^[\w.-]+@[\w.-]+:/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^MINGW(32|64):/.test(t) || /^[\w-]+\.local$/i.test(t);
+  const noise = /^[\w.-]+@[\w.-]+:/.test(t) || /^[A-Za-z]:[\\/]/.test(t) || /^MINGW(32|64):/.test(t) || looksLikeHostname(t);
   if (t && t !== p.host && !t.startsWith(p.host + ":") && !noise) return t;
   if (p.harness === "shell" || p.harness === null) return shortPath(p.currentPath);
   return paneName(p);

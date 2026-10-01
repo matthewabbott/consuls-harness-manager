@@ -183,8 +183,14 @@ shell built as an iPhone app. See README.md.
   socket paths max ~104 chars) and `web.listen`, then `npm run dev:web` (proxy with a dev login
   header). `CONSULS_SERVER_TMUX` renames its tmux server (tests).
 - `@local` is the server's own machine (named by `tailnet.selfNode` in the UI).
-- Tracking is per pane in tmux: `@chm_notify` (`delay` default; `any`/`finished` reserved, an
-  unknown value reads as `delay`), toggled by `NotifyToggle` on tiles and the phone's switches.
+- Tracking is per pane in tmux: `@chm_notify` (`delay`, `any`, `finished`; an unknown value reads
+  as `delay`). Toggles (`NotifyToggle`, the phone's switch and bell) set `delay`; the modes are
+  picked from the tile menu and the phone's pane menu (`lib/notifyModes.ts`).
+- The server's push settings are `AppConfig.notify` (`NotifyPrefs`: `paused_until`, delays; 60 s
+  / 60 s), set from the phone (`set_notify_prefs`) and applied by the policy from Config events
+  (`DaemonSink` forwards them). Pending pushes keep their alert time, so changed delays and
+  modes apply to them; a pause drops them. `any`/`finished` wait a 10 s grace (`GRACE`) so a
+  desktop's seen mark can cancel them.
   `@chm_seen` (unix seconds) is written by a desktop app on *presence* only (`ack_pane`, or
   `set_focus` with the pane expanded in a focused window, or an alert arriving while looking),
   only for tracked, waiting panes, at most every 5 s (`TmuxManager::write_seen`).

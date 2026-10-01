@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use chm_core::local::LOCAL_HOST;
-use chm_core::model::{FocusState, HostConfig, LabelDef, NewPaneSpec, SoundPrefs, TmuxOp, UiPrefs};
+use chm_core::model::{FocusState, HostConfig, LabelDef, NewPaneSpec, NotifyPrefs, SoundPrefs, TmuxOp, UiPrefs};
 
 use crate::Daemon;
 
@@ -156,6 +156,10 @@ pub async fn call(d: &Daemon, method: &str, p: Value) -> Result<Value, Value> {
         "integration_status" => ok(core.integration_status(&host()?).await.map_err(err)?),
         "install_integration" => ok(core.install_integration(&host()?).await.map_err(err)?),
         "uninstall_integration" => ok(core.uninstall_integration(&host()?).await.map_err(err)?),
+        "set_notify_prefs" => {
+            core.set_notify_prefs(arg::<NotifyPrefs>(&p, "prefs")?);
+            DONE
+        }
         "set_sound_prefs" => {
             core.set_sound_prefs(arg::<SoundPrefs>(&p, "prefs")?);
             DONE

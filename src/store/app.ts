@@ -94,6 +94,7 @@ export const useApp = create<AppStore>((set) => ({
     labels: [],
     sound: { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true },
     ui: { defaultFolders: {}, recording: false, hideMachineNames: false },
+    notify: { pausedUntil: null, needsInputSecs: 60, finishedSecs: 60 },
   },
   hosts: {},
   panes: {},
