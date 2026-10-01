@@ -234,7 +234,7 @@ export function mockBackend(): Backend {
 
   const fullConfig = () => ({ hosts: [...config.hosts], labels: [...config.labels], sound: mockSound, ui: mockUi });
   const snapshot = (): CoreSnapshot => ({
-    tailnet: { backendState: "Running", authUrl: null, selfNode: null, peers, tailnetName: "consulear@example.com", health: [], error: null },
+    tailnet: { backendState: "Running", authUrl: null, selfNode: null, peers, tailnetName: "consulear@example.com", health: [], error: null, via: null },
     config: fullConfig(),
     hosts: [...hosts],
     panes: panes.filter((p) => hosts.find((h) => h.id === p.info.host)?.phase.phase === "connected").map((p) => p.info),

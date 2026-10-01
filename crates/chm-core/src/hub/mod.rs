@@ -51,8 +51,31 @@ use crate::ssh::hostkeys::KnownHosts;
 type GitResult = Result<Option<crate::fs::git::GitStatus>, String>;
 type GitFuture = futures::future::Shared<futures::future::BoxFuture<'static, GitResult>>;
 
+/// What a [`Core`] runs on.
+#[derive(Debug, Clone)]
+pub struct CoreOptions {
+    /// This device is a machine too (`@local`: its shells, its tmux, its hooks' events file),
+    /// and has the Tailscale CLI. Without it (the iPhone), only remote machines are watched and
+    /// the tailnet is learned from one of them.
+    pub local: bool,
+}
+
+impl Default for CoreOptions {
+    fn default() -> Self {
+        Self { local: true }
+    }
+}
+
+impl CoreOptions {
+    /// For a device that can't run programs (the iPhone app).
+    pub fn remote_only() -> Self {
+        Self { local: false }
+    }
+}
+
 pub struct Core {
     ctx: Arc<Ctx>,
+    opts: CoreOptions,
     /// In-flight `git status` per (host, dir): concurrent callers share one run.
     git_inflight: Mutex<HashMap<(HostId, String), GitFuture>>,
     data_dir: PathBuf,
@@ -84,6 +107,10 @@ const UI_STATE_FILE: &str = if cfg!(debug_assertions) { "ui-state-dev.json" } el
 impl Core {
     /// Loads config from `data_dir`. Call [`Core::start`] from within a tokio runtime.
     pub fn new(data_dir: PathBuf, sink: Arc<dyn Sink>) -> Arc<Self> {
+        Self::with_options(data_dir, sink, CoreOptions::default())
+    }
+
+    pub fn with_options(data_dir: PathBuf, sink: Arc<dyn Sink>, opts: CoreOptions) -> Arc<Self> {
         let _ = std::fs::create_dir_all(&data_dir);
         let known_hosts = Arc::new(KnownHosts::load(data_dir.join("known_hosts.json")));
         let config = load_config(&data_dir.join("config.json"));
@@ -93,6 +120,7 @@ impl Core {
             .unwrap_or_default();
         Arc::new(Self {
             ctx: Arc::new(Ctx::new(sink, known_hosts)),
+            opts,
             git_inflight: Mutex::new(HashMap::new()),
             data_dir,
             config: Mutex::new(config),
@@ -115,11 +143,59 @@ impl Core {
     /// method is safe to call from any thread.
     pub fn start(self: &Arc<Self>) {
         let rt = self.rt.get_or_init(tokio::runtime::Handle::current).clone();
+        if self.opts.local {
+            self.start_local(&rt);
+        }
+
+        // Tailnet first, so host actors can resolve addresses and pinned keys. Learned from a
+        // machine instead, it's there once one connects: asked every 5 s until then.
+        let core = self.clone();
+        rt.spawn(async move {
+            core.refresh_tailnet().await;
+            let hosts = core.config.lock().unwrap().hosts.clone();
+            for cfg in hosts {
+                core.spawn_host(cfg);
+            }
+            loop {
+                let known = core.ctx.tailnet.read().unwrap().error.is_none();
+                let every = match (core.opts.local, known) {
+                    (true, _) => 15,
+                    (false, false) => 5,
+                    (false, true) => 60,
+                };
+                tokio::time::sleep(Duration::from_secs(every)).await;
+                core.refresh_tailnet().await;
+            }
+        });
+
+        // Resume-from-sleep detection: a 5 s timer that observes a large wall-clock jump.
+        let core = self.clone();
+        rt.spawn(async move {
+            let mut last_wall = SystemTime::now();
+            let mut last_mono = Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                let wall = SystemTime::now();
+                let mono = Instant::now();
+                let wall_delta = wall.duration_since(last_wall).unwrap_or_default();
+                let mono_delta = mono.duration_since(last_mono);
+                if wall_delta > mono_delta + Duration::from_secs(20) || wall_delta > Duration::from_secs(60) {
+                    info!("wall clock jumped {:?} (sleep/resume?)", wall_delta);
+                    core.notify_resumed();
+                }
+                last_wall = wall;
+                last_mono = mono;
+            }
+        });
+    }
+
+    /// This device as a machine: its tmux, and its hooks' events file.
+    fn start_local(self: &Arc<Self>, rt: &tokio::runtime::Handle) {
         // This PC: always there, always connected. Hooks of agents in local shells report
         // through the local events file.
         self.ctx.set_phase(LOCAL_HOST, HostPhase::Connected);
         if let Some(cygwin) = local_tmux::find_cygwin() {
-            let _ = self.local_tmux.set(local_tmux::spawn(self.ctx.clone(), &rt, local_tmux::Flavor::Cygwin(cygwin)));
+            let _ = self.local_tmux.set(local_tmux::spawn(self.ctx.clone(), rt, local_tmux::Flavor::Cygwin(cygwin)));
         }
         let (core, ctx, handle) = (self.clone(), self.ctx.clone(), rt.clone());
         rt.spawn(async move {
@@ -145,42 +221,6 @@ impl Core {
                 tmux.send(LocalTmuxCmd::Hook(event));
             }
         })));
-
-        // Tailnet first, so host actors can resolve addresses and pinned keys.
-        let core = self.clone();
-        rt.spawn(async move {
-            core.refresh_tailnet().await;
-            let hosts = core.config.lock().unwrap().hosts.clone();
-            for cfg in hosts {
-                core.spawn_host(cfg);
-            }
-            let mut interval = tokio::time::interval(Duration::from_secs(15));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                core.refresh_tailnet().await;
-            }
-        });
-
-        // Resume-from-sleep detection: a 5 s timer that observes a large wall-clock jump.
-        let core = self.clone();
-        rt.spawn(async move {
-            let mut last_wall = SystemTime::now();
-            let mut last_mono = Instant::now();
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                let wall = SystemTime::now();
-                let mono = Instant::now();
-                let wall_delta = wall.duration_since(last_wall).unwrap_or_default();
-                let mono_delta = mono.duration_since(last_mono);
-                if wall_delta > mono_delta + Duration::from_secs(20) || wall_delta > Duration::from_secs(60) {
-                    info!("wall clock jumped {:?} (sleep/resume?)", wall_delta);
-                    core.notify_resumed();
-                }
-                last_wall = wall;
-                last_mono = mono;
-            }
-        });
     }
 
     fn spawn_host(&self, cfg: HostConfig) {
@@ -271,7 +311,7 @@ impl Core {
     }
 
     pub async fn refresh_tailnet(&self) -> TailnetStatus {
-        let status = crate::tailscale::fetch_status().await;
+        let status = if self.opts.local { crate::tailscale::fetch_status().await } else { self.tailnet_via_host().await };
         let changed = {
             let mut current = self.ctx.tailnet.write().unwrap();
             let changed = *current != status;
@@ -282,6 +322,38 @@ impl Core {
             self.ctx.emit(CoreEvent::Tailnet { status: status.clone() });
         }
         status
+    }
+
+    /// The tailnet as a connected machine sees it (this device has no Tailscale CLI), asking
+    /// the one that answered last time first. With none connected, what was known stays.
+    async fn tailnet_via_host(&self) -> TailnetStatus {
+        let previous = self.ctx.tailnet.read().unwrap().clone();
+        let mut connected: Vec<HostId> =
+            self.ctx.host_states.lock().unwrap().values().filter(|h| matches!(h.phase, HostPhase::Connected)).map(|h| h.id.clone()).collect();
+        connected.sort_by_key(|id| Some(id) != previous.via.as_ref());
+        if connected.is_empty() {
+            return if previous.via.is_some() {
+                previous
+            } else {
+                TailnetStatus { error: Some("Connect to a machine to see the rest of your tailnet.".into()), ..Default::default() }
+            };
+        }
+        let mut why = String::new();
+        for id in connected {
+            match self.exec(&id, crate::tailscale::STATUS_SCRIPT).await {
+                Ok(out) => match crate::tailscale::parse_remote(&out.stdout, &id) {
+                    Ok(status) => return status,
+                    Err(e) => why = format!("{e} {}", out.stderr_str().trim()),
+                },
+                Err(e) => why = format!("{id}: {e}"),
+            }
+        }
+        TailnetStatus { error: Some(why.trim().to_string()), ..previous }
+    }
+
+    /// Refuses what needs this device to be a machine, when it isn't one (the iPhone).
+    fn local_only(&self) -> Result<(), String> {
+        if self.opts.local { Ok(()) } else { Err("this device can't run programs itself".into()) }
     }
 
     /// Adds or updates a host. New hosts with `auto_connect` start connecting immediately.
@@ -555,12 +627,12 @@ impl Core {
 
     /// Shells that can be started on this machine.
     pub fn local_shells(&self) -> Vec<LocalShell> {
-        local::shells()
+        if self.opts.local { local::shells() } else { Vec::new() }
     }
 
     /// Drives on this machine (Windows; empty elsewhere).
     pub fn local_drives(&self) -> Vec<local::DriveInfo> {
-        local::drives()
+        if self.opts.local { local::drives() } else { Vec::new() }
     }
 
     /// Local shells still running (quitting the app ends them).
@@ -616,6 +688,7 @@ impl Core {
     /// Creates a pane running `spec.harness` and returns its key.
     pub async fn create_pane(&self, spec: NewPaneSpec) -> Result<u32, String> {
         if spec.host == LOCAL_HOST {
+            self.local_only()?;
             return match self.local_tmux.get() {
                 // A tmux pane, when tmux is there and a plain shell wasn't asked for.
                 Some(tmux) if spec.direct != Some(true) => {
@@ -674,6 +747,7 @@ impl Core {
 
     async fn integration(&self, host: &str, action: IntegrationAction) -> Result<crate::integration::install::IntegrationStatus, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             use crate::integration::install;
             let home = local::home();
             return match action {
@@ -702,6 +776,7 @@ impl Core {
 
     pub async fn list_dir(&self, host: &str, path: &str) -> Result<DirListing, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || local::list_dir(&path)).await.map_err(|e| e.to_string())?;
         }
@@ -713,6 +788,7 @@ impl Core {
     /// Creates, renames or deletes files (explorer actions).
     pub async fn fs_op(&self, host: &str, op: crate::fs::FsOp) -> Result<(), String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             return tokio::task::spawn_blocking(move || crate::fs::local::op(op)).await.map_err(|e| e.to_string())?;
         }
         let (tx, rx) = oneshot::channel();
@@ -723,6 +799,7 @@ impl Core {
     /// How many items a delete of `path` would remove (capped; for the confirmation).
     pub async fn fs_count(&self, host: &str, path: &str) -> Result<u64, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || crate::fs::local::count(&path)).await.map_err(|e| e.to_string())?;
         }
@@ -734,6 +811,7 @@ impl Core {
     /// Reads a file for the editor (text, or why it can't be edited).
     pub async fn read_file(&self, host: &str, path: &str) -> Result<crate::fs::FileContent, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || crate::fs::local::read(&path)).await.map_err(|e| e.to_string())?;
         }
@@ -745,6 +823,7 @@ impl Core {
     /// A file's committed version (HEAD), for the editor's change gutter.
     pub async fn git_head(&self, host: &str, path: &str) -> Result<crate::fs::git::HeadVersion, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || crate::fs::local::git_head(&path)).await.map_err(|e| e.to_string())?;
         }
@@ -756,6 +835,7 @@ impl Core {
     /// A file's raw bytes (image preview; capped at 20 MB).
     pub async fn read_bytes(&self, host: &str, path: &str) -> Result<Vec<u8>, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || crate::fs::local::read_bytes(&path)).await.map_err(|e| e.to_string())?;
         }
@@ -772,6 +852,7 @@ impl Core {
             return Err("that image is over 20 MB".into());
         }
         if host == LOCAL_HOST {
+            self.local_only()?;
             return tokio::task::spawn_blocking(move || crate::fs::local::save_paste(&name, &bytes)).await.map_err(|e| e.to_string())?;
         }
         let (tx, rx) = oneshot::channel();
@@ -782,6 +863,7 @@ impl Core {
     /// Size and mtime of a file (None if it doesn't exist), to notice outside changes.
     pub async fn stat_file(&self, host: &str, path: &str) -> Result<Option<crate::fs::FileStamp>, String> {
         if host == LOCAL_HOST {
+            self.local_only()?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || crate::fs::local::stat(&path)).await.map_err(|e| e.to_string())?;
         }
@@ -800,6 +882,7 @@ impl Core {
         expect: Option<crate::fs::FileStamp>,
     ) -> Result<crate::fs::FileStamp, crate::fs::SaveError> {
         if host == LOCAL_HOST {
+            self.local_only().map_err(|message| crate::fs::SaveError::Failed { message })?;
             let path = path.to_string();
             return tokio::task::spawn_blocking(move || crate::fs::local::write(&path, &text, bom, expect))
                 .await
@@ -821,6 +904,7 @@ impl Core {
                 f.clone()
             } else {
                 let fut: futures::future::BoxFuture<'static, GitResult> = if host == LOCAL_HOST {
+                    self.local_only()?;
                     let dir = dir.to_string();
                     async move { tokio::task::spawn_blocking(move || crate::fs::local::git_status(&dir)).await.map_err(|e| e.to_string())? }.boxed()
                 } else {
@@ -882,6 +966,36 @@ mod tests {
         assert!(!path.exists(), "bad file moved aside");
         let kept = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().contains("unreadable"));
         assert!(kept, "backup kept");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The iPhone app's core: no `@local`, nothing run on the device, and the tailnet waits for
+    /// a machine to ask.
+    #[test]
+    fn without_a_local_machine() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("chm-remote-only-test-{}", std::process::id()));
+        let sink = Arc::new(Collect(Mutex::new(Vec::new())));
+        let core = Core::with_options(dir.clone(), sink.clone(), CoreOptions::remote_only());
+        rt.block_on(async { core.start() });
+        std::thread::sleep(Duration::from_millis(300));
+        let snap = core.snapshot();
+        assert!(snap.hosts.iter().all(|h| h.id != LOCAL_HOST), "no @local");
+        assert!(snap.tailnet.error.is_some() && snap.tailnet.via.is_none(), "{:?}", snap.tailnet);
+        assert!(core.local_shells().is_empty() && core.local_drives().is_empty());
+        assert!(rt.block_on(core.list_dir(LOCAL_HOST, "/")).is_err());
+        let spec = NewPaneSpec {
+            host: LOCAL_HOST.into(),
+            cwd: "~".into(),
+            harness: Harness::Shell,
+            name: None,
+            session: None,
+            args: None,
+            direct: Some(true),
+            shell: None,
+        };
+        assert!(rt.block_on(core.create_pane(spec)).is_err(), "no shells started here");
+        drop(rt);
         let _ = std::fs::remove_dir_all(dir);
     }
 

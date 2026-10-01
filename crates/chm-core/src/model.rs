@@ -53,6 +53,9 @@ pub struct TailnetStatus {
     pub health: Vec<String>,
     /// Set when the Tailscale CLI couldn't be run or its output couldn't be parsed.
     pub error: Option<String>,
+    /// The machine this was learned from, when this device has no Tailscale CLI (the iPhone).
+    #[serde(default)]
+    pub via: Option<HostId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]

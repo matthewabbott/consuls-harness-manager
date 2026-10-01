@@ -17,4 +17,4 @@ pub mod tailscale;
 pub mod term;
 pub mod tmux;
 
-pub use hub::{Core, Sink};
+pub use hub::{Core, CoreOptions, Sink};

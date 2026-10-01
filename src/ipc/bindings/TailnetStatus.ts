@@ -13,4 +13,8 @@ authUrl: string | null, selfNode: TailnetPeer | null, peers: Array<TailnetPeer>,
 /**
  * Set when the Tailscale CLI couldn't be run or its output couldn't be parsed.
  */
-error: string | null, };
+error: string | null, 
+/**
+ * The machine this was learned from, when this device has no Tailscale CLI (the iPhone).
+ */
+via: string | null, };

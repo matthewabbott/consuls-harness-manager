@@ -1,4 +1,5 @@
-//! Reads tailnet state from the local Tailscale CLI (`tailscale status --json`).
+//! Reads tailnet state from the local Tailscale CLI (`tailscale status --json`), or, where
+//! there's none (the iPhone), from a connected machine's ([`STATUS_SCRIPT`], [`parse_remote`]).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -143,6 +144,41 @@ fn convert(raw: RawPeer, is_self: bool) -> TailnetPeer {
     }
 }
 
+/// Run on a machine over SSH: the address we came from, then its `tailscale status --json`.
+/// Login shells don't always have the CLI on PATH, so the usual places are tried too.
+pub const STATUS_SCRIPT: &str = r#"echo "chm-client ${SSH_CLIENT%% *}"
+for t in tailscale /usr/bin/tailscale /usr/local/bin/tailscale /opt/homebrew/bin/tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
+  if command -v "$t" >/dev/null 2>&1; then exec "$t" status --json; fi
+done
+echo "no Tailscale CLI on this machine" >&2
+exit 127
+"#;
+
+/// The tailnet as `via` sees it ([`STATUS_SCRIPT`]'s output), turned around: `via` becomes a
+/// peer, and the peer we connected from (found by its address) becomes this device.
+pub fn parse_remote(output: &[u8], via: &str) -> Result<TailnetStatus, String> {
+    let text = String::from_utf8_lossy(output);
+    // Whatever a login shell prints first is skipped.
+    let (_, rest) = text.split_once("chm-client").ok_or("no answer from the status script")?;
+    let (client, json) = rest.split_once('\n').unwrap_or((rest, ""));
+    let client = client.trim();
+    let mut status = parse_status(json.as_bytes()).map_err(|e| format!("couldn't read {via}'s tailscale status: {e}"))?;
+    if let Some(mut there) = status.self_node.take() {
+        there.is_self = false;
+        status.peers.push(there);
+    }
+    if !client.is_empty()
+        && let Some(i) = status.peers.iter().position(|p| p.ips.iter().any(|ip| ip == client))
+    {
+        let mut me = status.peers.remove(i);
+        me.is_self = true;
+        status.self_node = Some(me);
+    }
+    status.peers.sort_by(|a, b| b.online.cmp(&a.online).then_with(|| a.id.cmp(&b.id)));
+    status.via = Some(via.to_string());
+    Ok(status)
+}
+
 pub fn parse_status(json: &[u8]) -> Result<TailnetStatus, serde_json::Error> {
     let raw: RawStatus = serde_json::from_slice(json)?;
     let mut peers: Vec<TailnetPeer> = raw
@@ -160,6 +196,7 @@ pub fn parse_status(json: &[u8]) -> Result<TailnetStatus, serde_json::Error> {
         tailnet_name: raw.current_tailnet.map(|t| t.name).filter(|n| !n.is_empty()),
         health: raw.health.unwrap_or_default(),
         error: None,
+        via: None,
     })
 }
 
@@ -199,6 +236,28 @@ mod tests {
         assert_eq!(mac.id, "mbas-macbook-pro");
         assert!(!mac.has_tailscale_ssh());
         assert_eq!(s.tailnet_name.as_deref(), Some("user@example.com"));
+    }
+
+    #[test]
+    fn a_machines_view_is_turned_around() {
+        // What spark2 answers when this device (100.72.82.18, the Mac in SAMPLE) asks.
+        let from_spark2 = SAMPLE
+            .replace(r#""Self": {"HostName": "DESKTOP-J0PIMAK""#, r#""Self": {"HostName": "spark2-self""#)
+            .replace("desktop-j0pimak.tail123", "spark2x.tail123");
+        let output = format!("Last login: somewhere\nchm-client 100.72.82.18\n{from_spark2}");
+        let s = parse_remote(output.as_bytes(), "spark2x").unwrap();
+        assert_eq!(s.via.as_deref(), Some("spark2x"));
+        let me = s.self_node.as_ref().expect("this device found by its address");
+        assert_eq!(me.id, "mbas-macbook-pro");
+        assert!(me.is_self);
+        assert!(s.peers.iter().any(|p| p.id == "spark2x" && !p.is_self), "the machine asked is a peer now");
+        assert!(!s.peers.iter().any(|p| p.id == "mbas-macbook-pro"), "and this device isn't");
+
+        // No SSH_CLIENT (or an address nobody has): no self, everyone's a peer.
+        let s = parse_remote(format!("chm-client \n{SAMPLE}").as_bytes(), "x").unwrap();
+        assert!(s.self_node.is_none());
+        assert_eq!(s.peers.len(), 3);
+        assert!(parse_remote(b"no tailscale here", "x").is_err());
     }
 
     #[test]
