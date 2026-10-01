@@ -161,6 +161,15 @@ Roughly in order. Each is small-to-medium and self-contained.
       notification settings (global pause, per-agent modes), voice input (a mic button; the
       keyboard's dictation already works), image paste/attach, file browsing, file management
       (move/delete) and upload to a machine — upload and move for the Mac and PC apps too.
+  - 2026-10-01, pivot (the user's call): Apple's free tier expires the native app after 7 days
+    without the Mac, so the phone app is the Home Screen web app, and the notifier became
+    `consuls-server` (docs/SERVER.md), which runs the core for it over a WebSocket.
+    - Server: transient (no boot service), restartable by hand from the phone over SSH
+      (Termius), an install folder that `uninstall` removes; one server for now (spark-d683),
+      maybe a Raspberry Pi (always on) or a hardened VPS as failover later.
+    - The native iPhone app is shelved, code kept. The remote-only core is still used by it.
+    - Probe results: `tailscale serve` proxies WebSocket upgrades to a unix socket and adds
+      `Tailscale-User-Login` (Node and Chrome checked; iPhone Safari to confirm with the app).
   - Roadmap:
     1. Per-agent modes in a context menu for tracked agents: any turn end / after a delay /
        finished only. The policy already has all three (`NotifyMode`); only the UI is missing.

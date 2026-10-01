@@ -20,11 +20,13 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   notification if Consuls isn't focused; clicking it opens the pane); its tile glows until you
   look, then shows "Waiting on you". Ctrl+Shift+Space (⇧⌘Space on a Mac) jumps to the next
   waiting pane.
-- **Push to your phone**: with the notifier running on one of your machines
-  ([docs/NOTIFIER.md](docs/NOTIFIER.md); started from another, nothing installed), flip the phone icon on an agent's tile (or its switch in
-  the phone app) and it pushes to your phone when it's still waiting for you after a few
-  minutes — not if you answered, or looked at it on a desktop, meanwhile. The phone app is a
-  Home Screen web app served over your tailnet: no App Store, no Apple developer account.
+- **On your phone**: the Consuls server, running on one of your machines
+  ([docs/SERVER.md](docs/SERVER.md); nothing installed as a service), serves a Home Screen web
+  app over your tailnet: your agents and shells, their live terminals, a composer, keys, Notify
+  switches. No App Store, no Apple developer account.
+- **Push to your phone**: flip the phone icon on an agent's tile (or its Notify switch in the
+  phone app) and it pushes to your phone when it's still waiting for you after a few minutes —
+  not if you answered, or looked at it, meanwhile.
 - **Labels**: tag panes (right-click a tile, or drag it onto a label in the sidebar), then
   group the grid by label, project, status or machine and sort by attention, name or recency.
   Labels are stored on the tmux pane (`@chm_labels`), so every device sees the same tags.
