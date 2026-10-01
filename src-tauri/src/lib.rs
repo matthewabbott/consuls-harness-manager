@@ -5,6 +5,7 @@ mod alerts;
 mod commands;
 #[cfg(target_os = "macos")]
 mod mac_notify;
+#[cfg(desktop)]
 mod tray;
 mod vscode;
 
@@ -12,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chm_core::model::{Alert, CoreEvent};
-use chm_core::{Core, Sink};
+use chm_core::{Core, CoreOptions, Sink};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager};
 
@@ -79,26 +80,43 @@ pub fn run() {
             tray::request_quit(app);
         }
     });
-    builder
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build());
+    builder
         .plugin(tauri_plugin_opener::init())
-        .on_window_event(|window, event| {
+        .on_window_event(|window, event| match event {
             // Closing the window keeps Consuls running in the tray, so agents can still
             // ping you. Quit from the tray menu.
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && window.label() == "main"
-            {
+            #[cfg(desktop)]
+            tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // iPhone: the app may be ended while in the background, so save now; coming back,
+            // the connections may be gone (they're probed and reconnected).
+            #[cfg(mobile)]
+            tauri::WindowEvent::Suspended => {
+                if let Some(state) = window.try_state::<AppState>() {
+                    state.core.flush_ui_state();
+                }
+            }
+            #[cfg(mobile)]
+            tauri::WindowEvent::Resumed => {
+                if let Some(state) = window.try_state::<AppState>() {
+                    state.core.notify_resumed();
+                }
+            }
+            _ => {}
         })
         .setup(|app| {
+            #[cfg(desktop)]
             tray::install(app.handle())?;
             #[cfg(target_os = "macos")]
             mac_notify::init(app.handle());
@@ -109,7 +127,9 @@ pub fn run() {
                 channel: Mutex::new(None),
                 alerter: alerts::Alerter::new(),
             });
-            let core = Core::new(data_dir, sink.clone());
+            // The iPhone can't run programs: it watches remote machines only.
+            let options = if cfg!(mobile) { CoreOptions::remote_only() } else { CoreOptions::default() };
+            let core = Core::with_options(data_dir, sink.clone(), options);
             sink.alerter.set_prefs(core.sound_prefs());
             sink.alerter.set_recording(core.ui_prefs().recording);
             app.manage(AppState { core: core.clone(), sink: sink.clone() });
@@ -190,6 +210,7 @@ pub fn run() {
             // The last window going away (it hides instead, so this is a fallback) quits the
             // tray's way: it asks first while shells on this PC are running. (macOS ⌘Q is the
             // app menu's own item; the system's terminate never comes through here.)
+            #[cfg(desktop)]
             tauri::RunEvent::ExitRequested { code: None, api, .. } => {
                 api.prevent_exit();
                 tray::request_quit(app);

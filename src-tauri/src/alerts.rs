@@ -1,20 +1,27 @@
 //! Surfacing core alerts: synthesized chimes (played from Rust so they work while the
 //! window is minimized), Windows toasts / macOS notifications that open the pane when clicked,
-//! and a taskbar flash (a Dock bounce on macOS).
+//! and a taskbar flash (a Dock bounce on macOS). On the iPhone only the UI hears about them:
+//! the app runs only while it's on screen, and pushes come from the notifiers.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 
 use chm_core::model::{Alert, AlertKind, SoundPrefs};
-use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
+#[cfg(desktop)]
+use tauri::{Manager, UserAttentionType};
+use tauri::{AppHandle, Emitter};
+#[cfg(desktop)]
 use tracing::warn;
 
+#[cfg(desktop)]
 const RATE: u32 = 44_100;
 
+#[cfg(desktop)]
 /// One note of a chime: frequency, duration, start offset (seconds), gain.
 struct Note(f32, f32, f32, f32);
 
+#[cfg(desktop)]
 fn render(notes: &[Note]) -> Vec<f32> {
     let total = notes.iter().map(|n| n.2 + n.1).fold(0.0f32, f32::max) + 0.05;
     let mut out = vec![0.0f32; (total * RATE as f32) as usize];
@@ -34,6 +41,7 @@ fn render(notes: &[Note]) -> Vec<f32> {
     out
 }
 
+#[cfg(desktop)]
 fn chime(kind: AlertKind) -> Vec<f32> {
     match kind {
         // Gentle rising two-note "ding-dong": your turn.
@@ -51,6 +59,7 @@ fn chime(kind: AlertKind) -> Vec<f32> {
     }
 }
 
+#[cfg(desktop)]
 /// Starts the audio thread (output streams aren't `Send`, so they live there). The default
 /// device is opened per chime: chimes are rare, and this way switching headsets or docking
 /// never leaves us writing to a device that's gone.
@@ -77,6 +86,11 @@ fn start_audio() -> Sender<(AlertKind, f32)> {
         })
         .expect("spawn audio thread");
     tx
+}
+
+#[cfg(mobile)]
+fn start_audio() -> Sender<(AlertKind, f32)> {
+    channel().0
 }
 
 /// Loudness curve: the slider is linear, perceived loudness isn't.
@@ -117,6 +131,7 @@ impl Alerter {
         if alert.sound && prefs.allows(alert.kind) {
             let _ = self.audio.lock().unwrap().send((alert.kind, gain(prefs.volume)));
         }
+        #[cfg(desktop)]
         if alert.flash
             && let Some(w) = app.get_webview_window("main")
         {
