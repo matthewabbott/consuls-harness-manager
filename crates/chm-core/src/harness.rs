@@ -34,16 +34,17 @@ impl Harness {
     }
 
     /// Best guess from what tmux tells us. An explicit `@chm_harness` tag (set when the app
-    /// launched the pane) wins; otherwise the pane's foreground process name. Claude Code names
+    /// launched the pane) wins while its program runs; otherwise the pane's foreground process
+    /// name. A shell the app launched counts as whatever agent runs in it now. Claude Code names
     /// its process after its version (`2.1.284`), which counts as Claude.
     pub fn detect(current_command: &str, tagged: Option<&str>) -> Option<Self> {
-        if let Some(h) = tagged.and_then(Self::from_name)
-            && (h == Harness::Shell || !Self::is_shell(current_command))
-        {
-            return Some(h);
-        }
         let name = current_command.trim_start_matches('-');
-        Self::from_name(name).or_else(|| is_version_title(name).then_some(Harness::Claude))
+        let running = Self::from_name(name).or_else(|| is_version_title(name).then_some(Harness::Claude));
+        match tagged.and_then(Self::from_name) {
+            Some(Harness::Shell) => Some(running.unwrap_or(Harness::Shell)),
+            Some(h) if !Self::is_shell(current_command) => Some(h),
+            _ => running,
+        }
     }
 
     fn is_shell(cmd: &str) -> bool {
@@ -230,6 +231,11 @@ mod tests {
         assert_eq!(Harness::detect("python3.12", None), None);
         assert_eq!(Harness::detect("1.2.x", None), None);
         assert_eq!(Harness::detect("2.1.284", Some("codex")), Some(Harness::Codex), "a tag still wins");
+        // A shell the app launched, with an agent started in it by hand.
+        assert_eq!(Harness::detect("omp", Some("shell")), Some(Harness::Omp));
+        assert_eq!(Harness::detect("2.1.284", Some("shell")), Some(Harness::Claude));
+        assert_eq!(Harness::detect("vim", Some("shell")), Some(Harness::Shell));
+        assert_eq!(Harness::detect("bash", Some("shell")), Some(Harness::Shell));
     }
 
     #[test]
