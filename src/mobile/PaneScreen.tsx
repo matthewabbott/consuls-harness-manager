@@ -11,50 +11,17 @@ import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { HARNESS_DOT, HARNESS_NAME, status } from "../lib/agents";
 import { NOTIFY_MODES, setNotifyMode } from "../lib/notifyModes";
-import { displayTitle, isDirect, paneIdentity } from "../lib/panes";
+import { isDirect, paneIdentity } from "../lib/panes";
 import { useApp } from "../store/app";
 import { FONT, useViewPrefs } from "../store/viewPrefs";
 import KeyBar, { afterUse, heldMods, type Holds, nextHold, NO_HOLDS } from "./KeyBar";
 import { Sheet, SheetAction } from "./Sheet";
 import CopySheet from "./CopySheet";
 import FindBar, { type FindResult } from "./FindBar";
+import PaneTitle, { type TitleMode } from "./PaneTitle";
 import LinkSheet from "./LinkSheet";
 import { MATCH_DECORATIONS } from "../term/find";
 import type { TappedLink } from "../term/linkAt";
-
-/** Names the pane (in Consuls only: tmux's own names stay); empty clears it. */
-function RenameSheet({ pane, onClose }: { pane: PaneInfo; onClose(): void }) {
-  const [value, setValue] = useState(pane.name ?? "");
-  const save = (name: string | null) => {
-    void backend().then((b) => b.renamePane(pane.key, name));
-    onClose();
-  };
-  return (
-    <Sheet onClose={onClose}>
-      <div className="px-1 pb-2">
-        <div className="mb-2 text-[13px] text-mist-400">Name this {pane.harness && pane.harness !== "shell" ? "agent" : "pane"}</div>
-        <input
-          autoFocus
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save(value.trim() || null)}
-          placeholder={displayTitle({ ...pane, name: null })}
-          className="w-full rounded-xl bg-ink-800 px-3.5 py-3 text-[16px] text-mist-100 ring-1 ring-ink-700 outline-none focus:ring-ember-400/60"
-        />
-        <div className="mt-3 flex gap-2">
-          {pane.name && (
-            <button onClick={() => save(null)} className="rounded-xl px-4 py-3 text-[15px] text-mist-400 active:bg-ink-700">
-              Clear
-            </button>
-          )}
-          <button onClick={() => save(value.trim() || null)} className="flex-1 rounded-xl bg-ember-400 py-3 text-[16px] font-semibold text-ink-950 active:opacity-80">
-            Save
-          </button>
-        </div>
-      </div>
-    </Sheet>
-  );
-}
 
 /** Zoomed out, the phone goes smaller than the desktop's floor. */
 const MIN_FONT = 5;
@@ -101,7 +68,9 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
   const [keyBar, setKeyBar] = useState(!isAgent(pane.harness));
   const [holds, setHolds] = useState<Holds>(NO_HOLDS);
   const [typing, setTyping] = useState(false);
-  const [menu, setMenu] = useState<"actions" | "rename" | null>(null);
+  const [menu, setMenu] = useState<"actions" | null>(null);
+  const [titleMode, setTitleMode] = useState<TitleMode>("short");
+  useEffect(() => setTitleMode("short"), [pane.key]);
   const [copying, setCopying] = useState(false);
   const [link, setLink] = useState<TappedLink | null>(null);
   const [finding, setFinding] = useState(false);
@@ -370,15 +339,21 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
               <ChevronLeft className="h-7 w-7" />
             </button>
             <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${HARNESS_DOT[harness]}`} />
-            <div className="ml-1.5 min-w-0 flex-1">
-              <div className="truncate text-[15px] font-semibold text-mist-100">{displayTitle(pane)}</div>
-              <div className="truncate text-[12px]">
-                <span className={st.tone}>{st.text || HARNESS_NAME[harness]}</span>
-                <span className="text-mist-500"> · {where}</span>
-              </div>
-            </div>
+            <PaneTitle
+              key={pane.key}
+              pane={pane}
+              mode={titleMode}
+              onMode={setTitleMode}
+              subtitle={
+                <>
+                  <span className={st.tone}>{st.text || HARNESS_NAME[harness]}</span>
+                  <span className="text-mist-500"> · {where}</span>
+                </>
+              }
+            />
             {keys.pending && keys.prefix && <PrefixPending prefix={keys.prefix} />}
-            <div className="flex shrink-0 items-center">
+            {/* The name, tapped, takes their place. */}
+            <div className={`flex shrink-0 items-center ${titleMode === "short" ? "" : "hidden"}`}>
               <button onClick={() => setFinding(true)} aria-label="Find" className="rounded-full p-2 text-mist-300 active:bg-ink-700">
                 <Search className="h-5 w-5" />
               </button>
@@ -428,7 +403,12 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
               ))}
             </div>
           )}
-          <SheetAction onClick={() => setMenu("rename")}>
+          <SheetAction
+            onClick={() => {
+              setMenu(null);
+              setTitleMode("rename");
+            }}
+          >
             <Pencil className="h-5 w-5 text-mist-400" /> Rename
           </SheetAction>
           {pane.hidden ? (
@@ -475,7 +455,6 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           )}
         </Sheet>
       )}
-      {menu === "rename" && <RenameSheet pane={pane} onClose={() => setMenu(null)} />}
       {copying && termRef.current?.term && (
         <CopySheet term={termRef.current.term} pane={pane} query={finding ? query : ""} onClose={() => setCopying(false)} />
       )}
