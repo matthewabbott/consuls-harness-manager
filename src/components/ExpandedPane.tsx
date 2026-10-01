@@ -257,12 +257,19 @@ export default function ExpandedPane({ pane }: { pane: PaneInfo }) {
             )}
           </TerminalView>
           {sizing.resizedElsewhere && (
-            <button
-              onClick={sizing.refit}
-              className="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-ember-400/15 px-3 py-1 text-[11.5px] font-medium text-ember-300 ring-1 ring-ember-400/40 backdrop-blur hover:bg-ember-400/25"
-            >
-              Resized elsewhere · fit again
-            </button>
+            <div className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center overflow-hidden rounded-full bg-ember-400/15 text-[11.5px] font-medium text-ember-300 ring-1 ring-ember-400/40 backdrop-blur">
+              <button onClick={sizing.refit} className="py-1 pr-2 pl-3 hover:bg-ember-400/25" title="Resize it to fit this window again">
+                Resized elsewhere · fit again
+              </button>
+              <button
+                onClick={sizing.acknowledge}
+                className="border-l border-ember-400/30 px-2 py-1 hover:bg-ember-400/25"
+                title="Keep the new size (this goes away until it's resized elsewhere again)"
+                aria-label="Dismiss: keep the new size"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
           )}
           {searching && (
             <SearchBar

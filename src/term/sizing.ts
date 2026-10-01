@@ -38,6 +38,8 @@ export interface Sizing {
   /** The pane was resized by something other than us since our last request. */
   resizedElsewhere: boolean;
   refit(): void;
+  /** Keep the size it was given elsewhere: the notice goes until it changes again. */
+  acknowledge(): void;
   setMode(mode: SizeMode, size?: { cols: number; rows: number }): void;
   release(): void;
 }
@@ -119,6 +121,11 @@ export function useTerminalSizing(
       lastRequest.current = null;
       setResizedElsewhere(false);
       setNonce((n) => n + 1);
+    },
+    acknowledge: () => {
+      // As if we'd asked for this size (long ago, so it doesn't hold back our next request).
+      lastRequest.current = { cols: pane.width, rows: pane.height, at: 0 };
+      setResizedElsewhere(false);
     },
     setMode: (m, size) => {
       lastRequest.current = null;
