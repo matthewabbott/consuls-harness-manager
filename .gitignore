@@ -8,3 +8,4 @@ src-tauri/gen/schemas/
 .vite/
 # local-only e2e recordings may contain real terminal content
 crates/chm-core/tests/fixtures/live/
+dist-mobile/

@@ -28,7 +28,8 @@ export const FONT = { min: 8, max: 28, step: 1, default: 13 };
 
 interface ViewPrefsState {
   prefs: Record<string, ViewPref>;
-  setFontSize(id: string, size: number | null): void;
+  /** `min`: a lower floor than FONT.min (the phone, zoomed out). */
+  setFontSize(id: string, size: number | null, min?: number): void;
   setSizeMode(id: string, mode: SizeMode, size?: { cols: number; rows: number }): void;
   update(id: string, patch: Partial<ViewPref>): void;
   /** Moves prefs when a pane gains a stable identity. */
@@ -39,11 +40,11 @@ export const useViewPrefs = create<ViewPrefsState>()(
   persist(
     (set) => ({
       prefs: {},
-      setFontSize: (id, size) =>
+      setFontSize: (id, size, min = FONT.min) =>
         set((s) => {
           const current = { ...(s.prefs[id] ?? {}) };
           if (size === null) delete current.fontSize;
-          else current.fontSize = Math.min(FONT.max, Math.max(FONT.min, Math.round(size * 2) / 2));
+          else current.fontSize = Math.min(FONT.max, Math.max(min, Math.round(size * 2) / 2));
           return { prefs: { ...s.prefs, [id]: current } };
         }),
       setSizeMode: (id, mode, size) =>

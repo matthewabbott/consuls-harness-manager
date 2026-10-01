@@ -1,0 +1,36 @@
+@import "../styles.css";
+
+/* The visible height: iOS doesn't shrink the layout for the keyboard (see useVisibleHeight). */
+html,
+body,
+#root {
+  height: var(--visible-height, 100%);
+}
+
+body {
+  font-family: -apple-system, system-ui, var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+}
+
+.safe-top {
+  padding-top: max(env(safe-area-inset-top), 0.75rem);
+}
+
+.safe-bottom {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+}
+
+/* With the keyboard up, the home indicator's space is the keyboard's. */
+html.keyboard .safe-bottom {
+  padding-bottom: 0.5rem;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

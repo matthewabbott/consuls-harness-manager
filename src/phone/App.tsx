@@ -1,40 +1,15 @@
 // The phone app's first screen: notifications, and every agent on every machine with a switch to
 // track it (tracked agents push when they're still waiting for you after a while).
 
-import { Bell } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import NotifySwitch from "../components/NotifySwitch";
 import type { DaemonState } from "../ipc/bindings/DaemonState";
-import type { Harness } from "../ipc/bindings/Harness";
-import type { HostPhase } from "../ipc/bindings/HostPhase";
-import type { PaneAttention } from "../ipc/bindings/PaneAttention";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
+import { HARNESS_DOT, HARNESS_NAME, phaseText, status, trackable } from "../lib/agents";
 import { displayTitle } from "../lib/panes";
 import { api, ApiError } from "./api";
 import * as push from "./push";
-
-const HARNESS_DOT: Record<Harness, string> = {
-  claude: "bg-claude",
-  codex: "bg-codex",
-  omp: "bg-omp",
-  pi: "bg-pi",
-  opencode: "bg-opencode",
-  gemini: "bg-gemini",
-  shell: "bg-mist-500",
-};
-
-const HARNESS_NAME: Record<Harness, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  omp: "omp",
-  pi: "pi",
-  opencode: "opencode",
-  gemini: "Gemini",
-  shell: "shell",
-};
-
-/** Agents (and anything already tracked): the panes worth a switch. */
-const trackable = (p: PaneInfo) => p.kind === "tmux" && (p.notify !== null || (p.harness !== null && p.harness !== "shell"));
 
 /** `#pane=spark2/%3`, from a tapped notification. */
 function paneFromHash(): string | null {
@@ -45,36 +20,6 @@ function paneFromHash(): string | null {
 function mmss(ms: number): string {
   const s = Math.ceil(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function status(att: PaneAttention | undefined): { text: string; tone: string } {
-  if (!att) return { text: "", tone: "text-mist-400" };
-  switch (att.activity) {
-    case "working":
-      return { text: "working", tone: "text-sky-400" };
-    case "needsInput":
-      return { text: att.reason ?? "needs you", tone: "text-iris-300" };
-    case "idle":
-      return att.attention === "none" ? { text: "idle", tone: "text-mist-400" } : { text: "waiting on you", tone: "text-ember-300" };
-    default:
-      return { text: "", tone: "text-mist-400" };
-  }
-}
-
-function phaseText(phase: HostPhase | undefined): { text: string; tone: string } | null {
-  if (!phase) return null;
-  switch (phase.phase) {
-    case "connected":
-      return null;
-    case "awaitingTailscaleCheck":
-      return { text: "waiting for Tailscale SSH approval", tone: "text-iris-300" };
-    case "failed":
-      return { text: `failed: ${phase.error}`, tone: "text-rose-400" };
-    case "reconnecting":
-      return { text: "reconnecting…", tone: "text-ember-300" };
-    default:
-      return { text: phase.phase, tone: "text-mist-400" };
-  }
 }
 
 export default function App() {
@@ -268,20 +213,7 @@ export default function App() {
                           {due && <span className="text-mist-400"> · push in {mmss(due.dueInMs)}</span>}
                         </div>
                       </div>
-                      <label className="flex shrink-0 flex-col items-center gap-1">
-                        <button
-                          role="switch"
-                          aria-checked={on}
-                          aria-label={on ? "Stop notifying for this agent" : "Notify when this agent waits for you"}
-                          onClick={() => void toggle(p)}
-                          className={`relative h-[31px] w-[51px] rounded-full transition-colors ${on ? "bg-jade-400" : "bg-ink-600"}`}
-                        >
-                          <span className={`absolute top-[2px] h-[27px] w-[27px] rounded-full bg-white shadow transition-[left] ${on ? "left-[22px]" : "left-[2px]"}`} />
-                        </button>
-                        <span className={`flex items-center gap-0.5 text-[10.5px] font-medium ${on ? "text-jade-400" : "text-mist-500"}`}>
-                          <Bell className="h-2.5 w-2.5" /> Notify
-                        </span>
-                      </label>
+                      <NotifySwitch on={on} onToggle={() => void toggle(p)} />
                     </li>
                   );
                 })}

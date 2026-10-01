@@ -1,3 +1,5 @@
+import { useEffect, useRef, useState } from "react";
+
 import { backend } from "../ipc/backend";
 import type { Harness } from "../ipc/bindings/Harness";
 
@@ -28,21 +30,45 @@ const PER_HARNESS: Partial<Record<Harness, Key[]>> = {
   omp: [{ label: "⇧Tab", keys: ["BTab"], title: "Shift+Tab — cycle mode" }],
 };
 
-/** One-click keys for menus and prompts the composer can't drive (permission choices etc.). */
-export default function QuickKeys({ paneKey, harness }: { paneKey: number; harness: Harness | null }) {
+/** Keys that end things: on a phone they take a second tap (two ^C quit Claude Code). */
+const CONFIRM = new Set(["^C"]);
+
+/**
+ * One-click keys for menus and prompts the composer can't drive (permission choices etc.).
+ * `touch`: finger-sized, in one row that scrolls sideways (the phone).
+ */
+export default function QuickKeys({ paneKey, harness, touch = false }: { paneKey: number; harness: Harness | null; touch?: boolean }) {
   const keys = [...COMMON, ...((harness && PER_HARNESS[harness]) || [])];
-  const send = (k: Key) => backend().then((b) => b.sendKeys(paneKey, k.keys));
+  const [armed, setArmed] = useState<string | null>(null);
+  const disarm = useRef(0);
+  useEffect(() => () => window.clearTimeout(disarm.current), []);
+  const send = (k: Key) => {
+    window.clearTimeout(disarm.current);
+    if (touch && CONFIRM.has(k.label) && armed !== k.label) {
+      setArmed(k.label);
+      disarm.current = window.setTimeout(() => setArmed(null), 2500);
+      return;
+    }
+    setArmed(null);
+    void backend().then((b) => b.sendKeys(paneKey, k.keys));
+  };
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div className={touch ? "no-scrollbar flex items-center gap-1.5 overflow-x-auto" : "flex flex-wrap items-center gap-1"}>
       {keys.map((k) => (
         <button
           key={k.label}
           title={k.title}
           onMouseDown={(e) => e.preventDefault()} // keep focus where it is
           onClick={() => send(k)}
-          className="min-w-7 rounded-md bg-ink-800 px-1.5 py-0.5 font-mono text-[11px] text-mist-300 ring-1 ring-ink-700 transition-colors hover:bg-ink-700 hover:text-mist-100"
+          className={
+            touch
+              ? `min-w-10 shrink-0 rounded-lg px-2.5 py-2 font-mono text-[14px] ring-1 active:bg-ink-600 ${
+                  armed === k.label ? "bg-rose-400/15 text-rose-300 ring-rose-400/50" : "bg-ink-800 text-mist-200 ring-ink-700"
+                }`
+              : "min-w-7 rounded-md bg-ink-800 px-1.5 py-0.5 font-mono text-[11px] text-mist-300 ring-1 ring-ink-700 transition-colors hover:bg-ink-700 hover:text-mist-100"
+          }
         >
-          {k.label}
+          {armed === k.label ? `${k.label} again` : k.label}
         </button>
       ))}
     </div>

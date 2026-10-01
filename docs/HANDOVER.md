@@ -146,6 +146,21 @@ Roughly in order. Each is small-to-medium and self-contained.
       notification links only to login.tailscale.com); 1 the iOS app (Xcode, build probe,
       `CoreOptions` without a local machine, the tailnet learned via a machine, `src/mobile/`);
       2 the app starts one notifier per machine and keeps the VAPID key in the Keychain.
+  - 2026-09-30, Phase 1 so far (Xcode 27, iOS 27 Simulator; CLAUDE.md "iPhone app"):
+    - chm-core and every dependency build for iOS unchanged; the shell gates desktop-only parts.
+    - `CoreOptions::remote_only()`, the tailnet learned via a machine; `src/mobile/` screens
+      (machines and agents, an agent's terminal, settings, add machine); pinch / −/+ / Fit /
+      Reset sizing; the key bar with sticky Ctrl/Alt and tmux prefix keys.
+    - Checked in the Simulator against spark-d683 (real core, real SSH). The user clicked
+      through the list, settings and an agent; their real phone is next (needs their Apple ID
+      in Xcode → a Personal Team → `bundle.iOS.developmentTeam`).
+    - Found on the way: a `shell` tag hid agents started in Consuls-launched shells (fixed for
+      every app); approval pushes nagged on every reconnect (now once per machine until someone
+      opens the app).
+    - The user's parity list for the phone, in their order of interest: open/close sessions,
+      notification settings (global pause, per-agent modes), voice input (a mic button; the
+      keyboard's dictation already works), image paste/attach, file browsing, file management
+      (move/delete) and upload to a machine — upload and move for the Mac and PC apps too.
   - Roadmap:
     1. Per-agent modes in a context menu for tracked agents: any turn end / after a delay /
        finished only. The policy already has all three (`NotifyMode`); only the UI is missing.

@@ -8,6 +8,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { tmuxKey } from "../term/keymap";
+import { type HeldMods, NO_MODS, rawBytes, tmuxName } from "../term/softKeys";
 import { isPrefix } from "../term/tmuxPrefix";
 import { theme } from "../term/palette";
 import { rawCopy, selectionRows, smartCopy } from "../term/smartCopy";
@@ -32,6 +33,11 @@ export interface TerminalHandle {
   focus(): void;
   /** Rendered size of one character cell in CSS px (null before the first render). */
   cellSize(): { width: number; height: number } | null;
+  /**
+   * A key from the phone's key bar (a tmux key name like `Left`, or one character): with the held
+   * modifiers, then through the tmux prefix like any key press.
+   */
+  sendKey(name: string): void;
 }
 
 interface Props {
@@ -56,6 +62,10 @@ interface Props {
   onPrefixKey?(key: string, tmuxName: string | null): void;
   /** The prefix was pressed and the next key is awaited (or that ended). */
   onPrefixPending?(pending: boolean): void;
+  /** The phone's key bar: Ctrl/Alt held for the next key, typed or from the bar. */
+  heldMods?: HeldMods | null;
+  /** A held Ctrl/Alt was used (a one-shot hold lets go). */
+  onModsUsed?(): void;
 }
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
@@ -76,13 +86,14 @@ function measureCharRatio(): number {
 }
 
 const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
-  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false, prefix = null, onPrefixKey, onPrefixPending },
+  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false, prefix = null, onPrefixKey, onPrefixPending, heldMods, onModsUsed },
   ref,
 ) {
   const [menu, setMenu] = useState<Menu | null>(null);
-  // The terminal is built once per pane; key handling reads the latest prefix props from here.
-  const propsRef = useRef({ prefix, onPrefixKey, onPrefixPending });
-  propsRef.current = { prefix, onPrefixKey, onPrefixPending };
+  // The terminal is built once per pane; key handling reads the latest props from here.
+  const propsRef = useRef({ prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed });
+  propsRef.current = { prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed };
+  const routeRef = useRef<(name: string) => void>(() => {});
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -117,6 +128,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       const size = term.options.fontSize ?? 13;
       return { width: size * measureCharRatio(), height: Math.ceil(size * (term.options.lineHeight ?? 1)) };
     },
+    sendKey: (name) => routeRef.current(name),
   }));
 
   useEffect(() => {
@@ -246,6 +258,36 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       prefixPending = on;
       propsRef.current.onPrefixPending?.(on);
     };
+
+    // The phone's keys (see TerminalHandle.sendKey), and characters typed with them held.
+    const route = (name: string) => {
+      const held = propsRef.current.heldMods ?? NO_MODS;
+      if (held.ctrl || held.alt) propsRef.current.onModsUsed?.();
+      if (raw) {
+        textBuf += rawBytes(name, held);
+        flushText();
+        return;
+      }
+      const full = tmuxName(name, held);
+      const prefix = propsRef.current.prefix;
+      if (prefix && prefixPending) {
+        setPending(false);
+        propsRef.current.onPrefixKey?.(name, full);
+        return;
+      }
+      if (prefix && isPrefix(name, full, prefix)) {
+        flushText();
+        setPending(true);
+        return;
+      }
+      if ([...full].length === 1) {
+        textBuf += full;
+        flushText();
+      } else {
+        sendKeys([full]);
+      }
+    };
+    routeRef.current = route;
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return !e.ctrlKey && !e.altKey; // let keypress produce text
       // tmux panes: the server's prefix (Ctrl+B) and the key after it (see term/tmuxPrefix.ts).
@@ -324,6 +366,13 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       // tmux panes: anything starting with ESC is xterm answering a terminal query, which tmux
       // already did. Direct panes: keys, mouse and focus reports all go out as-is.
       if (!raw && data.startsWith("\x1b")) return;
+      // One character typed with the key bar's Ctrl/Alt held, or after the tmux prefix on a
+      // keyboard that sends no key events for it (the phone's).
+      const held = propsRef.current.heldMods;
+      if ([...data].length === 1 && (held?.ctrl || held?.alt || (prefixPending && !raw))) {
+        route(data);
+        return;
+      }
       textBuf += data;
       if (!textTimer) textTimer = window.setTimeout(flushText, 8);
     });

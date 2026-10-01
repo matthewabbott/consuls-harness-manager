@@ -8,6 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "dev:phone": "vite --config vite.phone.config.ts",
     "build:phone": "tsc --noEmit && vite build --config vite.phone.config.ts",
+    "dev:mobile": "vite --config vite.mobile.config.ts",
+    "build:mobile": "tsc --noEmit && vite build --config vite.mobile.config.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
