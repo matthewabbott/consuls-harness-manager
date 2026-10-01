@@ -5,29 +5,30 @@ import type { Subscription } from "./Subscription";
 import type { VapidConfig } from "./VapidConfig";
 import type { WebConfig } from "./WebConfig";
 
-export type NotifierConfig = { 
+export type ServerConfig = { 
 /**
  * The push identity phones subscribed with.
  */
 vapid: VapidConfig, 
 /**
- * The phones (browsers) to push to.
+ * Seed: the phones to push to, imported into `subscriptions.json` when that's missing.
  */
-subscriptions: Array<Subscription>, 
+subscriptions?: Array<Subscription>, 
 /**
- * Other machines to watch over SSH. Normally empty: each machine's notifier watches that
- * machine. The web app's home watches the others while the web app is the only phone UI.
+ * Seed: the machines to watch over SSH, imported into the core's own config when that's
+ * missing (from then on they're edited from the app).
  */
-hosts: Array<HostConfig>, 
+hosts?: Array<HostConfig>, 
 /**
  * This machine's name in pushes; default its tailnet name.
  */
 selfName: string | null, delays: DelayConfig, 
 /**
- * Serve the phone's web app and API (on the web app's home only).
+ * Serve the phone's web app and API.
  */
 web: WebConfig | null, 
 /**
- * Days without a check-in (the app, or `ctl renew`) before it stops by itself.
+ * Days without a check-in (using the web app, or `ctl renew`) before it stops by itself (its
+ * files stay: `consuls-server start` brings it back).
  */
 leaseDays: number, };

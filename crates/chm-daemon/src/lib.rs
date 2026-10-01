@@ -1,21 +1,24 @@
-//! consuls-notifier: chm-core without a UI, run for a while on a machine by whoever starts it
-//! (the phone app over SSH, or `scripts/notifier.sh`), inside tmux. It watches that machine's
-//! agents (and, on the web app's home, the machines it's given) and pushes to your phone when a
-//! tracked one is still waiting for you (see `chm_core::notify`).
+//! consuls-server: Consuls' core without a window, on one of your machines. It serves the phone's
+//! web app (over `tailscale serve`), which drives the core through a WebSocket (`ws.rs`), and it
+//! pushes to the phone when a tracked agent is still waiting for you (see `chm_core::notify`).
 //!
-//! It's transient: it's configured over its control socket (`ctl`), keeps that configuration,
-//! secrets included, in memory, and its only files are its run folder in `/tmp`, removed when it
-//! stops — at reboot, when told to, or when nobody has checked in for its lease (7 days).
+//! Transient: nothing restarts it. It runs until it's stopped, the machine reboots, or nobody
+//! has used it for its lease (7 days), inside a private tmux server. What lasts between runs is
+//! its install folder (`home.rs`), so it can be started again by hand (`consuls-server start`,
+//! over SSH from a phone), and `consuls-server uninstall` clears it all off.
 #![cfg(unix)]
 
 pub mod approvals;
 pub mod config;
 pub mod ctl;
+pub mod home;
 pub mod http;
 pub mod lease;
 pub mod push;
+pub mod rpc;
 pub mod rundir;
 pub mod serve;
+pub mod ws;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -25,13 +28,14 @@ use chm_core::model::{Alert, AlertKind, AppConfig, CoreEvent, HostConfig, HostPh
 use chm_core::notify::{Policy, Push};
 use chm_core::{Core, Sink};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tracing::{info, warn};
 use ts_rs::TS;
 
-use config::{Me, NotifierConfig};
+use config::{Me, ServerConfig};
 use ctl::Control;
+use home::Home;
 use lease::Lease;
 use push::store::Store;
 use push::vapid::Vapid;
@@ -42,8 +46,8 @@ pub struct Daemon {
     pub core: Arc<Core>,
     pub policy: Mutex<Policy>,
     pub sender: Arc<Sender>,
-    /// As configured (the live subscriptions are the sender's).
-    pub config: NotifierConfig,
+    /// As installed (the live machines are the core's, the live phones the sender's).
+    pub config: ServerConfig,
     /// This machine on the tailnet.
     pub me: Me,
     /// This machine's name in pushes and in the app.
@@ -54,23 +58,26 @@ pub struct Daemon {
     pub origin: String,
     pub lease: Arc<Lease>,
     pub started: u64,
+    /// This run: pane keys are only good within one, so a web app that sees a new one reloads.
+    pub instance: String,
     /// Where the API listens, once it does.
     pub web_url: Mutex<Option<String>>,
     pub approvals: Mutex<approvals::Approvals>,
+    pub clients: Arc<ws::Clients>,
 }
 
-/// What `ctl status` says.
+/// What `consuls-server status` says.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
-pub struct NotifierStatus {
-    pub configured: bool,
+pub struct ServerStatus {
+    pub running: bool,
     pub version: String,
     pub pid: u32,
     pub self_name: String,
     #[ts(type = "number")]
     pub started: u64,
-    /// When it stops unless someone checks in (unix seconds).
+    /// When it stops unless someone uses it (unix seconds).
     #[ts(type = "number")]
     pub lease_until: u64,
     /// The machines it watches, with their state.
@@ -79,8 +86,10 @@ pub struct NotifierStatus {
     pub pending: usize,
     #[ts(type = "number | null")]
     pub rss_kb: Option<u64>,
-    /// The API's local address, when it serves the web app.
+    /// Where the API listens (a unix socket, or a TCP address).
     pub web: Option<String>,
+    /// The web app's address.
+    pub origin: String,
 }
 
 impl Daemon {
@@ -89,7 +98,7 @@ impl Daemon {
         self.approvals.lock().unwrap().human(Instant::now().into_std());
     }
 
-    pub fn status(&self) -> NotifierStatus {
+    pub fn status(&self) -> ServerStatus {
         let snapshot = self.core.snapshot();
         let watching = snapshot
             .hosts
@@ -104,8 +113,8 @@ impl Daemon {
                 format!("{name}: {phase}")
             })
             .collect();
-        NotifierStatus {
-            configured: true,
+        ServerStatus {
+            running: true,
             version: env!("CARGO_PKG_VERSION").into(),
             pid: std::process::id(),
             self_name: self.self_name.clone(),
@@ -116,12 +125,15 @@ impl Daemon {
             pending: self.policy.lock().unwrap().pending(Instant::now()).len(),
             rss_kb: rss_kb(),
             web: self.web_url.lock().unwrap().clone(),
+            origin: self.origin.clone(),
         }
     }
 
-    /// Its configuration as it stands (subscriptions added since included): for whoever keeps it.
-    pub fn export(&self) -> NotifierConfig {
-        NotifierConfig { subscriptions: self.sender.store().list(), ..self.config.clone() }
+    /// Its configuration as it stands, with the machines and phones as they are now: for the copy
+    /// kept on the Mac.
+    pub fn export(&self) -> ServerConfig {
+        let hosts = self.core.snapshot().config.hosts;
+        ServerConfig { subscriptions: self.sender.store().list(), hosts, ..self.config.clone() }
     }
 }
 
@@ -130,93 +142,62 @@ enum Input {
     Alert(Box<Alert>),
 }
 
-/// Passes what the policy needs to the driver; tiles are never drawn here.
-struct DaemonSink(mpsc::UnboundedSender<Input>);
+/// The core's output: what the push policy needs goes to the driver; everything goes to the web
+/// app, if one is connected.
+struct DaemonSink {
+    policy: mpsc::UnboundedSender<Input>,
+    clients: Arc<ws::Clients>,
+}
 
 impl Sink for DaemonSink {
     fn event(&self, event: CoreEvent) {
+        self.clients.event(&event);
         if matches!(
             event,
             CoreEvent::Panes { .. } | CoreEvent::Attention { .. } | CoreEvent::Host { .. } | CoreEvent::HostRemoved { .. } | CoreEvent::Tailnet { .. }
         ) {
-            let _ = self.0.send(Input::Event(Box::new(event)));
+            let _ = self.policy.send(Input::Event(Box::new(event)));
         }
     }
-    fn frame(&self, _frame: Vec<u8>) {}
+    fn frame(&self, frame: Vec<u8>) {
+        self.clients.frame(frame);
+    }
     fn alert(&self, alert: Alert) {
-        let _ = self.0.send(Input::Alert(Box::new(alert)));
+        let _ = self.policy.send(Input::Alert(Box::new(alert)));
     }
 }
 
-/// Runs a notifier in `dir`: waits (up to `configure_within`) for its configuration on the
-/// control socket, then watches and pushes until it's stopped, and removes `dir`.
-pub async fn run(dir: RunDir, configure_within: Duration) -> anyhow::Result<()> {
-    // Before this, the folder may be another notifier's.
+/// Runs the server from its install folder until it's stopped, then removes its run folder.
+pub async fn run(home: Home, dir: RunDir) -> anyhow::Result<()> {
+    // Before this, the run folder may be another server's.
     let listener = ctl::bind(&dir.socket()).await?;
     cleanup_on_panic(dir.path().to_owned());
-    let (config_tx, config_rx) = oneshot::channel();
     let (stop_tx, stop_rx) = watch::channel(false);
     let lease = Arc::new(Lease::new(Duration::from_secs(7 * 86_400)));
-    let control = Arc::new(Control { configure: Mutex::new(Some(config_tx)), daemon: OnceLock::new(), lease: lease.clone(), stop: stop_tx.clone() });
+    let control = Arc::new(Control { daemon: OnceLock::new(), lease: lease.clone(), stop: stop_tx.clone() });
     tokio::spawn(ctl::serve(listener, control.clone()));
-    info!("waiting for a configuration on {}", dir.socket().display());
 
-    let mut stopped = stop_rx.clone();
-    let config = tokio::select! {
-        config = config_rx => config.ok(),
-        _ = tokio::time::sleep(configure_within) => {
-            info!("nobody configured me within {} s; leaving", configure_within.as_secs());
-            None
-        }
-        _ = signals() => None,
-        _ = stopped.changed() => None,
-    };
-    let Some((config, started)) = config else {
-        leave(&dir);
-        return Ok(());
-    };
-    lease.set_length(config.lease());
-    let web = config.web.clone();
-    let begun = async {
-        // The API's port first: a clash is an answer to Configure, not a surprise later.
-        let api = match web.as_ref() {
-            Some(w) => {
-                let listener = tokio::net::TcpListener::bind(w.listen.as_deref().unwrap_or("127.0.0.1:0")).await?;
-                let port = listener.local_addr()?.port();
-                Some((listener, port))
+    let started = async {
+        let config = home.load_config()?;
+        lease.set_length(config.lease());
+        let web = config.web.clone();
+        let daemon = start(config, &home, lease.clone()).await?;
+        if let Some(web) = web {
+            let target = serve_web(&daemon, &web, &dir, stop_rx.clone()).await?;
+            if web.tailscale_serve {
+                tokio::spawn(serve::keep_serving(target, web.https_port, stop_rx.clone()));
             }
-            None => None,
-        };
-        anyhow::Ok((start(config, dir.core_dir(), lease.clone()).await?, api))
+        }
+        anyhow::Ok(daemon)
     };
-    let (daemon, api) = match begun.await {
+    let daemon = match started.await {
         Ok(d) => d,
         Err(e) => {
-            let _ = started.send(Err(format!("{e:#}")));
-            // Let the reply go out before the socket does.
-            tokio::time::sleep(Duration::from_millis(200)).await;
             leave(&dir);
             return Err(e);
         }
     };
     let _ = control.daemon.set(daemon.clone());
-
-    if let (Some(web), Some((listener, port))) = (web, api) {
-        *daemon.web_url.lock().unwrap() = Some(format!("http://127.0.0.1:{port}"));
-        let router = http::router(daemon.clone());
-        let mut stopped = stop_rx.clone();
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, router)
-                .with_graceful_shutdown(async move {
-                    let _ = stopped.changed().await;
-                })
-                .await;
-        });
-        if web.tailscale_serve {
-            tokio::spawn(serve::keep_serving(port, web.https_port, stop_rx.clone()));
-        }
-    }
-    let _ = started.send(Ok(()));
 
     // macOS's /tmp cleaner deletes files untouched for three days.
     let touch_dir = dir.path().to_owned();
@@ -234,19 +215,47 @@ pub async fn run(dir: RunDir, configure_within: Duration) -> anyhow::Result<()> 
     let why = tokio::select! {
         _ = signals() => "a signal",
         _ = stopped.changed() => "told to stop",
-        _ = lease::expiry(&lease) => "nobody checked in before the lease ran out",
+        _ = lease::expiry(&lease) => "nobody used it before the lease ran out",
         _ = memory_ceiling() => "it used too much memory",
     };
     info!("stopping: {why}");
     let _ = stop_tx.send(true);
+    daemon.core.flush_ui_state();
     // Give the tailscale serve child a moment to end (its config goes with it).
     tokio::time::sleep(Duration::from_millis(500)).await;
     leave(&dir);
     Ok(())
 }
 
-/// Leaves no trace: the run folder, and (best effort) the private tmux server's socket file,
-/// which tmux may leave behind once the notifier's pane — its last — closes.
+/// Starts the API: on a unix socket in the run folder (only this user and `tailscale serve`,
+/// which runs as root, can reach it), or on `web.listen` (tests, development). Returns the target
+/// for `tailscale serve`.
+async fn serve_web(d: &Arc<Daemon>, web: &config::WebConfig, dir: &RunDir, stop: watch::Receiver<bool>) -> anyhow::Result<String> {
+    let router = http::router(d.clone());
+    let shutdown = |mut stop: watch::Receiver<bool>| async move {
+        let _ = stop.changed().await;
+    };
+    let target = match &web.listen {
+        Some(addr) => {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            let addr = listener.local_addr()?;
+            tokio::spawn(async move { axum::serve(listener, router).with_graceful_shutdown(shutdown(stop)).await });
+            format!("http://{addr}")
+        }
+        None => {
+            let socket = dir.web_socket();
+            let _ = std::fs::remove_file(&socket);
+            let listener = tokio::net::UnixListener::bind(&socket)?;
+            tokio::spawn(async move { axum::serve(listener, router).with_graceful_shutdown(shutdown(stop)).await });
+            format!("unix:{}", socket.display())
+        }
+    };
+    *d.web_url.lock().unwrap() = Some(target.clone());
+    Ok(target)
+}
+
+/// Leaves no trace of this run: the run folder, and (best effort) the private tmux server's
+/// socket file, which tmux may leave behind once the server's pane — its last — closes.
 fn leave(dir: &RunDir) {
     dir.cleanup();
     if let Some(name) = std::env::var("CONSULS_TMUX_NAME").ok().filter(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')) {
@@ -288,49 +297,70 @@ async fn signals() {
     }
 }
 
-/// Without systemd's limits around it, a notifier gone wrong must not eat a machine that's
-/// short of memory: it stops above 400 MB (Linux; macOS has no cheap reading).
+/// A server gone wrong must not eat a machine that's short of memory: it stops above 400 MB
+/// (Linux; macOS has no cheap reading).
 async fn memory_ceiling() {
     loop {
         tokio::time::sleep(Duration::from_secs(60)).await;
         if rss_kb().is_some_and(|kb| kb > 400_000) {
-            warn!("using {} MB", rss_kb().unwrap_or(0) / 1024);
+            warn!("using {} MB: stopping (the phone app is gone until it's started again)", rss_kb().unwrap_or(0) / 1024);
             return;
         }
     }
 }
 
-/// Starts the core, the push policy and its sender, as configured. The API is [`http::router`].
-pub async fn start(config: NotifierConfig, core_dir: PathBuf, lease: Arc<Lease>) -> anyhow::Result<Arc<Daemon>> {
+/// Starts the core, the push policy and its sender. The API is [`http::router`].
+pub async fn start(config: ServerConfig, home: &Home, lease: Arc<Lease>) -> anyhow::Result<Arc<Daemon>> {
+    let core_dir = home.core_dir();
     std::fs::create_dir_all(&core_dir)?;
     let me = config::me().await.unwrap_or_default();
-    // Never this machine over SSH too: it's already @local, and every push would come twice.
-    let hosts: Vec<HostConfig> = config.hosts.iter().filter(|h| me.id.is_empty() || !h.id.eq_ignore_ascii_case(&me.id)).cloned().collect();
-    if hosts.len() != config.hosts.len() {
-        warn!("{} is this machine (watched as @local); not watching it again", me.id);
+    // The machines are the core's own config, edited from the app; the installed config only
+    // seeds it. Never this machine over SSH too: it's already @local, and every push would come
+    // twice.
+    let core_config = core_dir.join("config.json");
+    if !core_config.exists() && !config.hosts.is_empty() {
+        let hosts: Vec<HostConfig> = config.hosts.iter().filter(|h| me.id.is_empty() || !h.id.eq_ignore_ascii_case(&me.id)).cloned().collect();
+        std::fs::write(&core_config, serde_json::to_string_pretty(&AppConfig { hosts, ..Default::default() })?)?;
     }
-    std::fs::write(core_dir.join("config.json"), serde_json::to_string(&AppConfig { hosts, ..Default::default() })?)?;
     let self_name = config.self_name.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| if me.id.is_empty() { "this machine".into() } else { me.id.clone() });
     let web = config.web.clone();
     let owners = web.as_ref().map(|w| w.owner_logins.clone()).filter(|o| !o.is_empty()).unwrap_or_else(|| me.login.clone().into_iter().collect());
     let origin = web.as_ref().and_then(|w| w.public_origin.clone()).unwrap_or_else(|| format!("https://{}", me.dns_name));
     let subject = config.vapid.subject.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| origin.clone());
     let vapid = Vapid::from_base64(&config.vapid.private_key, subject)?;
-    let store = Arc::new(Store::new(config.subscriptions.clone()));
+    let store = Arc::new(Store::open(home.subscriptions_path(), config.subscriptions.clone())?);
     let sender = Arc::new(Sender::new(vapid, store, config.allow_insecure_endpoints)?);
 
     let (tx, rx) = mpsc::unbounded_channel();
-    let core = Core::new(core_dir, Arc::new(DaemonSink(tx)));
+    let clients = ws::Clients::new();
+    let core = Core::new(core_dir, Arc::new(DaemonSink { policy: tx, clients: clients.clone() }));
     core.start();
-    // Nothing draws tiles here.
+    // Tiles are only drawn for a desktop's grid.
     core.set_visible_panes(Some(Vec::new()));
     let mut policy = Policy::new(config.delays());
     if let Some(name) = config.self_name.clone().filter(|s| !s.is_empty()) {
         policy.name_this_machine(name);
     }
     let policy = Mutex::new(policy);
-    info!("watching as {self_name}{}", if config.web.is_some() { format!("; the web app is at {origin} for {}", owners.join(", ")) } else { String::new() });
-    let daemon = Arc::new(Daemon { core, policy, sender, config, me, self_name, owners, origin, lease, started: push::now(), web_url: Mutex::new(None), approvals: Default::default() });
+    info!("serving as {self_name}{}", if config.web.is_some() { format!("; the web app is at {origin} for {}", owners.join(", ")) } else { String::new() });
+    let started = push::now();
+    let instance = format!("{:x}-{:x}", started, std::process::id());
+    let daemon = Arc::new(Daemon {
+        core,
+        policy,
+        sender,
+        config,
+        me,
+        self_name,
+        owners,
+        origin,
+        lease,
+        started,
+        instance,
+        web_url: Mutex::new(None),
+        approvals: Default::default(),
+        clients,
+    });
     tokio::spawn(drive(daemon.clone(), rx));
     tokio::spawn(revive(daemon.clone()));
     Ok(daemon)
@@ -358,7 +388,7 @@ async fn drive(d: Arc<Daemon>, mut rx: mpsc::UnboundedReceiver<Input>) {
                         info!("{} waits for Tailscale SSH's check: approve it at {url}", state.id);
                         let payload = Payload {
                             title: format!("Approve SSH to {}", state.id),
-                            body: "Tailscale wants a check before the notifier can watch it.".into(),
+                            body: "Tailscale wants a check before Consuls can reach it.".into(),
                             tag: format!("tailscale-check:{}", state.id),
                             url: url.clone(),
                         };
@@ -413,57 +443,38 @@ pub fn rss_kb() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
-    use crate::ctl::Request;
 
-    fn scratch(name: &str) -> RunDir {
-        let path = std::env::temp_dir().join(format!("chm-ctl-{name}-{}", std::process::id()));
+    fn scratch(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("chm-srv-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&path);
-        RunDir::prepare(path).unwrap()
-    }
-
-    async fn socket_of(dir: &Path) -> PathBuf {
-        let socket = dir.join("ctl.sock");
-        while !socket.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        socket
+        path
     }
 
     #[tokio::test]
-    async fn leaves_when_nobody_configures_it() {
-        let dir = scratch("timeout");
-        let path = dir.path().to_owned();
-        let running = tokio::spawn(run(dir, Duration::from_millis(500)));
-        let status = ctl::request(&socket_of(&path).await, &Request::Status).await.unwrap();
-        assert_eq!(status["configured"], false);
-        assert!(ctl::request(&path.join("ctl.sock"), &Request::Export).await.unwrap_err().to_string().contains("not configured"));
-        running.await.unwrap().unwrap();
-        assert!(!path.exists(), "its folder is gone");
-    }
-
-    #[tokio::test]
-    async fn a_configuration_that_cant_start_is_answered_and_cleaned_up() {
-        let dir = scratch("bad-key");
-        let path = dir.path().to_owned();
-        let running = tokio::spawn(run(dir, Duration::from_secs(10)));
-        let config = serde_json::from_value(serde_json::json!({
-            "vapid": { "privateKey": "not a key" },
-            "selfName": "test",
-            "web": { "tailscaleServe": false },
-        }))
-        .unwrap();
-        let err = ctl::request(&socket_of(&path).await, &Request::Configure { config: Box::new(config) }).await.unwrap_err();
+    async fn a_configuration_that_cant_start_is_reported_and_cleaned_up() {
+        let base = scratch("bad-key");
+        let home = Home::open(base.join("home")).unwrap();
+        home::write_private(&home.config_path(), br#"{"vapid":{"privateKey":"not a key"},"selfName":"test"}"#).unwrap();
+        let dir = RunDir::prepare(base.join("run")).unwrap();
+        let err = run(home, dir).await.unwrap_err();
         assert!(err.to_string().to_lowercase().contains("key"), "{err}");
-        assert!(running.await.unwrap().is_err());
-        assert!(!path.exists(), "its folder is gone");
+        assert!(!base.join("run").exists(), "its run folder is gone");
+        assert!(base.join("home/config.json").exists(), "its install folder stays");
+        let _ = std::fs::remove_dir_all(base);
     }
 
     #[tokio::test]
-    async fn a_dead_notifiers_socket_is_replaced_and_a_live_one_refused() {
-        let dir = scratch("stale");
+    async fn not_installed() {
+        let base = scratch("empty");
+        let err = run(Home::open(base.join("home")).unwrap(), RunDir::prepare(base.join("run")).unwrap()).await.unwrap_err();
+        assert!(err.to_string().contains("not installed"), "{err}");
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn a_dead_servers_socket_is_replaced_and_a_live_one_refused() {
+        let dir = RunDir::prepare(scratch("stale")).unwrap();
         let socket = dir.socket();
         drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
         assert!(socket.exists());

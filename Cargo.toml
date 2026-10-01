@@ -17,8 +17,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = "12"
 
-# The notifier binary the apps upload to machines: small.
-[profile.notifier]
+# The server binary uploaded to machines: small.
+[profile.server]
 inherits = "release"
 opt-level = "s"
 lto = true

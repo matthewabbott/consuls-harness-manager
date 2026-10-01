@@ -1,14 +1,15 @@
-//! Publishing the web app on the tailnet: a foreground `tailscale serve`, as the notifier's
-//! child. tailscaled drops a foreground serve's config when that process ends (even on
-//! `kill -9`), so the address is gone as soon as the notifier is.
+//! Publishing the web app on the tailnet: a foreground `tailscale serve`, as the server's child.
+//! tailscaled drops a foreground serve's config when that process ends (even on `kill -9`), so
+//! the address is gone as soon as the server is.
 
 use std::time::Duration;
 
 use tokio::sync::watch;
 use tracing::{info, warn};
 
-/// Keeps `tailscale serve --https=<https> http://127.0.0.1:<port>` running until `stop`.
-pub async fn keep_serving(port: u16, https: u16, mut stop: watch::Receiver<bool>) {
+/// Keeps `tailscale serve --https=<https> <target>` running until `stop`; `target` is
+/// `unix:<socket>` (or `http://<address>`).
+pub async fn keep_serving(target: String, https: u16, mut stop: watch::Receiver<bool>) {
     let Some(cli) = chm_core::tailscale::find_cli() else {
         warn!("no tailscale CLI: the web app isn't published on the tailnet");
         return;
@@ -16,7 +17,7 @@ pub async fn keep_serving(port: u16, https: u16, mut stop: watch::Receiver<bool>
     let mut backoff = Duration::from_secs(5);
     loop {
         let mut cmd = tokio::process::Command::new(&cli);
-        cmd.args(["serve", &format!("--https={https}"), &format!("http://127.0.0.1:{port}")])
+        cmd.args(["serve", &format!("--https={https}"), &target])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .kill_on_drop(true);

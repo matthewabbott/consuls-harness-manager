@@ -14,10 +14,11 @@ publicOrigin: string | null,
  */
 allowOrigins: Array<string>, 
 /**
- * Publish it on the tailnet with a foreground `tailscale serve` (gone when the notifier is).
+ * Publish it on the tailnet with a foreground `tailscale serve` (gone when the server is).
  */
 tailscaleServe: boolean, httpsPort: number, 
 /**
- * Where the API listens; default any free port on 127.0.0.1.
+ * A TCP address for the API (tests, development); default a unix socket in the run folder,
+ * which only this user and `tailscale serve` can reach.
  */
 listen: string | null, };
