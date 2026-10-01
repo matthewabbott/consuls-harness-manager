@@ -27,7 +27,7 @@ import type { TailnetStatus } from "./bindings/TailnetStatus";
 import type { UiPrefs } from "./bindings/UiPrefs";
 
 export interface Backend {
-  readonly kind: "tauri" | "mock";
+  readonly kind: "tauri" | "mock" | "web";
   getSnapshot(): Promise<CoreSnapshot>;
   onEvent(cb: (ev: CoreEvent) => void): Promise<() => void>;
   /** Alerts the shell surfaced (sound/toast) and toast clicks asking to open a pane. */
@@ -125,88 +125,110 @@ function toBytes(msg: unknown): Uint8Array {
   return new Uint8Array();
 }
 
+/** A call into the core: a Tauri command in the desktop app, a WebSocket call in the web app. */
+export type Call = <T>(method: string, args?: Record<string, unknown>) => Promise<T>;
+
+/**
+ * The core's commands, the same for every backend (the server mirrors them: crates/chm-daemon/src/
+ * rpc.rs). What reaches the shell itself (windows, files on this PC, binary bodies) is added by
+ * each backend.
+ */
+export function commands(call: Call) {
+  return {
+    getSnapshot: () => call<CoreSnapshot>("get_snapshot"),
+    quitApp: () => call<void>("quit_app"),
+    localShells: () => call<LocalShell[]>("local_shells"),
+    localDrives: () => call<DriveInfo[]>("local_drives"),
+    setFocus: (focus: FocusState) => call<void>("set_focus", { focus }),
+    setSoundPrefs: (prefs: SoundPrefs) => call<void>("set_sound_prefs", { prefs }),
+    testChime: (kind: AlertKind, volume: number) => call<void>("test_chime", { kind, volume }),
+    ackPane: (key: number) => call<void>("ack_pane", { key }),
+    setPaneMuted: (key: number, muted: boolean) => call<void>("set_pane_muted", { key, muted }),
+    upsertHost: (config: HostConfig) => call<void>("upsert_host", { config }),
+    removeHost: (id: string) => call<void>("remove_host", { id }),
+    connectHost: (id: string) => call<void>("connect_host", { id }),
+    disconnectHost: (id: string) => call<void>("disconnect_host", { id }),
+    reconnectHost: (id: string) => call<void>("reconnect_host", { id }),
+    forgetHostKey: (id: string) => call<void>("forget_host_key", { id }),
+    refreshTailnet: () => call<TailnetStatus>("refresh_tailnet"),
+    openExternal: (url: string) => call<void>("open_external", { url }),
+    revealPath: (host: string, path: string) => call<void>("reveal_path", { host, path }),
+    vscodeStatus: () => call<VsCodeStatus>("vscode_status"),
+    openInVscode: (host: string, path: string, line?: number, col?: number) => call<void>("open_in_vscode", { host, path, line: line ?? null, col: col ?? null }),
+    setUiPrefs: (prefs: UiPrefs) => call<void>("set_ui_prefs", { prefs }),
+    setVisiblePanes: (keys: number[] | null) => call<void>("set_visible_panes", { keys }),
+    streamPane: (key: number, on: boolean) => call<void>("stream_pane", { key, on }),
+    sendKeys: (key: number, keys: string[]) => call<void>("send_keys", { key, keys }),
+    sendText: (key: number, text: string) => call<void>("send_text", { key, text }),
+    pasteText: (key: number, text: string) => call<void>("paste_text", { key, text }),
+    sendInput: (key: number, data: string) => call<void>("send_input", { key, data }),
+    submitPrompt: (key: number, text: string, images?: string[]) => call<void>("submit_prompt", { key, text, images: images ?? [] }),
+    getUiState: () => call<Record<string, string>>("get_ui_state"),
+    setUiState: (key: string, value: string | null) => call<void>("set_ui_state", { key, value }),
+    createPane: (spec: NewPaneSpec) => call<number>("create_pane", { spec }),
+    setPaneHidden: (key: number, hidden: boolean) => call<void>("set_pane_hidden", { key, hidden }),
+    createLabel: (name: string, color: string) => call<LabelDef>("create_label", { name, color }),
+    updateLabel: (label: LabelDef) => call<void>("update_label", { label }),
+    deleteLabel: (id: string) => call<void>("delete_label", { id }),
+    setPaneLabels: (key: number, labels: string[]) => call<void>("set_pane_labels", { key, labels }),
+    renamePane: (key: number, name: string | null) => call<void>("rename_pane", { key, name }),
+    tmuxOp: (key: number, op: TmuxOp) => call<number | null>("tmux_op", { key, op }),
+    setPaneBell: (key: number, bell: boolean | null) => call<void>("set_pane_bell", { key, bell }),
+    setPaneNotify: (key: number, mode: NotifyMode | null) => call<void>("set_pane_notify", { key, mode }),
+    resizePane: (key: number, cols: number, rows: number) => call<ResizeOutcome>("resize_pane", { key, cols, rows }),
+    releasePaneSize: (key: number) => call<void>("release_pane_size", { key }),
+    terminatePane: (key: number, force: boolean) => call<TerminateOutcome>("terminate_pane", { key, force }),
+    listDir: (host: string, path: string) => call<DirListing>("list_dir", { host, path }),
+    fsOp: (host: string, op: FsOp) => call<void>("fs_op", { host, op }),
+    fsCount: (host: string, path: string) => call<number>("fs_count", { host, path }),
+    gitStatus: (host: string, dir: string) => call<GitStatus | null>("git_status", { host, dir }),
+    readFile: (host: string, path: string) => call<FileContent>("read_file", { host, path }),
+    gitHead: (host: string, path: string) => call<HeadVersion>("git_head", { host, path }),
+    readBytes: (host: string, path: string) => call<ArrayBuffer>("read_bytes", { host, path }),
+    statFile: (host: string, path: string) => call<FileStamp | null>("stat_file", { host, path }),
+    writeFile: (host: string, path: string, text: string, bom: boolean, expect: FileStamp | null) =>
+      call<FileStamp>("write_file", { host, path, text, bom, expect }),
+    integrationStatus: (host: string) => call<IntegrationStatus>("integration_status", { host }),
+    installIntegration: (host: string) => call<IntegrationStatus>("install_integration", { host }),
+    uninstallIntegration: (host: string) => call<IntegrationStatus>("uninstall_integration", { host }),
+  };
+}
+
 async function tauriBackend(): Promise<Backend> {
   const { invoke, Channel } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
   return {
     kind: "tauri",
-    getSnapshot: () => invoke("get_snapshot"),
+    ...commands((method, args) => invoke(method, args)),
     onEvent: async (cb) => listen<CoreEvent>("core-event", (e) => cb(e.payload)),
     onAlert: async (cb) => listen<Alert>("alert", (e) => cb(e.payload)),
     onFocusPane: async (cb) => listen<number>("focus-pane", (e) => cb(e.payload)),
     onConfirmQuit: async (cb) => listen<number>("confirm-quit", (e) => cb(e.payload)),
-    quitApp: () => invoke("quit_app"),
-    localShells: () => invoke("local_shells"),
-    localDrives: () => invoke("local_drives"),
-    setFocus: (focus) => invoke("set_focus", { focus }),
-    setSoundPrefs: (prefs) => invoke("set_sound_prefs", { prefs }),
-    testChime: (kind, volume) => invoke("test_chime", { kind, volume }),
     setWindowTitle: async (title) => {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setTitle(title);
     },
-    ackPane: (key) => invoke("ack_pane", { key }),
-    setPaneMuted: (key, muted) => invoke("set_pane_muted", { key, muted }),
     subscribeFrames: async (cb) => {
       const channel = new Channel<unknown>((msg) => cb(toBytes(msg)));
       await invoke("subscribe_frames", { channel });
     },
-    upsertHost: (config) => invoke("upsert_host", { config }),
-    removeHost: (id) => invoke("remove_host", { id }),
-    connectHost: (id) => invoke("connect_host", { id }),
-    disconnectHost: (id) => invoke("disconnect_host", { id }),
-    reconnectHost: (id) => invoke("reconnect_host", { id }),
-    forgetHostKey: (id) => invoke("forget_host_key", { id }),
-    refreshTailnet: () => invoke("refresh_tailnet"),
-    openExternal: (url) => invoke("open_external", { url }),
-    revealPath: (host, path) => invoke("reveal_path", { host, path }),
-    vscodeStatus: () => invoke("vscode_status"),
-    openInVscode: (host, path, line, col) => invoke("open_in_vscode", { host, path, line: line ?? null, col: col ?? null }),
-    setUiPrefs: (prefs) => invoke("set_ui_prefs", { prefs }),
-    setVisiblePanes: (keys) => invoke("set_visible_panes", { keys }),
-    streamPane: (key, on) => invoke("stream_pane", { key, on }),
-    sendKeys: (key, keys) => invoke("send_keys", { key, keys }),
-    sendText: (key, text) => invoke("send_text", { key, text }),
-    pasteText: (key, text) => invoke("paste_text", { key, text }),
-    sendInput: (key, data) => invoke("send_input", { key, data }),
-    submitPrompt: (key, text, images) => invoke("submit_prompt", { key, text, images: images ?? [] }),
     // Raw bytes as the request body; the rest as headers.
-    getUiState: () => invoke("get_ui_state"),
-    setUiState: (key, value) => invoke("set_ui_state", { key, value }),
     savePaste: (host, bytes, ext) => invoke("save_paste", bytes, { headers: { "chm-host": host, "chm-ext": ext } }),
-    createPane: (spec) => invoke("create_pane", { spec }),
-    setPaneHidden: (key, hidden) => invoke("set_pane_hidden", { key, hidden }),
-    createLabel: (name, color) => invoke("create_label", { name, color }),
-    updateLabel: (label) => invoke("update_label", { label }),
-    deleteLabel: (id) => invoke("delete_label", { id }),
-    setPaneLabels: (key, labels) => invoke("set_pane_labels", { key, labels }),
-    renamePane: (key, name) => invoke("rename_pane", { key, name }),
-    tmuxOp: (key, op) => invoke("tmux_op", { key, op }),
-    setPaneBell: (key, bell) => invoke("set_pane_bell", { key, bell }),
-    setPaneNotify: (key, mode) => invoke("set_pane_notify", { key, mode }),
-    resizePane: (key, cols, rows) => invoke("resize_pane", { key, cols, rows }),
-    releasePaneSize: (key) => invoke("release_pane_size", { key }),
-    terminatePane: (key, force) => invoke("terminate_pane", { key, force }),
-    listDir: (host, path) => invoke("list_dir", { host, path }),
-    fsOp: (host, op) => invoke("fs_op", { host, op }),
-    fsCount: (host, path) => invoke("fs_count", { host, path }),
-    gitStatus: (host, dir) => invoke("git_status", { host, dir }),
-    readFile: (host, path) => invoke("read_file", { host, path }),
-    gitHead: (host, path) => invoke("git_head", { host, path }),
-    readBytes: (host, path) => invoke("read_bytes", { host, path }),
-    statFile: (host, path) => invoke("stat_file", { host, path }),
-    writeFile: (host, path, text, bom, expect) => invoke("write_file", { host, path, text, bom, expect }),
-    integrationStatus: (host) => invoke("integration_status", { host }),
-    installIntegration: (host) => invoke("install_integration", { host }),
-    uninstallIntegration: (host) => invoke("uninstall_integration", { host }),
   };
 }
+
+/** The phone's web app, served by the Consuls server (built with vite.web.config.ts). */
+export const inWebApp = !inTauri && import.meta.env.VITE_CONSULS_WEB === "1";
 
 let backendPromise: Promise<Backend> | null = null;
 
 export function backend(): Promise<Backend> {
   if (!backendPromise) {
-    backendPromise = inTauri ? tauriBackend() : import("./mock").then((m) => m.mockBackend());
+    backendPromise = inTauri
+      ? tauriBackend()
+      : inWebApp
+        ? import("./webBackend").then((m) => m.webBackend())
+        : import("./mock").then((m) => m.mockBackend());
   }
   return backendPromise;
 }

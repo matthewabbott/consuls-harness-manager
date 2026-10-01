@@ -1,7 +1,27 @@
-// Web Push on the phone: the service worker, and this device's subscription with the daemon.
-// On iOS it only works from the Home Screen app, and asking needs a tap.
+// Web Push on the phone: the service worker, and this device's subscription with the Consuls
+// server. On iOS it only works from the Home Screen app, and asking needs a tap.
 
-import { api } from "./api";
+import type { PushInfo } from "../ipc/bindings/PushInfo";
+import type { Subscription } from "../ipc/bindings/Subscription";
+
+type NewSubscription = Pick<Subscription, "endpoint" | "keys" | "label">;
+
+/** The server's push endpoints (crates/chm-daemon/src/http.rs), same origin. */
+async function post(path: string, body: unknown): Promise<void> {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error((await res.text()) || res.statusText);
+}
+
+export const api = {
+  info: async (): Promise<PushInfo> => {
+    const res = await fetch("/api/push");
+    if (!res.ok) throw new Error((await res.text()) || res.statusText);
+    return res.json();
+  },
+  subscribe: (sub: NewSubscription) => post("/api/push/subscribe", sub),
+  unsubscribe: (endpoint: string) => post("/api/push/unsubscribe", { endpoint }),
+  test: (endpoint: string) => post("/api/push/test", { endpoint }),
+};
 
 export type PushStatus = "unsupported" | "needs-install" | "denied" | "off" | "on";
 
@@ -51,8 +71,8 @@ export async function disable(): Promise<void> {
   await sub.unsubscribe();
 }
 
-/** Tells the daemon about this device again (every launch: Safari doesn't reliably say when a
- * subscription changes), subscribing afresh if the daemon's key changed. */
+/** Tells the server about this device again (every launch: Safari doesn't reliably say when a
+ * subscription changes), subscribing afresh if the server's key changed. */
 export async function resync(vapidKey: string): Promise<void> {
   let sub = await current();
   if (!sub || Notification.permission !== "granted") return;

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import TerminateDialog from "../components/TerminateDialog";
-import { backend } from "../ipc/backend";
+import { backend, inWebApp } from "../ipc/backend";
 import { useApp } from "../store/app";
 import { applyFrames } from "../term/tiles";
 import AddMachineSheet from "./AddMachineSheet";
@@ -37,6 +37,43 @@ function useVisibleHeight() {
   }, []);
 }
 
+/** `#pane=spark2/%3`, from a tapped notification (the server's own machine is `@local` here). */
+function paneFromHash(): { host: string; paneId: string } | null {
+  const m = window.location.hash.match(/^#pane=([^/]+)\/(.+)$/);
+  return m ? { host: decodeURIComponent(m[1]), paneId: decodeURIComponent(m[2]) } : null;
+}
+
+/** Opens the pane a tapped notification points at, once it's listed. */
+function useOpenFromNotification() {
+  const ready = useApp((s) => s.ready);
+  const panes = useApp((s) => s.panes);
+  const selfName = useApp((s) => s.tailnet?.selfNode?.id ?? null);
+  const [target, setTarget] = useState(paneFromHash);
+  useEffect(() => {
+    const onHash = () => setTarget(paneFromHash());
+    // The service worker focuses the open app and says where to go.
+    const onMessage = (e: MessageEvent) => {
+      if (e.data?.type === "open") window.location.hash = new URL(e.data.url, location.href).hash;
+    };
+    window.addEventListener("hashchange", onHash);
+    navigator.serviceWorker?.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      navigator.serviceWorker?.removeEventListener("message", onMessage);
+    };
+  }, []);
+  useEffect(() => {
+    if (!target || !ready) return;
+    const pane = Object.values(panes)
+      .flat()
+      .find((p) => p.tmux?.paneId === target.paneId && (p.host === target.host || (p.host === "@local" && target.host === selfName)));
+    if (!pane) return;
+    useApp.getState().setExpanded(pane.key);
+    setTarget(null);
+    history.replaceState(null, "", location.pathname);
+  }, [target, ready, panes, selfName]);
+}
+
 export default function App() {
   const ready = useApp((s) => s.ready);
   const expanded = useApp((s) => s.expanded);
@@ -46,6 +83,7 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const pane = useMemo(() => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)), [expanded, panes]);
   useVisibleHeight();
+  useOpenFromNotification();
 
   // The pane on screen went away (closed elsewhere): back to the list.
   useEffect(() => {
@@ -80,6 +118,18 @@ export default function App() {
       await b.setVisiblePanes([]);
       await b.subscribeFrames(applyFrames);
       if (b.kind === "mock") useApp.getState().notify("info", "Mock data: not inside the app.");
+      // The web app's connection came back (or events were missed): read everything again.
+      if (inWebApp) {
+        const { useConnection } = await import("../ipc/webBackend");
+        const unsub = useConnection.subscribe((s, prev) => {
+          if (s.epoch > prev.epoch) void b.getSnapshot().then((snap) => useApp.getState().init(snap));
+        });
+        const before = unlisten;
+        unlisten = () => {
+          before?.();
+          unsub();
+        };
+      }
     })().catch((e) => useApp.getState().notify("error", `Failed to start: ${e}`));
     return () => {
       cancelled = true;

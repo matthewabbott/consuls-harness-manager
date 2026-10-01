@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "dev:phone": "vite --config vite.phone.config.ts",
-    "build:phone": "tsc --noEmit && vite build --config vite.phone.config.ts",
+    "dev:web": "vite --config vite.web.config.ts",
+    "build:web": "tsc --noEmit && vite build --config vite.web.config.ts",
     "dev:mobile": "vite --config vite.mobile.config.ts",
     "build:mobile": "tsc --noEmit && vite build --config vite.mobile.config.ts",
     "preview": "vite preview",

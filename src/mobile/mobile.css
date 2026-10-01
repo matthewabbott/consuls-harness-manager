@@ -7,6 +7,15 @@ body,
   height: var(--visible-height, 100%);
 }
 
+/* No double-tap zoom (iOS ignores user-scalable=no); the terminal pinches by itself. */
+html {
+  touch-action: manipulation;
+}
+
+.terminal-frame {
+  touch-action: pan-x pan-y;
+}
+
 body {
   font-family: -apple-system, system-ui, var(--font-sans);
   -webkit-tap-highlight-color: transparent;

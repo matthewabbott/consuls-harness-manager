@@ -51,19 +51,22 @@ export default function MachinesScreen({ onSettings, onAdd }: { onSettings(): vo
   const hosts = useApp((s) => s.hosts);
   const panes = useApp((s) => s.panes);
   const attention = useApp((s) => s.attention);
+  // The web app's server watches its own machine as `@local`.
+  const selfName = useApp((s) => s.tailnet?.selfNode?.id ?? "this machine");
   // Shells too by default: on the phone they're as much a reason to open the app as agents.
   const [shells, setShells] = useState(true);
 
   const machines = useMemo(() => {
-    const ids = [...new Set([...config.hosts.map((h) => h.id), ...Object.keys(hosts)])].filter((id) => id !== "@local");
+    const ids = [...new Set([...(hosts["@local"] ? ["@local"] : []), ...config.hosts.map((h) => h.id), ...Object.keys(hosts)])];
     return ids.map((id) => ({
       id,
+      name: id === "@local" ? selfName : id,
       phase: hosts[id]?.phase,
       panes: (panes[id] ?? [])
         .filter((p) => !p.hidden && (shells || trackable(p)))
         .sort((a, b) => rank(attention[a.key]) - rank(attention[b.key]) || displayTitle(a).localeCompare(displayTitle(b))),
     }));
-  }, [config.hosts, hosts, panes, attention, shells]);
+  }, [config.hosts, hosts, panes, attention, shells, selfName]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -95,7 +98,7 @@ export default function MachinesScreen({ onSettings, onAdd }: { onSettings(): vo
           return (
             <section key={m.id} className="mt-4">
               <div className="mb-2 flex items-center gap-2 px-1">
-                <h2 className="shrink-0 text-[15px] font-semibold text-mist-100">{m.id}</h2>
+                <h2 className="shrink-0 text-[15px] font-semibold text-mist-100">{m.name}</h2>
                 {phase && <span className={`min-w-0 truncate text-[12px] ${phase.tone}`}>{phase.text}</span>}
                 {check && (
                   <button

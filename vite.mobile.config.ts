@@ -1,34 +1,18 @@
-// The iPhone app's frontend (src/mobile/), in the Tauri iOS shell.
+// The native iPhone app's frontend (src/mobile/ in the Tauri iOS shell; shelved — the phone app is
+// the web app now, vite.web.config.ts).
 //   npm run build:mobile  → dist-mobile/index.html (tauri.ios.conf.json's frontendDist)
 //   npm run dev:mobile    → http://localhost:1430, with the mock backend in a browser (phone-sized
 //                           window) or the Simulator/iPhone via `tauri ios dev`
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+import { pageAsIndex } from "./vite.pages";
+
 const host = process.env.TAURI_DEV_HOST;
 
-/** The iOS shell loads "/" (dev) and index.html (built): both are mobile.html here. */
-function mobileIndex(): Plugin {
-  return {
-    name: "mobile-index",
-    // After Vite's own HTML plugin has added the page to the bundle.
-    enforce: "post",
-    configureServer(server) {
-      server.middlewares.use((req, _res, next) => {
-        if (req.url === "/" || req.url === "/index.html") req.url = "/mobile.html";
-        next();
-      });
-    },
-    generateBundle(_options, bundle) {
-      const page = bundle["mobile.html"];
-      if (page) page.fileName = "index.html";
-    },
-  };
-}
-
 export default defineConfig({
-  plugins: [react(), tailwindcss(), mobileIndex()],
+  plugins: [react(), tailwindcss(), pageAsIndex("mobile.html")],
   publicDir: false,
   clearScreen: false,
   server: {

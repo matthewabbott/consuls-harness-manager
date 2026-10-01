@@ -1,6 +1,6 @@
 node_modules/
 dist/
-dist-phone/
+dist-web/
 target/
 src-tauri/gen/schemas/
 *.log

@@ -50,6 +50,8 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
   const fontPref = useViewPrefs((s) => s.prefs[id]?.fontSize ?? null);
   const connected = useApp((s) => s.hosts[pane.host]?.phase.phase === "connected");
   const att = useApp((s) => s.attention[pane.key]);
+  // The web app's server is `@local`.
+  const where = useApp((s) => (pane.host === "@local" ? (s.tailnet?.selfNode?.id ?? "this machine") : pane.host));
   const st = status(att);
   const harness = pane.harness ?? "shell";
   const direct = isDirect(pane);
@@ -181,7 +183,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           <div className="truncate text-[15px] font-semibold text-mist-100">{displayTitle(pane)}</div>
           <div className="truncate text-[12px]">
             <span className={st.tone}>{st.text || HARNESS_NAME[harness]}</span>
-            <span className="text-mist-500"> · {pane.host}</span>
+            <span className="text-mist-500"> · {where}</span>
           </div>
         </div>
         {keys.pending && keys.prefix && <PrefixPending prefix={keys.prefix} />}
@@ -231,7 +233,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
         </div>
       )}
 
-      <div ref={frameRef} className={`relative min-h-0 flex-1 overflow-auto bg-[#0e1119] px-1.5 py-1 ${direct ? "ring-1 ring-rose-500/40" : ""}`}>
+      <div ref={frameRef} className={`terminal-frame relative min-h-0 flex-1 overflow-auto bg-[#0e1119] px-1.5 py-1 ${direct ? "ring-1 ring-rose-500/40" : ""}`}>
         <div ref={zoomRef} className="inline-block origin-top-left">
           <TerminalView
             ref={termRef}

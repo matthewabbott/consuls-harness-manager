@@ -2,7 +2,7 @@
 // tapped, and keeps the app's shell cached so it still opens while no notifier serves it.
 // Every push must show a notification: iOS drops subscriptions that receive silent ones.
 
-const SHELL = "consuls-shell-v1";
+const SHELL = "consuls-shell-v2";
 // A push may only open this app, or Tailscale's SSH approval page: anyone holding the push key
 // could otherwise send you a link to anywhere.
 const ALLOWED_ELSEWHERE = ["https://login.tailscale.com/"];

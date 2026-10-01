@@ -1,9 +1,10 @@
 import { ChevronLeft, Plus } from "lucide-react";
 import { useState } from "react";
 
-import { backend } from "../ipc/backend";
+import { backend, inWebApp } from "../ipc/backend";
 import { phaseText } from "../lib/agents";
 import { useApp } from "../store/app";
+import NotificationSettings from "./NotificationSettings";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -72,7 +73,12 @@ export default function SettingsScreen({ onBack, onAdd }: { onBack(): void; onAd
 
         <Section title="Tailnet">
           <div className="px-4 py-3 text-[14px] leading-snug text-mist-300">
-            {tailnet?.via ? (
+            {inWebApp && tailnet?.selfNode ? (
+              <>
+                Consuls runs on <span className="text-mist-100">{tailnet.selfNode.id}</span>
+                {tailnet.tailnetName && <> on {tailnet.tailnetName}</>}, and reaches your other machines from there.
+              </>
+            ) : tailnet?.via ? (
               <>
                 This iPhone is <span className="text-mist-100">{tailnet.selfNode?.id ?? "not recognised"}</span>
                 {tailnet.tailnetName && <> on {tailnet.tailnetName}</>}. The list of machines comes from{" "}
@@ -85,10 +91,14 @@ export default function SettingsScreen({ onBack, onAdd }: { onBack(): void; onAd
         </Section>
 
         <Section title="Notifications">
-          <div className="px-4 py-3 text-[14px] leading-snug text-mist-300">
-            Pushes come through the Consuls web app on your Home Screen, from a notifier running on one of your machines. Flip Notify on the
-            agents you want to hear from; it's shared with every device.
-          </div>
+          {inWebApp ? (
+            <NotificationSettings />
+          ) : (
+            <div className="px-4 py-3 text-[14px] leading-snug text-mist-300">
+              Pushes come through the Consuls web app on your Home Screen. Flip Notify on the agents you want to hear from; it's shared
+              with every device.
+            </div>
+          )}
         </Section>
       </main>
     </div>
