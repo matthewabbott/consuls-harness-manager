@@ -8,6 +8,7 @@
 //! stops — at reboot, when told to, or when nobody has checked in for its lease (7 days).
 #![cfg(unix)]
 
+pub mod approvals;
 pub mod config;
 pub mod ctl;
 pub mod http;
@@ -55,6 +56,7 @@ pub struct Daemon {
     pub started: u64,
     /// Where the API listens, once it does.
     pub web_url: Mutex<Option<String>>,
+    pub approvals: Mutex<approvals::Approvals>,
 }
 
 /// What `ctl status` says.
@@ -82,6 +84,11 @@ pub struct NotifierStatus {
 }
 
 impl Daemon {
+    /// A person showed up (the web app, or a check-in): approval pushes may come again.
+    pub fn human_here(&self) {
+        self.approvals.lock().unwrap().human(Instant::now().into_std());
+    }
+
     pub fn status(&self) -> NotifierStatus {
         let snapshot = self.core.snapshot();
         let watching = snapshot
@@ -323,7 +330,7 @@ pub async fn start(config: NotifierConfig, core_dir: PathBuf, lease: Arc<Lease>)
     }
     let policy = Mutex::new(policy);
     info!("watching as {self_name}{}", if config.web.is_some() { format!("; the web app is at {origin} for {}", owners.join(", ")) } else { String::new() });
-    let daemon = Arc::new(Daemon { core, policy, sender, config, me, self_name, owners, origin, lease, started: push::now(), web_url: Mutex::new(None) });
+    let daemon = Arc::new(Daemon { core, policy, sender, config, me, self_name, owners, origin, lease, started: push::now(), web_url: Mutex::new(None), approvals: Default::default() });
     tokio::spawn(drive(daemon.clone(), rx));
     tokio::spawn(revive(daemon.clone()));
     Ok(daemon)
@@ -331,7 +338,6 @@ pub async fn start(config: NotifierConfig, core_dir: PathBuf, lease: Arc<Lease>)
 
 /// Feeds the policy and sends what it decides, when it decides.
 async fn drive(d: Arc<Daemon>, mut rx: mpsc::UnboundedReceiver<Input>) {
-    let mut asked = std::collections::HashSet::new();
     loop {
         let deadline = d.policy.lock().unwrap().next_deadline();
         let due = async {
@@ -344,10 +350,10 @@ async fn drive(d: Arc<Daemon>, mut rx: mpsc::UnboundedReceiver<Input>) {
             input = rx.recv() => match input {
                 None => return,
                 Some(Input::Event(event)) => {
-                    // A machine waits for Tailscale SSH's check: send the approval link.
+                    // A machine waits for Tailscale SSH's check: send the approval link (see approvals).
                     if let CoreEvent::Host { state } = event.as_ref()
                         && let HostPhase::AwaitingTailscaleCheck { url } = &state.phase
-                        && asked.insert(url.clone())
+                        && d.approvals.lock().unwrap().due(&state.id, Instant::now().into_std())
                     {
                         info!("{} waits for Tailscale SSH's check: approve it at {url}", state.id);
                         let payload = Payload {

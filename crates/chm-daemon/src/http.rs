@@ -94,6 +94,7 @@ async fn guard(State(d): State<Arc<Daemon>>, req: Request, next: Next) -> Respon
         return reject(StatusCode::FORBIDDEN, "not yours: open it from your own tailnet device, through tailscale serve");
     }
     d.lease.renew(None);
+    d.human_here();
     if req.method() != Method::GET
         && req.method() != Method::HEAD
         && let Err(why) = same_origin_json(req.headers(), &d)

@@ -76,6 +76,10 @@ impl Control {
             }
             Request::Renew { days } => {
                 self.lease.renew(days.map(|d| std::time::Duration::from_secs(d * 86_400)));
+                // A check-in is someone using the app or the script.
+                if let Some(d) = self.daemon.get() {
+                    d.human_here();
+                }
                 Ok(serde_json::json!({ "leaseUntil": self.lease.until_unix() }))
             }
             Request::Status => Ok(match self.daemon.get() {
