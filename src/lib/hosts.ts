@@ -9,9 +9,16 @@ export const LOCAL_HOST = "@local";
 
 export const isLocal = (host: string): boolean => host === LOCAL_HOST;
 
+/** What `@local` is called: "This PC" in the desktop apps; the server's machine in the web app. */
+let localLabel = "This PC";
+
+export function setLocalLabel(label: string) {
+  localLabel = label;
+}
+
 /** How to show a host id. */
 export function hostLabel(host: string): string {
-  return isLocal(host) ? "This PC" : host;
+  return isLocal(host) ? localLabel : host;
 }
 
 export interface Machine {

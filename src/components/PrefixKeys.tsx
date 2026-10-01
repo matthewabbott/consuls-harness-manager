@@ -12,7 +12,7 @@ import { nextPaneTarget, PREFIX_HELP, prefixAction, prefixLabel, windowTarget, t
 type RenameWhat = "window" | "session";
 
 /** Opens a pane as soon as it's listed (a new window or split takes a moment to show up). */
-function openWhenListed(key: number) {
+export function openWhenListed(key: number) {
   const listed = () => Object.values(useApp.getState().panes).flat().some((p) => p.key === key);
   const open = () => {
     void backend().then((b) => b.ackPane(key));

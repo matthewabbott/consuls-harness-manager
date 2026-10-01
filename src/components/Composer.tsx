@@ -1,7 +1,7 @@
 import { defaultKeymap, history, historyKeymap, insertNewline } from "@codemirror/commands";
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
-import { CornerDownLeft, LoaderCircle, TriangleAlert, X } from "lucide-react";
+import { ArrowUp, CornerDownLeft, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -34,6 +34,11 @@ interface Props {
   pane: PaneInfo;
   /** Called when the user presses Escape in an empty composer (interrupt the agent). */
   onEscapeEmpty(): void;
+  /**
+   * Return sends (the desktop). Off on the phone, as phones usually do: Return is a new line
+   * and the button sends (⌘/Ctrl+Enter still sends from a keyboard).
+   */
+  returnSends?: boolean;
 }
 
 /** Sends the composer's text and pasted images; returns whether anything was sent. */
@@ -51,7 +56,7 @@ function submit(view: EditorView, id: string, key: number): boolean {
   return true;
 }
 
-const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pane, onEscapeEmpty }, ref) {
+const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pane, onEscapeEmpty, returnSends = true }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [focused, setFocused] = useState(false);
@@ -84,7 +89,9 @@ const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pane, onE
         extensions: [
           history(),
           EditorView.lineWrapping,
-          placeholder(`Message ${harnessLabel(pane.harness)}…  (Enter to send · Shift+Enter for a new line · paste images)`),
+          placeholder(
+            returnSends ? `Message ${harnessLabel(pane.harness)}…  (Enter to send · Shift+Enter for a new line · paste images)` : `Message ${harnessLabel(pane.harness)}…`,
+          ),
           theme,
           // Pasted images are saved on the pane's machine and sent with the prompt.
           EditorView.domEventHandlers({
@@ -98,7 +105,7 @@ const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pane, onE
           }),
           Prec.highest(
             keymap.of([
-              { key: "Enter", run: send },
+              { key: "Enter", run: returnSends ? send : insertNewline },
               { key: "Mod-Enter", run: send },
               { key: "Shift-Enter", run: insertNewline },
               {
@@ -182,12 +189,14 @@ const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pane, onE
       <div className="flex min-h-0 flex-1 items-end">
         <div ref={hostRef} className="h-full min-w-0 flex-1 cursor-text" onMouseDown={() => setTimeout(() => viewRef.current?.focus(), 0)} />
         <button
+          onMouseDown={(e) => e.preventDefault()} // keep the text box (and a phone's keyboard) focused
           onClick={sendClick}
           disabled={empty && attachments.length === 0}
-          title="Send (Enter)"
+          title={returnSends ? "Send (Enter)" : "Send"}
+          aria-label="Send"
           className="m-1.5 rounded-lg bg-ember-400 p-2 text-ink-950 transition-opacity hover:bg-ember-300 disabled:opacity-25"
         >
-          <CornerDownLeft className="h-4 w-4" />
+          {returnSends ? <CornerDownLeft className="h-4 w-4" /> : <ArrowUp className="h-5 w-5" />}
         </button>
       </div>
     </div>

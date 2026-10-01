@@ -1,9 +1,9 @@
-import { ALargeSmall, ChevronLeft, Keyboard, Minus, Plus } from "lucide-react";
+import { ALargeSmall, Bell, ChevronLeft, Eye, EyeOff, Keyboard, Minus, MoreHorizontal, Pencil, Plus, Power, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import Composer, { type ComposerHandle } from "../components/Composer";
 import { isAgent } from "../components/HarnessBadge";
-import NotifyToggle, { canTrack } from "../components/NotifyToggle";
+import { canTrack, notifyTitle, toggleNotify } from "../components/NotifyToggle";
 import { PrefixHelp, PrefixPending, TmuxRenameField, usePrefixKeys } from "../components/PrefixKeys";
 import QuickKeys from "../components/QuickKeys";
 import TerminalView, { type TerminalHandle } from "../components/TerminalView";
@@ -14,6 +14,41 @@ import { displayTitle, isDirect, paneIdentity } from "../lib/panes";
 import { useApp } from "../store/app";
 import { FONT, useViewPrefs } from "../store/viewPrefs";
 import KeyBar, { afterUse, heldMods, type Holds, nextHold, NO_HOLDS } from "./KeyBar";
+import { Sheet, SheetAction } from "./Sheet";
+
+/** Names the pane (in Consuls only: tmux's own names stay); empty clears it. */
+function RenameSheet({ pane, onClose }: { pane: PaneInfo; onClose(): void }) {
+  const [value, setValue] = useState(pane.name ?? "");
+  const save = (name: string | null) => {
+    void backend().then((b) => b.renamePane(pane.key, name));
+    onClose();
+  };
+  return (
+    <Sheet onClose={onClose}>
+      <div className="px-1 pb-2">
+        <div className="mb-2 text-[13px] text-mist-400">Name this {pane.harness && pane.harness !== "shell" ? "agent" : "pane"}</div>
+        <input
+          autoFocus
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save(value.trim() || null)}
+          placeholder={displayTitle({ ...pane, name: null })}
+          className="w-full rounded-xl bg-ink-800 px-3.5 py-3 text-[16px] text-mist-100 ring-1 ring-ink-700 outline-none focus:ring-ember-400/60"
+        />
+        <div className="mt-3 flex gap-2">
+          {pane.name && (
+            <button onClick={() => save(null)} className="rounded-xl px-4 py-3 text-[15px] text-mist-400 active:bg-ink-700">
+              Clear
+            </button>
+          )}
+          <button onClick={() => save(value.trim() || null)} className="flex-1 rounded-xl bg-ember-400 py-3 text-[16px] font-semibold text-ink-950 active:opacity-80">
+            Save
+          </button>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
 
 /** Zoomed out, the phone goes smaller than the desktop's floor. */
 const MIN_FONT = 5;
@@ -60,6 +95,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
   const [keyBar, setKeyBar] = useState(!isAgent(pane.harness));
   const [holds, setHolds] = useState<Holds>(NO_HOLDS);
   const [typing, setTyping] = useState(false);
+  const [menu, setMenu] = useState<"actions" | "rename" | null>(null);
   const keys = usePrefixKeys(pane, onBack);
 
   const renderedFont = () => termRef.current?.term?.options.fontSize ?? fontPref ?? 10;
@@ -196,11 +232,69 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           <ALargeSmall className="h-5.5 w-5.5" />
         </button>
         {canTrack(pane) && (
-          <span className="px-1">
-            <NotifyToggle pane={pane} />
-          </span>
+          <button
+            onClick={() => toggleNotify(pane)}
+            aria-pressed={pane.notify !== null}
+            aria-label={notifyTitle(pane)}
+            className={`rounded-full p-2 active:bg-ink-700 ${pane.notify !== null ? "text-jade-400" : "text-mist-500"}`}
+          >
+            <Bell className={`h-5 w-5 ${pane.notify !== null ? "fill-current" : ""}`} />
+          </button>
         )}
+        <button onClick={() => setMenu("actions")} aria-label="More" className="rounded-full p-2 text-mist-300 active:bg-ink-700">
+          <MoreHorizontal className="h-5.5 w-5.5" />
+        </button>
       </header>
+      {menu === "actions" && (
+        <Sheet onClose={() => setMenu(null)}>
+          <SheetAction onClick={() => setMenu("rename")}>
+            <Pencil className="h-5 w-5 text-mist-400" /> Rename
+          </SheetAction>
+          {pane.hidden ? (
+            <SheetAction
+              onClick={() => {
+                setMenu(null);
+                void backend().then((b) => b.setPaneHidden(pane.key, false));
+              }}
+            >
+              <Eye className="h-5 w-5 text-mist-400" /> Show in the list
+            </SheetAction>
+          ) : (
+            <SheetAction
+              onClick={() => {
+                setMenu(null);
+                void backend().then((b) => b.setPaneHidden(pane.key, true));
+                onBack();
+              }}
+            >
+              <EyeOff className="h-5 w-5 text-mist-400" /> Hide from the list
+            </SheetAction>
+          )}
+          {ended ? (
+            <SheetAction
+              danger
+              onClick={() => {
+                setMenu(null);
+                void backend().then((b) => b.terminatePane(pane.key, true));
+                onBack();
+              }}
+            >
+              <X className="h-5 w-5" /> Dismiss
+            </SheetAction>
+          ) : (
+            <SheetAction
+              danger
+              onClick={() => {
+                setMenu(null);
+                useApp.getState().setTerminating(pane.key);
+              }}
+            >
+              <Power className="h-5 w-5" /> {isAgent(pane.harness) ? "Quit the agent and close" : "Close"}
+            </SheetAction>
+          )}
+        </Sheet>
+      )}
+      {menu === "rename" && <RenameSheet pane={pane} onClose={() => setMenu(null)} />}
 
       {keys.renaming && (
         <div className="shrink-0 px-3 pb-2">
@@ -277,7 +371,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           </div>
         </div>
         <div className="transition-[height]" style={{ height: typing ? 46 : 92 }}>
-          <Composer ref={composerRef} pane={pane} onEscapeEmpty={() => backend().then((b) => b.sendKeys(pane.key, ["Escape"]))} />
+          <Composer ref={composerRef} pane={pane} returnSends={false} onEscapeEmpty={() => backend().then((b) => b.sendKeys(pane.key, ["Escape"]))} />
         </div>
       </div>
     </div>

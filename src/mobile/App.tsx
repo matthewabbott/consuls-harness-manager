@@ -5,10 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import TerminateDialog from "../components/TerminateDialog";
 import { backend, inWebApp } from "../ipc/backend";
+import { setLocalLabel } from "../lib/hosts";
 import { useApp } from "../store/app";
 import { applyFrames } from "../term/tiles";
 import AddMachineSheet from "./AddMachineSheet";
 import MachinesScreen from "./MachinesScreen";
+import NewSessionSheet from "./NewSessionSheet";
 import Notices from "./Notices";
 import PaneScreen from "./PaneScreen";
 import SettingsScreen from "./SettingsScreen";
@@ -81,9 +83,16 @@ export default function App() {
   const terminating = useApp((s) => s.terminating);
   const [screen, setScreen] = useState<"machines" | "settings">("machines");
   const [adding, setAdding] = useState(false);
+  // The machine a new session is being started on; undefined: no sheet.
+  const [newOn, setNewOn] = useState<string | null | undefined>(undefined);
   const pane = useMemo(() => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)), [expanded, panes]);
   useVisibleHeight();
   useOpenFromNotification();
+  // The web app's server watches its own machine as `@local`: name it after the machine.
+  const selfName = useApp((s) => s.tailnet?.selfNode?.id);
+  useEffect(() => {
+    if (inWebApp && selfName) setLocalLabel(selfName);
+  }, [selfName]);
 
   // The pane on screen went away (closed elsewhere): back to the list.
   useEffect(() => {
@@ -146,9 +155,10 @@ export default function App() {
       ) : screen === "settings" ? (
         <SettingsScreen onBack={() => setScreen("machines")} onAdd={() => setAdding(true)} />
       ) : (
-        <MachinesScreen onSettings={() => setScreen("settings")} onAdd={() => setAdding(true)} />
+        <MachinesScreen onSettings={() => setScreen("settings")} onAdd={() => setAdding(true)} onNew={setNewOn} />
       )}
       {adding && <AddMachineSheet onClose={() => setAdding(false)} />}
+      {newOn !== undefined && <NewSessionSheet host={newOn} onClose={() => setNewOn(undefined)} />}
       {/* The tmux prefix's x (close this pane) asks first. */}
       {terminating !== null && <TerminateDialog paneKey={terminating} />}
       <Notices />
