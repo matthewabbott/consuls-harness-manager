@@ -36,9 +36,12 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let verb = args.first().map(String::as_str);
     if verb == Some("run") {
+        use std::io::IsTerminal;
         tracing_subscriber::fmt()
             .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info,russh=warn".into()))
             .with_writer(std::io::stderr)
+            // Colours only on a terminal: `start` writes the log to a file.
+            .with_ansi(std::io::stderr().is_terminal())
             .init();
     }
     let runtime = || tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build();
