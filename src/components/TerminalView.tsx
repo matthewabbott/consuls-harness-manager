@@ -20,6 +20,7 @@ import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { useRecording } from "../store/recording";
 import { findPaths, resolvePath } from "../term/links";
+import { linkAt, type TappedLink } from "../term/linkAt";
 import { findUrls, type RowText } from "../term/urls";
 import { StreamRedactor } from "../term/redactStream";
 import { imageFiles, pasteImagesInto } from "../store/attachments";
@@ -66,6 +67,8 @@ interface Props {
   heldMods?: HeldMods | null;
   /** A held Ctrl/Alt was used (a one-shot hold lets go). */
   onModsUsed?(): void;
+  /** The phone: a tap on a link (there's no hover or modifier key to ⌘-click with). */
+  onLink?(link: TappedLink): void;
 }
 
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]);
@@ -73,6 +76,16 @@ const MODIFIER_KEYS = new Set(["Shift", "Control", "Alt", "Meta", "AltGraph", "C
 interface Menu {
   x: number;
   y: number;
+}
+
+/** Rendered size of one character cell in CSS px. */
+function cellSizeOf(term: Terminal): { width: number; height: number } {
+  // xterm doesn't expose cell metrics publicly; the fit addon reads the same field.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cell = (term as any)._core?._renderService?.dimensions?.css?.cell;
+  if (cell?.width && cell?.height) return { width: cell.width, height: cell.height };
+  const size = term.options.fontSize ?? 13;
+  return { width: size * measureCharRatio(), height: Math.ceil(size * (term.options.lineHeight ?? 1)) };
 }
 
 /** Width of one monospace cell per px of font size, measured once. */
@@ -86,13 +99,13 @@ function measureCharRatio(): number {
 }
 
 const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
-  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false, prefix = null, onPrefixKey, onPrefixPending, heldMods, onModsUsed },
+  { pane, onSearch, onBack, autoFocus = true, onCompose, fontSize, children, raw = false, prefix = null, onPrefixKey, onPrefixPending, heldMods, onModsUsed, onLink },
   ref,
 ) {
   const [menu, setMenu] = useState<Menu | null>(null);
   // The terminal is built once per pane; key handling reads the latest props from here.
-  const propsRef = useRef({ prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed });
-  propsRef.current = { prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed };
+  const propsRef = useRef({ prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed, onLink });
+  propsRef.current = { prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed, onLink };
   const routeRef = useRef<(name: string) => void>(() => {});
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -118,16 +131,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       return searchRef.current;
     },
     focus: () => termRef.current?.focus(),
-    cellSize: () => {
-      const term = termRef.current;
-      if (!term) return null;
-      // xterm doesn't expose cell metrics publicly; the fit addon reads the same field.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const cell = (term as any)._core?._renderService?.dimensions?.css?.cell;
-      if (cell?.width && cell?.height) return { width: cell.width, height: cell.height };
-      const size = term.options.fontSize ?? 13;
-      return { width: size * measureCharRatio(), height: Math.ceil(size * (term.options.lineHeight ?? 1)) };
-    },
+    cellSize: () => (termRef.current ? cellSizeOf(termRef.current) : null),
     sendKey: (name) => routeRef.current(name),
   }));
 
@@ -392,9 +396,37 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     };
     el.addEventListener("paste", onPaste, true);
 
+    // The phone: a short tap on a link opens it (through onLink) instead of the keyboard.
+    const tap = { x: 0, y: 0, at: 0 };
+    const onDown = (e: PointerEvent) => {
+      tap.x = e.clientX;
+      tap.y = e.clientY;
+      tap.at = e.isPrimary ? Date.now() : 0;
+    };
+    const onUp = (e: PointerEvent) => {
+      const handler = propsRef.current.onLink;
+      if (!handler || !tap.at || Date.now() - tap.at > 600 || Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) return;
+      const screen = el.querySelector(".xterm-screen");
+      if (!screen) return;
+      const rect = screen.getBoundingClientRect();
+      const cell = cellSizeOf(term);
+      const col = Math.floor((e.clientX - rect.left) / cell.width);
+      const row = Math.floor((e.clientY - rect.top) / cell.height);
+      if (col < 0 || row < 0 || col >= term.cols || row >= term.rows) return;
+      const link = linkAt(term.buffer.active, term.cols, col, term.buffer.active.viewportY + row);
+      if (!link) return;
+      e.preventDefault();
+      term.blur();
+      handler(link);
+    };
+    el.addEventListener("pointerdown", onDown, true);
+    el.addEventListener("pointerup", onUp, true);
+
     if (autoFocus) term.focus();
     return () => {
       el.removeEventListener("paste", onPaste, true);
+      el.removeEventListener("pointerdown", onDown, true);
+      el.removeEventListener("pointerup", onUp, true);
       dataSub.dispose();
       swallowed.forEach((d) => d.dispose());
       if (textTimer) window.clearTimeout(textTimer);

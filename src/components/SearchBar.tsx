@@ -2,19 +2,12 @@ import type { SearchAddon } from "@xterm/addon-search";
 import { ArrowDown, ArrowUp, CaseSensitive, Regex, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { MATCH_DECORATIONS } from "../term/find";
+
 interface Props {
   search: SearchAddon | null;
   onClose(): void;
 }
-
-const DECORATIONS = {
-  matchBackground: "#6aa9ff40",
-  matchBorder: "#6aa9ff80",
-  matchOverviewRuler: "#6aa9ff",
-  activeMatchBackground: "#f5a25d",
-  activeMatchBorder: "#ffc27f",
-  activeMatchColorOverviewRuler: "#f5a25d",
-};
 
 export default function SearchBar({ search, onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,7 +27,7 @@ export default function SearchBar({ search, onClose }: Props) {
     return () => sub.dispose();
   }, [search]);
 
-  const opts = { caseSensitive, regex, decorations: DECORATIONS };
+  const opts = { caseSensitive, regex, decorations: MATCH_DECORATIONS };
 
   useEffect(() => {
     if (!search) return;

@@ -237,6 +237,13 @@ shell built as an iPhone app. See README.md.
   ^C a two-tap key (two quit Claude Code).
 - iOS overlays the keyboard: `--visible-height` follows `visualViewport`, and the terminal keeps
   the cursor line in view.
+- Touch in `PaneScreen` (web app too): xterm doesn't scroll by touch, so one finger up/down is
+  ours — the frame first, then the scrollback (`term.scrollLines`, with momentum);
+  `.terminal-frame` is `touch-action: pan-x`. A tap on a URL or path opens `LinkSheet`
+  (`term/linkAt.ts`); iOS only opens a link within a tap, so Open clicks an anchor right there.
+  The copy view (`CopySheet`) cuts output into blocks at Claude Code/Codex markers
+  (`term/textBlocks.ts`). Find (`FindBar`): xterm's search add-on in the terminal, marks from
+  `term/find.ts` in the copy view.
 - Simulator: `npx tauri ios dev "iPhone 17"`. Its data folder is
   `$(xcrun simctl get_app_container booted dev.consuls.harness-manager data)/Library/Application Support/dev.consuls.harness-manager`
   (a `config.json` can be seeded there); `SIMCTL_CHILD_CHM_TMUX_SOCKET=<private> xcrun simctl launch

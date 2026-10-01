@@ -12,8 +12,9 @@ html {
   touch-action: manipulation;
 }
 
+/* Sideways is the browser's (zoomed-in text); up and down is the app's own scrolling. */
 .terminal-frame {
-  touch-action: pan-x pan-y;
+  touch-action: pan-x;
 }
 
 body {
@@ -42,4 +43,11 @@ html.keyboard .safe-bottom {
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* Text the user may select and copy (the app otherwise selects nothing: it's all controls). */
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
 }
