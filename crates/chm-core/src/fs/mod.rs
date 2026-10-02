@@ -1,6 +1,6 @@
-//! Files for the explorer (and, later, the editor): the same operations over SFTP for remote
+//! Files for the explorer, the editor and transfers: the same operations over SFTP for remote
 //! machines and `std::fs` for This PC. Paths are absolute and use forward slashes (also for
-//! Windows paths, `C:/Users/…`).
+//! Windows paths, `C:/Users/…`). Nothing here ever replaces an existing file.
 
 pub mod git;
 pub(crate) mod local;
@@ -17,10 +17,59 @@ pub enum FsOp {
     Mkdir { path: String },
     /// Fails if the file already exists.
     CreateFile { path: String },
-    /// Fails if `to` already exists.
+    /// Renames or moves (to another folder, also across disks). Fails if `to` already exists.
     Rename { from: String, to: String },
+    /// Copies a file or a whole folder. Fails if `to` already exists.
+    Copy { from: String, to: String },
     /// Files, symlinks, or whole directory trees.
     Remove { path: String },
+}
+
+/// Bytes in transit, for uploads and downloads: chunks, or why the transfer broke off.
+pub type ByteStream = tokio::sync::mpsc::Receiver<Result<bytes::Bytes, String>>;
+
+/// Largest upload (the web app sends whole files through the server).
+pub const UPLOAD_LIMIT: u64 = 2 << 30;
+
+/// Chunks read per step when downloading.
+pub(crate) const CHUNK: usize = 256 * 1024;
+
+/// A name for a new file: one path segment.
+pub(crate) fn check_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+        return Err(format!("{name:?} isn't a file name"));
+    }
+    Ok(())
+}
+
+/// `name` for `n` = 0, then `name (1).ext`, `name (2).ext`, …: where an upload goes when its
+/// name is taken.
+pub(crate) fn numbered(name: &str, n: u32) -> String {
+    if n == 0 {
+        return name.to_string();
+    }
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => format!("{} ({n}){}", &name[..dot], &name[dot..]),
+        _ => format!("{name} ({n})"),
+    }
+}
+
+/// How many numbered names an upload tries before giving up.
+pub(crate) const NAME_TRIES: u32 = 100;
+
+/// The temporary name an upload is written under, beside where it will land.
+pub(crate) fn upload_temp(dir: &str, name: &str) -> String {
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    format!("{}/.{name}.consuls-{}", dir.trim_end_matches('/'), &id[..8])
+}
+
+/// Refuses moving or copying a folder into itself.
+pub(crate) fn check_not_inside(from: &str, to: &str) -> Result<(), String> {
+    let f = from.trim_end_matches('/');
+    if to == f || to.starts_with(&format!("{f}/")) {
+        return Err(format!("{} can't go inside itself", base_name(from)));
+    }
+    Ok(())
 }
 
 /// Most items counted before giving up (the delete confirmation then says "100,000+").
@@ -159,6 +208,30 @@ mod tests {
         assert!(matches!(decode(b"a\0b".to_vec(), s.clone()), FileContent::Binary { .. }));
         assert!(matches!(decode(vec![0xff, 0xfe, 0x41], s.clone()), FileContent::Binary { .. }));
         assert_eq!(encode("hi\r\n", true), b"\xEF\xBB\xBFhi\r\n");
+    }
+
+    #[test]
+    fn upload_names() {
+        assert_eq!(numbered("photo.jpg", 0), "photo.jpg");
+        assert_eq!(numbered("photo.jpg", 2), "photo (2).jpg");
+        assert_eq!(numbered("archive.tar.gz", 1), "archive.tar (1).gz");
+        assert_eq!(numbered("Makefile", 1), "Makefile (1)");
+        assert_eq!(numbered(".env", 1), ".env (1)");
+        assert!(check_name("a b.txt").is_ok());
+        for bad in ["", ".", "..", "a/b", "a\\b", "a\0b"] {
+            assert!(check_name(bad).is_err(), "{bad:?}");
+        }
+        assert!(upload_temp("/home/u/", "a.txt").starts_with("/home/u/.a.txt.consuls-"));
+        assert!(upload_temp("/", "a.txt").starts_with("/.a.txt.consuls-"));
+    }
+
+    #[test]
+    fn nothing_goes_inside_itself() {
+        assert!(check_not_inside("/a/b", "/a/b").is_err());
+        assert!(check_not_inside("/a/b", "/a/b/c").is_err());
+        assert!(check_not_inside("/a/b/", "/a/b/c").is_err());
+        assert!(check_not_inside("/a/b", "/a/bc").is_ok());
+        assert!(check_not_inside("/a/b", "/a/c/b").is_ok());
     }
 
     #[test]

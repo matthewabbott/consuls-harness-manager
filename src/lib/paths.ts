@@ -60,3 +60,36 @@ export function crumbsOf(path: string): { label: string; path: string }[] {
   const crumbs = parts.map((label, i) => ({ label, path: root + parts.slice(0, i + 1).join("/") }));
   return root === "/" ? crumbs : [{ label: root.slice(0, -1), path: root }, ...crumbs];
 }
+
+/** Breadcrumbs with the home folder as one `~` crumb (the phone, where room is short). */
+export function homeCrumbs(path: string, home: string | null): { label: string; path: string }[] {
+  if (home && isWithin(path, home)) {
+    const rest = path.slice(home.replace(/\/+$/, "").length).split("/").filter(Boolean);
+    return [{ label: "~", path: home }, ...rest.map((label, i) => ({ label, path: joinPath(home, rest.slice(0, i + 1).join("/")) }))];
+  }
+  const crumbs = crumbsOf(path);
+  return rootOf(path) === "/" ? [{ label: "/", path: "/" }, ...crumbs] : crumbs;
+}
+
+/** The path as you'd type it: home as `~`, and a trailing slash to type a folder after. */
+export function typedPath(path: string, home: string | null): string {
+  const p = home && isWithin(path, home) ? `~${path.slice(home.replace(/\/+$/, "").length)}` : path;
+  return p.endsWith("/") ? p : `${p}/`;
+}
+
+/** What was typed, as a path to list: absolute, `~…`, or relative to the folder shown. */
+export function resolveTyped(typed: string, cwd: string): string | null {
+  const t = typed.trim();
+  if (!t) return null;
+  if (t.startsWith("/") || t === "~" || t.startsWith("~/") || /^[A-Za-z]:/.test(t)) return t;
+  return joinPath(cwd, t);
+}
+
+/** `name`, or the first of `name (1).ext`, `name (2).ext`, … not in `taken` (as uploads are named). */
+export function freeName(name: string, taken: Set<string>): string {
+  const dot = name.lastIndexOf(".");
+  for (let n = 0; ; n++) {
+    const candidate = n === 0 ? name : dot > 0 ? `${name.slice(0, dot)} (${n})${name.slice(dot)}` : `${name} (${n})`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}

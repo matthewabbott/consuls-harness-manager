@@ -11,6 +11,7 @@
 pub mod approvals;
 pub mod config;
 pub mod ctl;
+pub mod downloads;
 pub mod home;
 pub mod http;
 pub mod lease;
@@ -64,6 +65,7 @@ pub struct Daemon {
     pub web_url: Mutex<Option<String>>,
     pub approvals: Mutex<approvals::Approvals>,
     pub clients: Arc<ws::Clients>,
+    pub downloads: downloads::Grants,
 }
 
 /// What `consuls-server status` says.
@@ -369,6 +371,7 @@ pub async fn start(config: ServerConfig, home: &Home, lease: Arc<Lease>) -> anyh
         web_url: Mutex::new(None),
         approvals: Default::default(),
         clients,
+        downloads: Default::default(),
     });
     tokio::spawn(drive(daemon.clone(), rx));
     tokio::spawn(revive(daemon.clone()));

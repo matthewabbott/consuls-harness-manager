@@ -866,6 +866,33 @@ impl Core {
         rx.await.map_err(|_| "host not found".to_string())?
     }
 
+    /// Writes an uploaded file (`len` bytes arriving on `rx`) into `dir` as `name`, or a numbered
+    /// variant if that's taken, and returns its path. It lands whole or not at all.
+    pub async fn upload(&self, host: &str, dir: &str, name: &str, len: u64, rx: crate::fs::ByteStream) -> Result<String, String> {
+        if len > crate::fs::UPLOAD_LIMIT {
+            return Err("uploads are limited to 2 GB".into());
+        }
+        if host == LOCAL_HOST {
+            self.local_only()?;
+            let (dir, name) = (dir.to_string(), name.to_string());
+            return tokio::task::spawn_blocking(move || crate::fs::local::upload(&dir, &name, len, rx)).await.map_err(|e| e.to_string())?;
+        }
+        let (tx, reply) = oneshot::channel();
+        self.send(host, HostCmd::Upload { dir: dir.to_string(), name: name.to_string(), len, rx, reply: tx });
+        reply.await.map_err(|_| "host not found".to_string())?
+    }
+
+    /// A file's size and its bytes, streamed (downloads).
+    pub async fn download(&self, host: &str, path: &str) -> Result<(u64, crate::fs::ByteStream), String> {
+        if host == LOCAL_HOST {
+            self.local_only()?;
+            return crate::fs::local::download(path);
+        }
+        let (tx, rx) = oneshot::channel();
+        self.send(host, HostCmd::Download { path: path.to_string(), reply: tx });
+        rx.await.map_err(|_| "host not found".to_string())?
+    }
+
     /// Size and mtime of a file (None if it doesn't exist), to notice outside changes.
     pub async fn stat_file(&self, host: &str, path: &str) -> Result<Option<crate::fs::FileStamp>, String> {
         if host == LOCAL_HOST {

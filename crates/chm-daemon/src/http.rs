@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::Router;
+use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
@@ -19,6 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use chm_core::model::{CoreSnapshot, NotifyMode};
 use chm_core::notify::PendingPush;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 use ts_rs::TS;
@@ -74,6 +76,8 @@ pub fn router(d: Arc<Daemon>) -> Router {
     let guarded = Router::new()
         .route("/api/ws", get(socket))
         .route("/api/paste", post(paste).layer(DefaultBodyLimit::max(21 << 20)))
+        .route("/api/upload", post(upload).layer(DefaultBodyLimit::disable()))
+        .route("/api/download", get(download))
         .route("/api/push", get(push_info))
         .route("/api/state", get(state))
         .route("/api/panes/{key}/notify", post(notify))
@@ -104,8 +108,8 @@ async fn guard(State(d): State<Arc<Daemon>>, req: Request, next: Next) -> Respon
     d.lease.renew(None);
     d.human_here();
     if req.method() != Method::GET && req.method() != Method::HEAD {
-        // Images arrive as raw bytes: a header a form can't send stands in for "JSON only".
-        let checked = if req.uri().path() == "/api/paste" {
+        // Images and files arrive as raw bytes: a header a form can't send stands in for "JSON only".
+        let checked = if matches!(req.uri().path(), "/api/paste" | "/api/upload") {
             if req.headers().get("x-consuls").is_some_and(|v| v == "1") { same_origin(req.headers(), &d) } else { Err("not from the web app") }
         } else {
             same_origin_json(req.headers(), &d)
@@ -144,6 +148,99 @@ async fn paste(State(d): State<Arc<Daemon>>, Query(q): Query<PasteQuery>, body: 
         Ok(path) => Json(path).into_response(),
         Err(e) => reject(StatusCode::BAD_REQUEST, &e),
     }
+}
+
+#[derive(Deserialize)]
+struct UploadQuery {
+    host: String,
+    dir: String,
+    name: String,
+}
+
+/// A file from the phone, streamed to its machine as it arrives. It lands whole or not at all
+/// (a connection that breaks off leaves nothing); the path it got comes back, numbered if the
+/// name was taken.
+async fn upload(State(d): State<Arc<Daemon>>, Query(q): Query<UploadQuery>, headers: HeaderMap, body: Body) -> Response {
+    let Some(len) = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()?.parse::<u64>().ok()) else {
+        return reject(StatusCode::LENGTH_REQUIRED, "the file's size is needed up front");
+    };
+    if len > chm_core::fs::UPLOAD_LIMIT {
+        return reject(StatusCode::PAYLOAD_TOO_LARGE, "uploads are limited to 2 GB");
+    }
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let core = d.core.clone();
+    // On its own task: if this request goes away mid-way, the upload still cleans up.
+    let landed = tokio::spawn(async move { core.upload(&q.host, &q.dir, &q.name, len, rx).await });
+    let mut stream = body.into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("the upload broke off: {e}"));
+        let broken = chunk.is_err();
+        if tx.send(chunk).await.is_err() || broken {
+            break; // refused early, or broken off
+        }
+    }
+    drop(tx);
+    match landed.await {
+        Ok(Ok(path)) => Json(path).into_response(),
+        Ok(Err(e)) => reject(StatusCode::BAD_REQUEST, &e),
+        Err(e) => reject(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+struct DownloadQuery {
+    t: String,
+}
+
+/// A file through a download link (`downloads.rs`). Always an attachment, never sniffed, and
+/// sandboxed: an HTML or SVG file must not run as a page of the app.
+async fn download(State(d): State<Arc<Daemon>>, Query(q): Query<DownloadQuery>) -> Response {
+    let Some((host, path)) = d.downloads.get(&q.t) else {
+        return reject(StatusCode::GONE, "this download link has expired: start the download again");
+    };
+    let (size, rx) = match d.core.download(&host, &path).await {
+        Ok(v) => v,
+        Err(e) => return reject(StatusCode::NOT_FOUND, &e),
+    };
+    let name = path.rsplit('/').next().unwrap_or("download");
+    let body = Body::from_stream(futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|chunk| (chunk.map_err(std::io::Error::other), rx))
+    }));
+    let headers = [
+        (header::CONTENT_TYPE, download_type(name).to_string()),
+        (header::CONTENT_LENGTH, size.to_string()),
+        (header::CONTENT_DISPOSITION, attachment(name)),
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+        (header::CONTENT_SECURITY_POLICY, "sandbox; default-src 'none'".to_string()),
+        (header::CACHE_CONTROL, "no-store".to_string()),
+    ];
+    (headers, body).into_response()
+}
+
+/// A type only where it helps the phone (images, PDFs, plain text); anything else is just bytes.
+fn download_type(name: &str) -> &'static str {
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "heic" => "image/heic",
+        "pdf" => "application/pdf",
+        "txt" | "log" | "md" | "csv" => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
+}
+
+/// `Content-Disposition` with the file's name: plain ASCII for old clients, UTF-8 (RFC 5987)
+/// for the rest.
+fn attachment(name: &str) -> String {
+    let plain: String = name.chars().map(|c| if c.is_ascii_graphic() && c != '"' && c != '\\' || c == ' ' { c } else { '_' }).collect();
+    let encoded: String = name
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect();
+    format!("attachment; filename=\"{plain}\"; filename*=UTF-8''{encoded}")
 }
 
 /// The push identity and the phones subscribed, for the app's notification settings.
@@ -292,4 +389,20 @@ async fn asset(State(d): State<Arc<Daemon>>, req: Request) -> Response {
         }
     }
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_headers() {
+        assert_eq!(attachment("notes.txt"), "attachment; filename=\"notes.txt\"; filename*=UTF-8''notes.txt");
+        assert_eq!(attachment("my \"file\".png"), "attachment; filename=\"my _file_.png\"; filename*=UTF-8''my%20%22file%22.png");
+        assert_eq!(attachment("café.md"), "attachment; filename=\"caf_.md\"; filename*=UTF-8''caf%C3%A9.md");
+        assert_eq!(download_type("Photo.JPG"), "image/jpeg");
+        assert_eq!(download_type("page.html"), "application/octet-stream");
+        assert_eq!(download_type("logo.svg"), "application/octet-stream");
+        assert_eq!(download_type("Makefile"), "application/octet-stream");
+    }
 }

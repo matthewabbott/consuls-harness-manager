@@ -2,18 +2,19 @@
 // in a new tmux session or beside an existing one. Like the desktop's new-pane dialog, minus
 // plain shells: those would live in the server and end with it.
 
-import { ChevronLeft, CornerLeftUp, Folder, Home, Loader2, Star, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ChevronRight, CornerLeftUp, Folder, Loader2, X } from "lucide-react";
+import { useMemo, useState } from "react";
 
 import HarnessBadge from "../components/HarnessBadge";
 import { openWhenListed } from "../components/PrefixKeys";
 import { backend } from "../ipc/backend";
-import type { DirListing } from "../ipc/bindings/DirListing";
 import type { Harness } from "../ipc/bindings/Harness";
 import { baseName, isRoot, joinPath, parentPath } from "../lib/paths";
-import { shortPath } from "../lib/hosts";
 import { uiStorage } from "../lib/uiState";
 import { useApp } from "../store/app";
+import Chip from "./Chip";
+import FolderBar, { Places } from "./FolderBar";
+import { useFolder } from "./useFolder";
 
 const HARNESSES: { id: Harness; label: string }[] = [
   { id: "claude", label: "Claude Code" },
@@ -29,22 +30,6 @@ function lastHarness(): Harness {
   const v = uiStorage.getItem(LAST_HARNESS) as Harness | null;
   return v && HARNESSES.some((h) => h.id === v) ? v : "claude";
 }
-
-function Chip({ on, onClick, children }: { on: boolean; onClick(): void; children: React.ReactNode }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[14px] ring-1 ${
-        on ? "bg-ember-400/15 text-ember-300 ring-ember-400/50" : "bg-ink-800 text-mist-200 ring-ink-700 active:bg-ink-700"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-/** The end of a long path, which is the part that tells folders apart. */
-const pathTail = (path: string) => (path.length > 40 ? `…${path.slice(-39)}` : path);
 
 function Label({ children }: { children: React.ReactNode }) {
   return <div className="mt-4 mb-1.5 text-[12px] font-medium tracking-wide text-mist-500 uppercase">{children}</div>;
@@ -62,46 +47,33 @@ export default function NewSessionSheet({ host: preselect, onClose }: { host: st
 
   const [host, setHost] = useState(() => (preselect && connected.includes(preselect) ? preselect : (connected[0] ?? "")));
   const [harness, setHarness] = useState<Harness>(lastHarness);
-  const [listing, setListing] = useState<DirListing | null>(null);
-  const [loading, setLoading] = useState(false);
   const [session, setSession] = useState("");
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const facts = hosts[host]?.facts;
-  const home = facts?.home ?? listing?.home ?? null;
   const hostPanes = panes[host] ?? [];
   const recent = useMemo(() => {
     const seen = new Set<string>();
-    for (const p of hostPanes) if (p.currentPath && p.currentPath !== home) seen.add(p.currentPath);
+    for (const p of hostPanes) if (p.currentPath && p.currentPath !== facts?.home) seen.add(p.currentPath);
     return [...seen].slice(0, 6);
-  }, [hostPanes, home]);
+  }, [hostPanes, facts?.home]);
   const sessions = useMemo(() => [...new Set(hostPanes.flatMap((p) => (p.tmux ? [p.tmux.sessionName] : [])))], [hostPanes]);
   const noTmux = !!facts && !facts.tmuxVersion;
 
-  const open = async (path: string) => {
-    if (!host) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setListing(await (await backend()).listDir(host, path));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
+  // Where to start on each machine: its default folder, else where an agent is working.
+  const [startAt] = useState(() => new Map<string, string>());
+  if (host && !startAt.has(host)) startAt.set(host, defaults[host] ?? recent[0] ?? "~");
+  const folder = useFolder(host, host ? startAt.get(host)! : null);
+  const home = facts?.home ?? folder.listing?.home ?? null;
+  const pickHost = (h: string) => {
+    setHost(h);
+    setSession("");
   };
 
-  useEffect(() => {
-    setListing(null);
-    setSession("");
-    if (host) void open(defaults[host] ?? recent[0] ?? "~");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [host]);
-
-  const cwd = listing?.path ?? "";
-  const dirs = (listing?.entries ?? []).filter((e) => e.isDir && !e.name.startsWith("."));
+  const cwd = folder.path ?? "";
+  const dirs = (folder.listing?.entries ?? []).filter((e) => e.isDir && !e.name.startsWith("."));
 
   const start = async () => {
     if (!host || !cwd) return;
@@ -137,7 +109,7 @@ export default function NewSessionSheet({ host: preselect, onClose }: { host: st
             <Label>Machine</Label>
             <div className="flex flex-wrap gap-2">
               {connected.map((h) => (
-                <Chip key={h} on={h === host} onClick={() => setHost(h)}>
+                <Chip key={h} on={h === host} onClick={() => pickHost(h)}>
                   {name(h)}
                 </Chip>
               ))}
@@ -158,48 +130,37 @@ export default function NewSessionSheet({ host: preselect, onClose }: { host: st
             </div>
 
             <Label>Folder</Label>
-            <div className="no-scrollbar flex gap-2 overflow-x-auto">
-              {defaults[host] && (
-                <Chip on={cwd === defaults[host]} onClick={() => void open(defaults[host]!)}>
-                  <Star className="h-3.5 w-3.5 fill-current text-ember-400" /> {baseName(defaults[host]!)}
-                </Chip>
-              )}
-              {home && (
-                <Chip on={cwd === home} onClick={() => void open(home)}>
-                  <Home className="h-3.5 w-3.5" /> Home
-                </Chip>
-              )}
-              {recent.map((p) => (
-                <Chip key={p} on={cwd === p} onClick={() => void open(p)}>
-                  {baseName(p)}
-                </Chip>
-              ))}
-            </div>
+            <Places host={host} path={folder.path} home={home} extra={recent} onGo={folder.go} />
             <div className="mt-2 overflow-hidden rounded-2xl bg-ink-800 ring-1 ring-ink-700">
-              <div className="flex items-center gap-2 border-b border-ink-700 px-3 py-2.5">
-                {loading ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-mist-400" /> : <Folder className="h-4 w-4 shrink-0 text-ember-400" />}
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-mist-100">{pathTail(shortPath(cwd, home)) || "…"}</span>
+              <div className="border-b border-ink-700 px-1 py-1">
+                <FolderBar folder={folder} home={home} />
               </div>
               <div className="max-h-64 overflow-y-auto">
+                {folder.loading && !folder.listing && (
+                  <p className="flex items-center gap-2 px-3 py-2.5 text-[13px] text-mist-500">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+                  </p>
+                )}
                 {cwd && !isRoot(cwd) && (
-                  <button onClick={() => void open(parentPath(cwd))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[14px] text-mist-300 active:bg-ink-700">
+                  <button onClick={() => folder.go(parentPath(cwd))} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[14px] text-mist-300 active:bg-ink-700">
                     <CornerLeftUp className="h-4 w-4" /> Up
                   </button>
                 )}
                 {dirs.map((d) => (
                   <button
                     key={d.name}
-                    onClick={() => void open(joinPath(cwd, d.name))}
+                    onClick={() => folder.go(joinPath(cwd, d.name))}
                     className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-[14px] text-mist-100 active:bg-ink-700"
                   >
                     <Folder className="h-4 w-4 shrink-0 text-mist-500" />
                     <span className="min-w-0 flex-1 truncate">{d.name}</span>
-                    <ChevronLeft className="h-4 w-4 shrink-0 rotate-180 text-mist-600" />
+                    <ChevronRight className="h-4 w-4 shrink-0 text-mist-600" />
                   </button>
                 ))}
-                {listing && dirs.length === 0 && <p className="px-3 py-2.5 text-[13px] text-mist-500">No folders here.</p>}
+                {folder.listing && dirs.length === 0 && <p className="px-3 py-2.5 text-[13px] text-mist-500">No folders here.</p>}
               </div>
             </div>
+            {folder.error && <p className="mt-2 text-[13px] text-rose-400">{folder.error}</p>}
 
             {sessions.length > 0 && (
               <>

@@ -11,7 +11,7 @@ import type { UiPrefs } from "./bindings/UiPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { NotifyPrefs } from "./bindings/NotifyPrefs";
 import type { LabelDef } from "./bindings/LabelDef";
-import { MOCK_DRIVES, mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockWriteFile } from "./mockFs";
+import { MOCK_DRIVES, mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockUpload, mockWriteFile } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
 import type { PaneInfo } from "./bindings/PaneInfo";
@@ -543,6 +543,24 @@ export function mockBackend(): Backend {
     readBytes: async () => {
       throw new Error("no image preview in the mock");
     },
+    // A pretend transfer: progress over a second or two.
+    uploadFile: (host, dir, file, onProgress, signal) =>
+      new Promise((resolve, reject) => {
+        let sent = 0;
+        const t = window.setInterval(() => {
+          sent = Math.min(file.size, sent + Math.max(1, file.size / 12));
+          onProgress?.(sent);
+          if (sent >= file.size) {
+            window.clearInterval(t);
+            resolve(mockUpload(host, dir, file.name, file.size));
+          }
+        }, 120);
+        signal?.addEventListener("abort", () => {
+          window.clearInterval(t);
+          reject("cancelled");
+        });
+      }),
+    fileUrl: async (_host, path) => URL.createObjectURL(new Blob([`mock contents of ${path}\n`], { type: "text/plain" })),
     statFile: async (host, path) => mockStat(host, path),
     writeFile: async (host, path, text, _bom, expect) => mockWriteFile(host, path, text, expect),
     sendInput: async (key, data) => {

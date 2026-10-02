@@ -1,9 +1,10 @@
 //! File operations on This PC.
 
+use std::io::{Read, Write};
 use std::path::Path;
 
 use super::git::{self, GitStatus};
-use super::{COUNT_CAP, FsOp, base_name};
+use super::{ByteStream, CHUNK, COUNT_CAP, FsOp, NAME_TRIES, base_name, check_name, check_not_inside, numbered, upload_temp};
 
 fn err(path: &str) -> impl Fn(std::io::Error) -> String + '_ {
     move |e| format!("{}: {e}", base_name(path))
@@ -14,17 +15,151 @@ pub(crate) fn op(op: FsOp) -> Result<(), String> {
         FsOp::Mkdir { path } => std::fs::create_dir(&path).map_err(err(&path)),
         FsOp::CreateFile { path } => std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map(|_| ()).map_err(err(&path)),
         FsOp::Rename { from, to } => {
+            check_not_inside(&from, &to)?;
             // std::fs::rename replaces an existing file on Unix; never do that from the explorer.
             if Path::new(&to).symlink_metadata().is_ok() {
                 return Err(format!("{} already exists", base_name(&to)));
             }
-            std::fs::rename(&from, &to).map_err(err(&from))
+            match std::fs::rename(&from, &to) {
+                Ok(()) => Ok(()),
+                // Another disk: copy, then remove the original.
+                Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+                    copy_tree(Path::new(&from), Path::new(&to)).map_err(err(&from))?;
+                    let meta = Path::new(&from).symlink_metadata().map_err(err(&from))?;
+                    if meta.is_dir() { std::fs::remove_dir_all(&from) } else { std::fs::remove_file(&from) }.map_err(err(&from))
+                }
+                Err(e) => Err(err(&from)(e)),
+            }
+        }
+        FsOp::Copy { from, to } => {
+            check_not_inside(&from, &to)?;
+            if Path::new(&to).symlink_metadata().is_ok() {
+                return Err(format!("{} already exists", base_name(&to)));
+            }
+            copy_tree(Path::new(&from), Path::new(&to)).map_err(err(&from))
         }
         FsOp::Remove { path } => {
             let meta = Path::new(&path).symlink_metadata().map_err(err(&path))?;
             if meta.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) }.map_err(err(&path))
         }
     }
+}
+
+/// Copies a file, a link or a whole folder to `to`, which mustn't exist (nothing is replaced).
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    let meta = from.symlink_metadata()?;
+    if meta.file_type().is_symlink() {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(std::fs::read_link(from)?, to);
+        #[cfg(windows)]
+        {
+            // Making links takes privileges on Windows: a link to a file is copied as the file;
+            // one to a folder (or a junction, which may loop) isn't followed.
+            if from.is_dir() {
+                return Err(std::io::Error::other(format!("{} is a link to a folder, which can't be copied here", from.display())));
+            }
+            return copy_file(from, to);
+        }
+    }
+    if meta.is_dir() {
+        std::fs::create_dir(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        copy_file(from, to)
+    }
+}
+
+fn copy_file(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut src = std::fs::File::open(from)?;
+    let mut dst = std::fs::OpenOptions::new().write(true).create_new(true).open(to)?;
+    std::io::copy(&mut src, &mut dst)?;
+    dst.set_permissions(src.metadata()?.permissions())
+}
+
+/// Writes the `len` bytes arriving on `rx` to a new file `name` in `dir` and returns its path:
+/// under a temporary name, then linked into place (a hard link never replaces a file) once
+/// every byte is there. A taken name gets " (1)", " (2)", …. Blocks: run it off the runtime.
+pub(crate) fn upload(dir: &str, name: &str, len: u64, mut rx: ByteStream) -> Result<String, String> {
+    check_name(name)?;
+    let tmp = upload_temp(dir, name);
+    let fail = |e: std::io::Error| format!("{name}: {e}");
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(fail)?;
+    let written: Result<(), String> = (|| {
+        let mut got = 0u64;
+        while let Some(chunk) = rx.blocking_recv() {
+            let chunk = chunk?;
+            got += chunk.len() as u64;
+            if got > len {
+                return Err(format!("{name}: more data than announced"));
+            }
+            file.write_all(&chunk).map_err(fail)?;
+        }
+        if got != len {
+            return Err(format!("{name}: the upload stopped after {got} of {len} bytes"));
+        }
+        file.sync_all().map_err(fail)
+    })();
+    drop(file);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    let dir = dir.trim_end_matches('/');
+    for n in 0..NAME_TRIES {
+        let path = format!("{dir}/{}", numbered(name, n));
+        let placed = match std::fs::hard_link(&tmp, &path) {
+            Ok(()) => std::fs::remove_file(&tmp).map(|_| true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            // No hard links here (FAT, some network shares): check, then rename.
+            Err(_) if Path::new(&path).symlink_metadata().is_err() => std::fs::rename(&tmp, &path).map(|_| true),
+            Err(_) => Ok(false),
+        };
+        match placed {
+            Ok(true) => return Ok(path),
+            Ok(false) => continue,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(fail(e));
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&tmp);
+    Err(format!("{name}: too many files with that name already"))
+}
+
+/// A file's size and its bytes, read on a blocking thread as they're taken.
+pub(crate) fn download(path: &str) -> Result<(u64, ByteStream), String> {
+    let mut file = std::fs::File::open(path).map_err(err(path))?;
+    let meta = file.metadata().map_err(err(path))?;
+    if meta.is_dir() {
+        return Err(format!("{} is a folder", base_name(path)));
+    }
+    let size = meta.len();
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let name = base_name(path).to_string();
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; CHUNK];
+        let mut left = size;
+        while left > 0 {
+            let want = buf.len().min(left as usize);
+            let sent = match file.read(&mut buf[..want]) {
+                Ok(0) => tx.blocking_send(Err(format!("{name} got shorter while downloading"))).map(|_| false),
+                Ok(n) => {
+                    left -= n as u64;
+                    tx.blocking_send(Ok(bytes::Bytes::copy_from_slice(&buf[..n]))).map(|_| true)
+                }
+                Err(e) => tx.blocking_send(Err(format!("{name}: {e}"))).map(|_| false),
+            };
+            if !matches!(sent, Ok(true)) {
+                break;
+            }
+        }
+    });
+    Ok((size, rx))
 }
 
 /// Items under `path` (not counting itself), up to [`COUNT_CAP`] + 1.
@@ -91,6 +226,75 @@ mod tests {
         op(FsOp::Remove { path: format!("{d}/sub") }).unwrap();
         assert_eq!(count(&d).unwrap(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copy_and_move_never_replace() {
+        let dir = std::env::temp_dir().join(format!("chm-copy-test-{}", std::process::id()));
+        let d = crate::local::to_slash(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("src/inner")).unwrap();
+        std::fs::write(dir.join("src/a.txt"), "a").unwrap();
+        std::fs::write(dir.join("src/inner/b.txt"), "b").unwrap();
+        op(FsOp::Copy { from: format!("{d}/src"), to: format!("{d}/copy") }).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("copy/inner/b.txt")).unwrap(), "b");
+        assert!(op(FsOp::Copy { from: format!("{d}/src/a.txt"), to: format!("{d}/copy/a.txt") }).is_err(), "copy never replaces");
+        assert!(op(FsOp::Copy { from: format!("{d}/src"), to: format!("{d}/src/inner/src") }).is_err(), "not into itself");
+        assert!(op(FsOp::Rename { from: format!("{d}/src"), to: format!("{d}/src/inner/src") }).is_err(), "not into itself");
+        op(FsOp::Rename { from: format!("{d}/src/a.txt"), to: format!("{d}/copy/inner/a.txt") }).unwrap();
+        assert!(dir.join("copy/inner/a.txt").exists() && !dir.join("src/a.txt").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn stream(chunks: &[&[u8]], then_drop: bool) -> ByteStream {
+        let (tx, rx) = tokio::sync::mpsc::channel(chunks.len() + 1);
+        for c in chunks {
+            tx.try_send(Ok(bytes::Bytes::copy_from_slice(c))).unwrap();
+        }
+        if !then_drop {
+            tx.try_send(Err("connection lost".into())).unwrap();
+        }
+        rx
+    }
+
+    #[test]
+    fn uploads_land_whole_or_not_at_all() {
+        let dir = std::env::temp_dir().join(format!("chm-upload-test-{}", std::process::id()));
+        let d = crate::local::to_slash(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = upload(&d, "photo.jpg", 6, stream(&[b"abc", b"def"], true)).unwrap();
+        assert_eq!(path, format!("{d}/photo.jpg"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"abcdef");
+        // The name's taken: the next one is numbered; the first is untouched.
+        let second = upload(&d, "photo.jpg", 2, stream(&[b"xy"], true)).unwrap();
+        assert_eq!(second, format!("{d}/photo (1).jpg"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"abcdef");
+        // Short, broken off, or too long: nothing is left behind.
+        assert!(upload(&d, "short.bin", 10, stream(&[b"abc"], true)).is_err());
+        assert!(upload(&d, "broken.bin", 6, stream(&[b"abc"], false)).is_err());
+        assert!(upload(&d, "long.bin", 2, stream(&[b"abc"], true)).is_err());
+        assert!(upload(&d, "../escape", 1, stream(&[b"a"], true)).is_err());
+        let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        names.sort();
+        assert_eq!(names, ["photo (1).jpg", "photo.jpg"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn downloads_stream_the_file() {
+        let path = std::env::temp_dir().join(format!("chm-download-test-{}", std::process::id()));
+        let body: Vec<u8> = (0..(CHUNK * 2 + 10)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &body).unwrap();
+        let (size, mut rx) = download(&crate::local::to_slash(&path)).unwrap();
+        assert_eq!(size, body.len() as u64);
+        let mut got = Vec::new();
+        while let Some(chunk) = rx.blocking_recv() {
+            got.extend_from_slice(&chunk.unwrap());
+        }
+        assert_eq!(got, body);
+        std::fs::remove_file(&path).unwrap();
+        assert!(download(&crate::local::to_slash(&std::env::temp_dir())).is_err(), "not a folder");
     }
 
     #[test]

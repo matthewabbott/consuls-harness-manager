@@ -10,7 +10,7 @@ use tracing::{debug, info};
 use super::ctx::Ctx;
 use super::direct::{self, DirectSpec};
 use super::tmux_mgr::{PaneCmd, TmuxManager};
-use crate::fs::{FileContent, FileStamp, FsOp, SaveError};
+use crate::fs::{ByteStream, FileContent, FileStamp, FsOp, SaveError};
 use crate::fs::git::GitStatus;
 use crate::fs::remote::{self as rfs, SftpPool};
 use crate::model::{DirListing, HostConfig, HostErrorKind, HostFacts, HostPhase, NewPaneSpec, NoticeLevel};
@@ -45,6 +45,8 @@ pub(crate) enum HostCmd {
     WriteFile { path: String, text: String, bom: bool, expect: Option<FileStamp>, reply: oneshot::Sender<Result<FileStamp, SaveError>> },
     Exec { script: String, reply: oneshot::Sender<Result<ExecOutput, String>> },
     SavePaste { name: String, bytes: Vec<u8>, reply: oneshot::Sender<Result<String, String>> },
+    Upload { dir: String, name: String, len: u64, rx: ByteStream, reply: oneshot::Sender<Result<String, String>> },
+    Download { path: String, reply: oneshot::Sender<Result<(u64, ByteStream), String>> },
     Shutdown,
 }
 
@@ -66,6 +68,8 @@ impl HostCmd {
             HostCmd::WriteFile { reply, .. } => drop(reply.send(Err(SaveError::Failed { message: why }))),
             HostCmd::Exec { reply, .. } => drop(reply.send(Err(why))),
             HostCmd::SavePaste { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::Upload { reply, .. } => drop(reply.send(Err(why))),
+            HostCmd::Download { reply, .. } => drop(reply.send(Err(why))),
             _ => {}
         }
     }
@@ -476,6 +480,18 @@ async fn connected_phase(
                     let conn = conn.clone();
                     tokio::spawn(async move {
                         let _ = reply.send(rfs::save_paste(&conn, &name, &bytes).await);
+                    });
+                }
+                Some(HostCmd::Upload { dir, name, len, rx, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::upload(&conn, &sftp, &dir, &name, len, rx).await);
+                    });
+                }
+                Some(HostCmd::Download { path, reply }) => {
+                    let (conn, sftp) = (conn.clone(), sftp.clone());
+                    tokio::spawn(async move {
+                        let _ = reply.send(rfs::download(&conn, &sftp, &path).await);
                     });
                 }
                 Some(HostCmd::Git { dir, reply }) => {

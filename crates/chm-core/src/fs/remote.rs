@@ -1,16 +1,17 @@
 //! File operations on a remote machine: SFTP over one pooled session per connection (sshd
-//! limits channels per connection), plus a couple of shell commands SFTP can't do well
-//! (recursive delete, counting a tree).
+//! limits channels per connection), plus shell commands for what SFTP can't do well (recursive
+//! delete and copy, counting a tree, moving across disks).
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::OpenFlags;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::git::{self, GitStatus};
-use super::{COUNT_CAP, FsOp, base_name};
+use super::{ByteStream, CHUNK, COUNT_CAP, FsOp, NAME_TRIES, base_name, check_name, check_not_inside, numbered, upload_temp};
 use crate::model::{DirEntryInfo, DirListing};
 use crate::ssh::SshConnection;
 use crate::ssh::exec::{self, sh_quote};
@@ -20,7 +21,8 @@ use crate::ssh::exec::{self, sh_quote};
 pub(crate) struct SftpPool(Arc<tokio::sync::Mutex<Option<Arc<SftpSession>>>>);
 
 impl SftpPool {
-    async fn get(&self, conn: &SshConnection) -> Result<Arc<SftpSession>, String> {
+    /// The session, for work that can't be retried by [`SftpPool::with`] (a stream is used up).
+    pub(crate) async fn get(&self, conn: &SshConnection) -> Result<Arc<SftpSession>, String> {
         let mut slot = self.0.lock().await;
         if let Some(s) = slot.as_ref() {
             return Ok(s.clone());
@@ -132,16 +134,26 @@ pub(crate) async fn op(conn: &SshConnection, pool: &SftpPool, op: FsOp) -> Resul
             .await
             .map_err(|e| format!("{}: {e}", base_name(&path))),
         FsOp::Rename { from, to } => {
+            check_not_inside(&from, &to)?;
             if pool.with(conn, |s| {
                 let t = to.clone();
                 async move { s.try_exists(t).await }
             }).await? {
                 return Err(format!("{} already exists", base_name(&to)));
             }
-            pool.with(conn, |s| {
+            let renamed = pool.with(conn, |s| {
                 let (f, t) = (from.clone(), to.clone());
                 async move { s.rename(f, t).await }
-            }).await.map_err(|e| format!("{}: {e}", base_name(&from)))
+            }).await;
+            match renamed {
+                Ok(()) => Ok(()),
+                // SFTP can't move across file systems (OpenSSH just says "Failure"); mv can.
+                Err(_) => shell_into(conn, "mv --", &from, &to).await,
+            }
+        }
+        FsOp::Copy { from, to } => {
+            check_not_inside(&from, &to)?;
+            shell_into(conn, "cp -Rp --", &from, &to).await
         }
         FsOp::Remove { path } => {
             let meta = pool.with(conn, |s| {
@@ -163,6 +175,118 @@ pub(crate) async fn op(conn: &SshConnection, pool: &SftpPool, op: FsOp) -> Resul
             }
         }
     }
+}
+
+/// Runs `cmd "$from" "$to"` unless something is already at `to`.
+async fn shell_into(conn: &SshConnection, cmd: &str, from: &str, to: &str) -> Result<(), String> {
+    let script = format!("t={}\nif [ -e \"$t\" ] || [ -L \"$t\" ]; then exit 17; fi\n{cmd} {} \"$t\"", sh_quote(to), sh_quote(from));
+    let out = exec::run(conn, &script, Duration::from_secs(600)).await.map_err(|e| e.to_string())?;
+    match out.status {
+        Some(0) => Ok(()),
+        Some(17) => Err(format!("{} already exists", base_name(to))),
+        _ => {
+            let err = out.stderr_str();
+            Err(if err.trim().is_empty() { format!("{}: failed (status {:?})", base_name(from), out.status) } else { err.trim().to_string() })
+        }
+    }
+}
+
+/// Puts a finished upload in place under the first free name, without ever replacing a file:
+/// a hard link fails if the name is taken (SFTP's rename can't be trusted with that: Tailscale
+/// SSH's replaces), then the temporary name goes; where hard links aren't possible, `mv -n`.
+const PLACE_SCRIPT: &str = r#"for n in "$@"; do
+  f="$d/$n"
+  if ln -- "$t" "$f" 2>/dev/null; then rm -f -- "$t"; printf 'PLACED %s\n' "$f"; exit 0; fi
+  if [ ! -e "$f" ] && [ ! -L "$f" ] && mv -n -- "$t" "$f" 2>/dev/null && [ ! -e "$t" ]; then printf 'PLACED %s\n' "$f"; exit 0; fi
+done
+rm -f -- "$t"
+exit 3"#;
+
+/// Writes the `len` bytes arriving on `rx` to a new file `name` in `dir` and returns its path.
+/// It's written under a temporary name and put in place only once every byte is there, so a
+/// broken-off upload leaves nothing behind. A name that's taken gets " (1)", " (2)", ….
+pub(crate) async fn upload(conn: &SshConnection, pool: &SftpPool, dir: &str, name: &str, len: u64, mut rx: ByteStream) -> Result<String, String> {
+    check_name(name)?;
+    let sftp = pool.get(conn).await?;
+    let tmp = upload_temp(dir, name);
+    let mut file = sftp
+        .open_with_flags(tmp.clone(), OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("{name}: {e}"))?;
+    let written: Result<(), String> = async {
+        let mut got = 0u64;
+        while let Some(chunk) = rx.recv().await {
+            let chunk = chunk?;
+            got += chunk.len() as u64;
+            if got > len {
+                return Err(format!("{name}: more data than announced"));
+            }
+            file.write_all(&chunk).await.map_err(|e| format!("{name}: {e}"))?;
+        }
+        if got != len {
+            return Err(format!("{name}: the upload stopped after {got} of {len} bytes"));
+        }
+        file.shutdown().await.map_err(|e| format!("{name}: {e}"))
+    }
+    .await;
+    if let Err(e) = written {
+        drop(file);
+        let _ = sftp.remove_file(tmp).await;
+        return Err(e);
+    }
+    let names: Vec<String> = (0..NAME_TRIES).map(|n| sh_quote(&numbered(name, n))).collect();
+    let script = format!("t={}\nd={}\nset -- {}\n{PLACE_SCRIPT}", sh_quote(&tmp), sh_quote(dir.trim_end_matches('/')), names.join(" "));
+    let placed = exec::run(conn, &script, Duration::from_secs(60)).await;
+    let out = match placed {
+        Ok(out) => out,
+        Err(e) => {
+            let _ = sftp.remove_file(tmp).await;
+            return Err(format!("{name}: {e}"));
+        }
+    };
+    match out.stdout_str().lines().rev().find_map(|l| l.strip_prefix("PLACED ")) {
+        Some(path) if out.success() => Ok(path.to_string()),
+        _ if out.status == Some(3) => Err(format!("{name}: too many files with that name already")),
+        _ => Err(format!("{name}: couldn't put it in place: {}", out.stderr_str().trim())),
+    }
+}
+
+/// A file's size and its bytes, read in the background as they're taken.
+pub(crate) async fn download(conn: &SshConnection, pool: &SftpPool, path: &str) -> Result<(u64, ByteStream), String> {
+    let sftp = pool.get(conn).await?;
+    let meta = sftp.metadata(path.to_string()).await.map_err(|e| format!("{}: {e}", base_name(path)))?;
+    if meta.is_dir() {
+        return Err(format!("{} is a folder", base_name(path)));
+    }
+    let size = meta.size.unwrap_or(0);
+    let mut file = sftp.open(path.to_string()).await.map_err(|e| format!("{}: {e}", base_name(path)))?;
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let name = base_name(path).to_string();
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; CHUNK];
+        let mut left = size;
+        while left > 0 {
+            let want = buf.len().min(left as usize);
+            match file.read(&mut buf[..want]).await {
+                Ok(0) => {
+                    let _ = tx.send(Err(format!("{name} got shorter while downloading"))).await;
+                    break;
+                }
+                Ok(n) => {
+                    left -= n as u64;
+                    if tx.send(Ok(Bytes::copy_from_slice(&buf[..n]))).await.is_err() {
+                        break; // nobody's taking it any more
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("{name}: {e}"))).await;
+                    break;
+                }
+            }
+        }
+        let _ = file.shutdown().await;
+    });
+    Ok((size, rx))
 }
 
 /// Items under `path` (not counting itself), up to [`COUNT_CAP`] + 1.

@@ -3,4 +3,4 @@
 /**
  * A change to the file system, requested by the explorer.
  */
-export type FsOp = { "kind": "mkdir", path: string, } | { "kind": "createFile", path: string, } | { "kind": "rename", from: string, to: string, } | { "kind": "remove", path: string, };
+export type FsOp = { "kind": "mkdir", path: string, } | { "kind": "createFile", path: string, } | { "kind": "rename", from: string, to: string, } | { "kind": "copy", from: string, to: string, } | { "kind": "remove", path: string, };

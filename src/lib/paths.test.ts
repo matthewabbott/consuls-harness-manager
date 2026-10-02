@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { baseName, crumbsOf, driveOf, isRoot, isWithin, joinPath, parentPath, sameFolder } from "./paths";
+import { baseName, crumbsOf, driveOf, freeName, homeCrumbs, isRoot, isWithin, joinPath, parentPath, resolveTyped, sameFolder, typedPath } from "./paths";
 
 describe("paths", () => {
   it("walks up POSIX paths", () => {
@@ -46,5 +46,44 @@ describe("paths", () => {
     expect(baseName("D:/a/programming")).toBe("programming");
     expect(baseName("D:/")).toBe("D:");
     expect(baseName("/")).toBe("/");
+  });
+});
+
+describe("phone paths", () => {
+  it("shows home as one crumb", () => {
+    expect(homeCrumbs("/home/u/code/app", "/home/u")).toEqual([
+      { label: "~", path: "/home/u" },
+      { label: "code", path: "/home/u/code" },
+      { label: "app", path: "/home/u/code/app" },
+    ]);
+    expect(homeCrumbs("/home/u", "/home/u")).toEqual([{ label: "~", path: "/home/u" }]);
+    expect(homeCrumbs("/etc/nginx", "/home/u")).toEqual([
+      { label: "/", path: "/" },
+      { label: "etc", path: "/etc" },
+      { label: "nginx", path: "/etc/nginx" },
+    ]);
+    expect(homeCrumbs("/home/user2", "/home/u").map((c) => c.label)).toEqual(["/", "home", "user2"]);
+    expect(homeCrumbs("D:/a", "C:/Users/me").map((c) => c.label)).toEqual(["D:", "a"]);
+  });
+
+  it("types from where you are", () => {
+    expect(typedPath("/home/u/code", "/home/u")).toBe("~/code/");
+    expect(typedPath("/home/u", "/home/u")).toBe("~/");
+    expect(typedPath("/", "/home/u")).toBe("/");
+    expect(resolveTyped("~/code/", "/x")).toBe("~/code/");
+    expect(resolveTyped("src/lib", "/home/u/app")).toBe("/home/u/app/src/lib");
+    expect(resolveTyped("..", "/home/u/app")).toBe("/home/u/app/..");
+    expect(resolveTyped("/etc", "/home/u")).toBe("/etc");
+    expect(resolveTyped("D:/games", "C:/")).toBe("D:/games");
+    expect(resolveTyped("  ", "/home/u")).toBeNull();
+  });
+});
+
+describe("freeName", () => {
+  it("numbers a taken name like uploads do", () => {
+    expect(freeName("a.txt", new Set())).toBe("a.txt");
+    expect(freeName("a.txt", new Set(["a.txt", "a (1).txt"]))).toBe("a (2).txt");
+    expect(freeName("src", new Set(["src"]))).toBe("src (1)");
+    expect(freeName(".env", new Set([".env"]))).toBe(".env (1)");
   });
 });

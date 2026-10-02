@@ -1,4 +1,4 @@
-import { ALargeSmall, Bell, ChevronLeft, Copy, Eye, EyeOff, Keyboard, Minus, MoreHorizontal, Pencil, Plus, Power, Search, X } from "lucide-react";
+import { ALargeSmall, Bell, ChevronLeft, Copy, Eye, EyeOff, FolderOpen, Keyboard, Minus, MoreHorizontal, Pencil, Plus, Power, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import Composer, { type ComposerHandle } from "../components/Composer";
@@ -17,6 +17,7 @@ import { FONT, useViewPrefs } from "../store/viewPrefs";
 import KeyBar, { afterUse, heldMods, type Holds, nextHold, NO_HOLDS } from "./KeyBar";
 import { Sheet, SheetAction } from "./Sheet";
 import CopySheet from "./CopySheet";
+import { useFilesScreen } from "./files";
 import FindBar, { type FindResult } from "./FindBar";
 import PaneTitle, { type TitleMode } from "./PaneTitle";
 import LinkSheet from "./LinkSheet";
@@ -411,6 +412,16 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           >
             <Pencil className="h-5 w-5 text-mist-400" /> Rename
           </SheetAction>
+          {pane.currentPath && (
+            <SheetAction
+              onClick={() => {
+                setMenu(null);
+                useFilesScreen.getState().open({ host: pane.host, dir: pane.currentPath });
+              }}
+            >
+              <FolderOpen className="h-5 w-5 text-mist-400" /> Browse files here
+            </SheetAction>
+          )}
           {pane.hidden ? (
             <SheetAction
               onClick={() => {
@@ -458,7 +469,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
       {copying && termRef.current?.term && (
         <CopySheet term={termRef.current.term} pane={pane} query={finding ? query : ""} onClose={() => setCopying(false)} />
       )}
-      {link && <LinkSheet link={link} onClose={() => setLink(null)} />}
+      {link && <LinkSheet link={link} pane={pane} onClose={() => setLink(null)} />}
 
       {keys.renaming && (
         <div className="shrink-0 px-3 pb-2">

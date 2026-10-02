@@ -107,7 +107,7 @@ export function mockTouch(host: string, path: string, text: string) {
 
 export function mockListDir(host: string, path: string): DirListing {
   const home = host === "@local" ? "C:/Users/consul" : "/home/consulear";
-  const p = path === "~" || !path ? home : path.replace(/\/$/, "") || "/";
+  const p = path === "~" || !path ? home : (path.startsWith("~/") ? home + path.slice(1) : path).replace(/\/$/, "") || "/";
   if (!nodes.get(k(host, p))?.dir && p !== "/") throw new Error(`${p}: No such file`);
   const prefix = p === "/" ? "/" : `${p}/`;
   // Like the real backend, a drive root keeps its slash (`D:/`).
@@ -143,11 +143,32 @@ export function mockFsOp(host: string, op: FsOp) {
       }
       return;
     }
+    case "copy": {
+      if (exists(op.to)) throw new Error(`${op.to.split("/").pop()} already exists`);
+      for (const [key, n] of [...nodes]) {
+        const [h, full] = key.split("\n");
+        if (h === host && (full === op.from || full.startsWith(`${op.from}/`))) nodes.set(k(host, op.to + full.slice(op.from.length)), { ...n });
+      }
+      return;
+    }
     case "remove":
       for (const key of [...nodes.keys()]) {
         const [h, full] = key.split("\n");
         if (h === host && (full === op.path || full.startsWith(`${op.path}/`))) nodes.delete(key);
       }
+  }
+}
+
+/** An uploaded file lands under its name, or a numbered one if that's taken. */
+export function mockUpload(host: string, dir: string, name: string, size: number): string {
+  const dot = name.lastIndexOf(".");
+  for (let n = 0; ; n++) {
+    const candidate = n === 0 ? name : dot > 0 ? `${name.slice(0, dot)} (${n})${name.slice(dot)}` : `${name} (${n})`;
+    const path = `${dir.replace(/\/$/, "")}/${candidate}`;
+    if (!nodes.has(k(host, path))) {
+      add(host, path, false, size);
+      return path;
+    }
   }
 }
 

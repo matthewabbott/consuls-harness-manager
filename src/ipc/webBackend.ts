@@ -182,6 +182,29 @@ function openLink(url: string): Promise<void> {
   return Promise.resolve();
 }
 
+/** A download link for a file (`/api/download`, good for five minutes). */
+async function fileUrl(host: string, path: string): Promise<string> {
+  const token = await conn.call<string>("download_token", { host, path });
+  return `/api/download?t=${token}`;
+}
+
+/** Streams a file to the server as the request body; XHR, for upload progress. */
+function uploadFile(host: string, dir: string, file: File, onProgress?: (sent: number) => void, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const q = new URLSearchParams({ host, dir, name: file.name });
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/upload?${q}`);
+    xhr.setRequestHeader("X-Consuls", "1");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => onProgress?.(e.loaded);
+    xhr.onload = () => (xhr.status === 200 ? resolve(JSON.parse(xhr.responseText) as string) : reject(xhr.responseText || xhr.statusText));
+    xhr.onerror = () => reject("the upload broke off");
+    xhr.onabort = () => reject("cancelled");
+    signal?.addEventListener("abort", () => xhr.abort());
+    xhr.send(file);
+  });
+}
+
 export async function webBackend(): Promise<Backend> {
   return {
     kind: "web",
@@ -200,7 +223,13 @@ export async function webBackend(): Promise<Backend> {
     revealPath: notHere("Showing files on this device"),
     vscodeStatus: async () => ({ installed: false, remoteSsh: false }),
     openInVscode: notHere("VS Code"),
-    readBytes: notHere("Image previews"),
+    readBytes: async (host, path) => {
+      const res = await fetch(await fileUrl(host, path));
+      if (!res.ok) throw (await res.text()) || res.statusText;
+      return res.arrayBuffer();
+    },
+    uploadFile,
+    fileUrl,
     subscribeFrames: async (cb) => {
       conn.onFrames(cb);
       await conn.call("subscribe_frames");

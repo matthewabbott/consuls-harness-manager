@@ -32,6 +32,7 @@ pub fn is_slow(method: &str) -> bool {
             | "tmux_op"
             | "terminate_pane"
             | "list_dir"
+            | "download_token"
     )
 }
 
@@ -218,6 +219,14 @@ pub async fn call(d: &Daemon, method: &str, p: Value) -> Result<Value, Value> {
         "tmux_op" => ok(core.tmux_op(key()?, arg::<TmuxOp>(&p, "op")?).await.map_err(err)?),
         "terminate_pane" => ok(core.terminate_pane(key()?, arg(&p, "force")?).await.map_err(err)?),
         "list_dir" => ok(core.list_dir(&host()?, &path()?).await.map_err(err)?),
+        // A link for `/api/download` (the web app's own call: the desktop reads files directly).
+        "download_token" => {
+            let (host, path) = (host()?, path()?);
+            if core.stat_file(&host, &path).await.map_err(err)?.is_none() {
+                return Err(err(format!("{path}: no such file")));
+            }
+            ok(d.downloads.issue(host, path).map_err(err)?)
+        }
         "get_ui_state" => ok(core.ui_state()),
         "set_ui_state" => {
             core.set_ui_state(arg(&p, "key")?, arg(&p, "value")?);

@@ -1,4 +1,4 @@
-import { ChevronRight, Plus, Settings } from "lucide-react";
+import { ChevronRight, FolderOpen, Plus, Settings } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import NotifySwitch from "../components/NotifySwitch";
@@ -9,6 +9,7 @@ import { HARNESS_DOT, HARNESS_NAME, phaseText, status, trackable } from "../lib/
 import { pausedText } from "../lib/notifyModes";
 import { displayTitle, paneWhere } from "../lib/panes";
 import { useApp } from "../store/app";
+import { useFilesScreen } from "./files";
 
 /** Waiting for you first, then needing input, working, the rest; by name within each. */
 function rank(att: PaneAttention | undefined): number {
@@ -126,9 +127,18 @@ export default function MachinesScreen({ onSettings, onAdd, onNew }: { onSetting
                   </button>
                 )}
                 {m.phase?.phase === "connected" && (
-                  <button onClick={() => onNew(m.id)} aria-label={`New session on ${m.name}`} className="-my-1 ml-auto shrink-0 rounded-full p-1.5 text-ember-400 active:bg-ink-700">
-                    <Plus className="h-5 w-5" />
-                  </button>
+                  <>
+                    <button
+                      onClick={() => useFilesScreen.getState().open({ host: m.id, dir: config.ui.defaultFolders[m.id] ?? "~" })}
+                      aria-label={`Files on ${m.name}`}
+                      className="-my-1 ml-auto shrink-0 rounded-full p-1.5 text-mist-300 active:bg-ink-700"
+                    >
+                      <FolderOpen className="h-5 w-5" />
+                    </button>
+                    <button onClick={() => onNew(m.id)} aria-label={`New session on ${m.name}`} className="-my-1 shrink-0 rounded-full p-1.5 text-ember-400 active:bg-ink-700">
+                      <Plus className="h-5 w-5" />
+                    </button>
+                  </>
                 )}
               </div>
               {m.panes.length === 0 ? (

@@ -105,6 +105,13 @@ export interface Backend {
   gitHead(host: string, path: string): Promise<HeadVersion>;
   /** Raw bytes (image preview, up to 20 MB). */
   readBytes(host: string, path: string): Promise<ArrayBuffer>;
+  /**
+   * Sends a file from this device into `dir` on a machine (the web app). Resolves to where it
+   * landed: a taken name gets " (1)". It lands whole or not at all.
+   */
+  uploadFile(host: string, dir: string, file: File, onProgress?: (sent: number) => void, signal?: AbortSignal): Promise<string>;
+  /** A link a file can be downloaded through (the web app: good for five minutes). */
+  fileUrl(host: string, path: string): Promise<string>;
   statFile(host: string, path: string): Promise<FileStamp | null>;
   /** Rejects with a SaveError ({ kind: "conflict" | "failed" }). `expect: null` overwrites. */
   writeFile(host: string, path: string, text: string, bom: boolean, expect: FileStamp | null): Promise<FileStamp>;
@@ -218,6 +225,8 @@ async function tauriBackend(): Promise<Backend> {
     },
     // Raw bytes as the request body; the rest as headers.
     savePaste: (host, bytes, ext) => invoke("save_paste", bytes, { headers: { "chm-host": host, "chm-ext": ext } }),
+    uploadFile: () => Promise.reject("not in the desktop app yet"),
+    fileUrl: () => Promise.reject("not in the desktop app yet"),
   };
 }
 

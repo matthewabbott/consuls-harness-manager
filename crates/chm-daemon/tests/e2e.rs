@@ -12,6 +12,8 @@
 //!   app's origin;
 //! - the WebSocket: hello, calls, a pane's live output, typing into it, a second device taking
 //!   over, and a client that goes away no longer counting as looking at a pane (pushes resume);
+//! - files: uploads land whole (a taken name is numbered, one broken off leaves nothing, only the
+//!   web app may send them), downloads through a link (sandboxed, expiring), copy and move;
 //! - what lasts: phones and machines survive a restart; `uninstall` leaves nothing;
 //! - a server whose lease runs out stops by itself, keeping its install folder; a second server
 //!   in the same run folder is refused.
@@ -159,6 +161,17 @@ impl Api {
         (status, res.into_body().collect().await.unwrap().to_bytes().to_vec())
     }
 
+    /// Raw bytes with the given headers (uploads, downloads); the response's headers too.
+    async fn raw(&self, method: &str, path: &str, body: &[u8], headers: &[(&str, &str)]) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let mut req = http::Request::builder().method(method).uri(format!("http://{}{path}", self.addr)).header("tailscale-user-login", "e2e");
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let res = self.client.request(req.body(Full::new(Bytes::copy_from_slice(body))).unwrap()).await.unwrap();
+        let (status, headers) = (res.status(), res.headers().clone());
+        (status, headers, res.into_body().collect().await.unwrap().to_bytes().to_vec())
+    }
+
     async fn state(&self) -> DaemonState {
         let (status, body) = self.call("GET", "/api/state", None, Some("e2e"), None).await;
         assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -243,6 +256,68 @@ impl Ws {
     fn saw(&self, key: u32, text: &str) -> bool {
         self.output.iter().any(|(k, kind, bytes)| *k == key && (*kind == 2 || *kind == 3) && String::from_utf8_lossy(bytes).contains(text))
     }
+}
+
+/// Uploads, downloads, copy and move on the server's own machine, in a scratch folder.
+async fn files(api: &Api, ws: &mut Ws, addr: &str, dir: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir.join("sub"))?;
+    let d = dir.to_string_lossy().to_string();
+    let q = |name: &str| format!("/api/upload?host=%40local&dir={}&name={}", enc(&d), enc(name));
+    let app = [("x-consuls", "1"), ("origin", api.origin.as_str())];
+    let names = || {
+        let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        v.sort();
+        v
+    };
+
+    let (status, _, body) = api.raw("POST", &q("hello.txt"), b"hello e2e", &app).await;
+    ensure!(status == StatusCode::OK, "upload: {status} {}", String::from_utf8_lossy(&body));
+    ensure!(serde_json::from_slice::<String>(&body)? == format!("{d}/hello.txt"));
+    ensure!(std::fs::read(dir.join("hello.txt"))? == b"hello e2e");
+    let (_, _, body) = api.raw("POST", &q("hello.txt"), b"again", &app).await;
+    ensure!(serde_json::from_slice::<String>(&body)? == format!("{d}/hello (1).txt"), "a taken name is numbered");
+    ensure!(std::fs::read(dir.join("hello.txt"))? == b"hello e2e", "and the first is untouched");
+    ensure!(api.raw("POST", &q("x.txt"), b"x", &[("origin", api.origin.as_str())]).await.0 == StatusCode::FORBIDDEN, "not from the web app");
+    ensure!(api.raw("POST", &q("x.txt"), b"x", &[("x-consuls", "1"), ("origin", "https://evil.example")]).await.0 == StatusCode::FORBIDDEN, "another site");
+    ensure!(api.raw("POST", &q("../x.txt"), b"x", &app).await.0 == StatusCode::BAD_REQUEST, "a name, not a path");
+
+    // Broken off after 5 of 1000 bytes: nothing lands, nothing's left over.
+    let mut tcp = tokio::net::TcpStream::connect(addr).await?;
+    let head = format!(
+        "POST {} HTTP/1.1\r\nHost: {addr}\r\nTailscale-User-Login: e2e\r\nX-Consuls: 1\r\nOrigin: {}\r\nContent-Length: 1000\r\n\r\nhello",
+        q("broken.bin"),
+        api.origin
+    );
+    tokio::io::AsyncWriteExt::write_all(&mut tcp, head.as_bytes()).await?;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    drop(tcp);
+    wait_for("the broken-off upload to be cleaned up", Duration::from_secs(5), async || names() == ["hello (1).txt", "hello.txt", "sub"]).await?;
+    println!("ok   uploads: whole, numbered when taken, refused from elsewhere, nothing left when broken off");
+
+    let token = ws.call("download_token", json!({ "host": "@local", "path": format!("{d}/hello.txt") })).await?;
+    let token = token.as_str().context("a token")?.to_string();
+    let (status, headers, body) = api.raw("GET", &format!("/api/download?t={token}"), b"", &[]).await;
+    ensure!(status == StatusCode::OK && body == b"hello e2e", "download: {status}");
+    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+    ensure!(h("content-disposition").starts_with("attachment; filename=\"hello.txt\""), "{headers:?}");
+    ensure!(h("x-content-type-options") == "nosniff" && h("content-security-policy").starts_with("sandbox"), "{headers:?}");
+    ensure!(api.raw("GET", &format!("/api/download?t={token}"), b"", &[]).await.2 == b"hello e2e", "a link works more than once");
+    ensure!(api.raw("GET", "/api/download?t=00112233445566778899aabbccddeeff", b"", &[]).await.0 == StatusCode::GONE, "an unknown link");
+    ensure!(ws.call("download_token", json!({ "host": "@local", "path": format!("{d}/missing.txt") })).await.is_err(), "no link to nothing");
+    println!("ok   downloads: through a link, as a sandboxed attachment");
+
+    ws.call("fs_op", json!({ "host": "@local", "op": { "kind": "copy", "from": format!("{d}/hello.txt"), "to": format!("{d}/sub/copy.txt") } })).await?;
+    ensure!(std::fs::read(dir.join("sub/copy.txt"))? == b"hello e2e");
+    let again = ws.call("fs_op", json!({ "host": "@local", "op": { "kind": "copy", "from": format!("{d}/hello (1).txt"), "to": format!("{d}/sub/copy.txt") } })).await;
+    ensure!(again.is_err() && std::fs::read(dir.join("sub/copy.txt"))? == b"hello e2e", "copy never replaces");
+    ws.call("fs_op", json!({ "host": "@local", "op": { "kind": "rename", "from": format!("{d}/hello (1).txt"), "to": format!("{d}/sub/moved.txt") } })).await?;
+    ensure!(names() == ["hello.txt", "sub"] && std::fs::read(dir.join("sub/moved.txt"))? == b"again");
+    println!("ok   copy and move, never replacing");
+    Ok(())
+}
+
+fn enc(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
 fn unix() -> u64 {
@@ -466,6 +541,8 @@ async fn run(scratch: &Scratch) -> anyhow::Result<()> {
     let mut ws3 = open_ws(&addr, Some(&origin), Some("e2e")).await?;
     ws3.call("upsert_host", json!({ "config": { "id": "nowhere-e2e", "address": "127.0.0.1", "port": 9, "user": "nobody", "auth": { "kind": "auto" }, "autoConnect": false } })).await?;
     ensure!(ws3.call("upsert_host", json!({ "config": { "id": "", "user": "x" } })).await.is_err(), "a machine needs a name");
+
+    files(&api, &mut ws3, &addr, &scratch.base.join("files")).await?;
 
     // Settings from the app, applied at once: paused, nothing; resumed with a shorter delay,
     // the push comes sooner.

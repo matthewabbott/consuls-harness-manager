@@ -11,6 +11,8 @@ import { applyFrames } from "../term/tiles";
 import AddMachineSheet from "./AddMachineSheet";
 import MachinesScreen from "./MachinesScreen";
 import NewSessionSheet from "./NewSessionSheet";
+import FilesScreen from "./FilesScreen";
+import { useFilesScreen } from "./files";
 import Notices from "./Notices";
 import PaneScreen from "./PaneScreen";
 import SettingsScreen from "./SettingsScreen";
@@ -85,6 +87,7 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   // The machine a new session is being started on; undefined: no sheet.
   const [newOn, setNewOn] = useState<string | null | undefined>(undefined);
+  const filesAt = useFilesScreen((s) => s.at);
   const pane = useMemo(() => (expanded === null ? null : (Object.values(panes).flat().find((p) => p.key === expanded) ?? null)), [expanded, panes]);
   useVisibleHeight();
   useOpenFromNotification();
@@ -159,6 +162,7 @@ export default function App() {
       )}
       {adding && <AddMachineSheet onClose={() => setAdding(false)} />}
       {newOn !== undefined && <NewSessionSheet host={newOn} onClose={() => setNewOn(undefined)} />}
+      {filesAt && <FilesScreen key={`${filesAt.host}\n${filesAt.dir}\n${filesAt.file?.path ?? ""}`} at={filesAt} onClose={useFilesScreen.getState().close} />}
       {/* The tmux prefix's x (close this pane) asks first. */}
       {terminating !== null && <TerminateDialog paneKey={terminating} />}
       <Notices />

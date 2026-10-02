@@ -261,6 +261,24 @@ shell built as an iPhone app. See README.md.
 - `fs/` serves the explorer: `remote.rs` over one pooled SFTP session per connection (sshd caps
   channels per connection; `rm -rf`/`find` via exec for what SFTP can't do), `local.rs` via
   `std::fs`. Create never overwrites and rename never replaces, on both.
+- Transfers: `Core::upload(host, dir, name, len, ByteStream)` writes a temp file
+  (`.name.consuls-xxxx`), then places it under the first free name (`name (1).ext`, …) and
+  returns the path; it lands whole or not at all (short, long or broken-off streams leave
+  nothing). Remotely the placing is one exec of `ln` (`PLACE_SCRIPT`): **Tailscale SSH's SFTP
+  rename replaces an existing file** (OpenSSH's doesn't), so never rely on rename to refuse.
+  `Core::download` streams in 256 KB chunks. `FsOp::Copy` (`cp -Rp` remotely); `Rename` falls
+  back to `mv` across file systems (SFTP can't). Check against a real machine:
+  `cargo run -p chm-core --example remotefiles -- <host> <user>` (scratch folders only).
+- The server: `POST /api/upload?host&dir&name` (raw body, `X-Consuls` + Origin, `Content-Length`,
+  2 GB), `GET /api/download?t=` with tokens from the `download_token` call (`downloads.rs`:
+  random, 5 min, reusable — iOS fetches again for previews and the share sheet). Downloads are
+  attachments with nosniff and `CSP: sandbox`. The web backend's `readBytes`/`fileUrl` use them.
+- Phone (`src/mobile/`): `FilesScreen` (opened through `files.ts`'s `useFilesScreen`), `FileViewer`
+  (read-only CodeMirror, `editor/theme.ts` shared with the desktop editor), `FolderPicker`.
+  `useFolder` + `FolderBar` (crumbs with `~`, typed paths, back/forward via `lib/history.ts`)
+  are shared with `NewSessionSheet`. Transfers live in `files.ts` (`useTransfers`), so they
+  carry on with the browser closed; downloads are fetched first, then "Save…" calls
+  `navigator.share` (it needs its own tap).
 - `git status --porcelain=v2 -z --ignored=matching` from the repo root (`fs/git.rs`);
   `Core::git_status` shares one run between concurrent callers. The UI rolls statuses up to
   folders (`store/files.ts`), except ignored, which instead dims everything beneath.

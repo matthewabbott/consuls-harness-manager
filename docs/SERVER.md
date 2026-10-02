@@ -99,6 +99,18 @@ enabling notifications again on every phone.
   These are kept in the server's `core/config.json` (`notify`) and apply at once, to pushes
   already waiting too.
 
+**Files:** the folder button on a machine (or "Browse files here" in an agent's ⋯ menu, or
+Open on a file path tapped in a terminal) opens its files.
+- Tap a parent in the path to jump there, or tap the current folder (or ✎) to type a path.
+  ← and → go back and forward.
+- An item's ⋯ menu: Download, Rename, Move to…, Copy to…, Copy path, Delete. Moves and copies
+  stay on that machine. Nothing ever replaces an existing file.
+- Upload (the arrow at the top) sends files from the phone into the folder shown, one at a
+  time, up to 2 GB each. A file whose name is taken gets " (1)". Keep the app open meanwhile:
+  iOS pauses it in the background, the upload breaks off, and nothing is left behind (retry).
+- Downloads fetch the file, then **Save…** opens the share sheet (Save to Files, Photos,
+  AirDrop). It's two taps because iOS only opens the share sheet straight from a tap.
+
 - This needs iOS 16.4 or later. Pushes only work from the Home Screen app, not a Safari tab.
 - **One device at a time:** opening the app elsewhere takes over, and the first device offers
   **Use here**.
@@ -115,6 +127,10 @@ enabling notifications again on every phone.
   site, open on your phone, can't use your Tailscale identity to drive your shells.
 - **A strict content security policy:** only the app's own scripts run, and they talk only to
   this server.
+- **Uploads** (`/api/upload`) need the app's own header and origin, like pasted images.
+  **Downloads** go through links the app asks for over its socket: random, for one file, good
+  for five minutes. They're always served as attachments, never sniffed, and sandboxed, so an
+  HTML or SVG file can't run as part of the app.
 - **Any device logged into your tailnet account can use the app, and that means typing into
   your sessions.** Keep that account to your own devices.
 
