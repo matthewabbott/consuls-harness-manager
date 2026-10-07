@@ -8,7 +8,7 @@ import type { DirListing } from "../ipc/bindings/DirListing";
 import { isRoot, joinPath, parentPath } from "../lib/paths";
 import { useApp } from "../store/app";
 import FolderBar, { Places } from "./FolderBar";
-import { useFolder } from "./useFolder";
+import { useFolder } from "../lib/useFolder";
 
 interface Props {
   host: string;

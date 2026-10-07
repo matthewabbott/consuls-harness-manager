@@ -3,10 +3,13 @@
 
 mod alerts;
 mod commands;
+mod dragout;
+mod pointer;
 #[cfg(target_os = "macos")]
 mod mac_notify;
 #[cfg(desktop)]
 mod tray;
+mod transfers;
 mod vscode;
 
 use std::sync::{Arc, Mutex};
@@ -65,6 +68,7 @@ impl AppSink {
 pub struct AppState {
     pub core: Arc<Core>,
     pub sink: Arc<AppSink>,
+    pub transfers: Arc<transfers::Transfers>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -88,7 +92,8 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build());
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init());
     builder
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| match event {
@@ -132,7 +137,7 @@ pub fn run() {
             let core = Core::with_options(data_dir, sink.clone(), options);
             sink.alerter.set_prefs(core.sound_prefs());
             sink.alerter.set_recording(core.ui_prefs().recording);
-            app.manage(AppState { core: core.clone(), sink: sink.clone() });
+            app.manage(AppState { core: core.clone(), sink: sink.clone(), transfers: Default::default() });
 
             tauri::async_runtime::spawn(async move {
                 core.start();
@@ -148,6 +153,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
             commands::subscribe_frames,
+            transfers::upload_paths,
+            transfers::download_to,
+            transfers::cancel_transfer,
+            dragout::prepare_drag,
+            dragout::start_drag_out,
+            pointer::pointer_in_page,
             commands::upsert_host,
             commands::remove_host,
             commands::connect_host,

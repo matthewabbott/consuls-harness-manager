@@ -39,7 +39,7 @@ pub fn is_slow(method: &str) -> bool {
 /// The desktop app's commands that the web app doesn't get (the page does some itself:
 /// `open_external`; images go through `/api/paste`).
 pub const DESKTOP_ONLY: &[&str] =
-    &["quit_app", "reveal_path", "vscode_status", "open_in_vscode", "local_drives", "test_chime", "open_external", "save_paste", "read_bytes"];
+    &["quit_app", "reveal_path", "vscode_status", "open_in_vscode", "local_drives", "test_chime", "open_external", "save_paste", "read_bytes", "upload_paths", "download_to", "cancel_transfer", "prepare_drag", "start_drag_out", "pointer_in_page"];
 
 fn arg<T: DeserializeOwned>(p: &Value, name: &str) -> Result<T, Value> {
     serde_json::from_value(p.get(name).cloned().unwrap_or(Value::Null)).map_err(|e| Value::String(format!("{name}: {e}")))

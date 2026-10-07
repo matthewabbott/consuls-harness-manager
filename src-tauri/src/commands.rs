@@ -76,7 +76,7 @@ pub fn open_external(app: tauri::AppHandle, url: String) -> CmdResult<()> {
 
 /// A path on this PC from the UI (`C:/…` on Windows, `/…` elsewhere), as a native path that
 /// exists. The UI may have taken it from terminal output, so nothing else gets through.
-fn local_path(path: &str) -> CmdResult<std::path::PathBuf> {
+pub(crate) fn local_path(path: &str) -> CmdResult<std::path::PathBuf> {
     let bytes = path.as_bytes();
     let absolute = if cfg!(windows) {
         bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'

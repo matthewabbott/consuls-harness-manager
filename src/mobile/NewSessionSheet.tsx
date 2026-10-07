@@ -14,7 +14,7 @@ import { uiStorage } from "../lib/uiState";
 import { useApp } from "../store/app";
 import Chip from "./Chip";
 import FolderBar, { Places } from "./FolderBar";
-import { useFolder } from "./useFolder";
+import { useFolder } from "../lib/useFolder";
 
 const HARNESSES: { id: Harness; label: string }[] = [
   { id: "claude", label: "Claude Code" },

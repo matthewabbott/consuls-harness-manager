@@ -22,9 +22,14 @@ interface Props {
   onForward(): void;
   /** Shown at the end of the row (git branch, a spinner, …). */
   trailing?: React.ReactNode;
+  /** A folder something is being dragged onto (its crumb lights up). */
+  dropDir?: string | null;
 }
 
-export default function FolderNav({ host, path, onGo, canBack, canForward, onBack, onForward, trailing }: Props) {
+/** Where a crumb would take a dragged item. */
+const dropping = (dropDir: string | null | undefined, path: string) => !!dropDir && sameFolder(dropDir, path);
+
+export default function FolderNav({ host, path, onGo, canBack, canForward, onBack, onForward, trailing, dropDir }: Props) {
   const def = useDefaultFolder(host);
   const r = useRedact();
   const machine = r(hostLabel(host));
@@ -43,13 +48,16 @@ export default function FolderNav({ host, path, onGo, canBack, canForward, onBac
       </NavButton>
       {path && root && (
         <div className="ml-1 flex min-w-0 flex-1 flex-wrap items-center gap-x-0.5">
-          <RootMenu host={host} path={path} root={root} onGo={onGo} />
+          <RootMenu host={host} path={path} root={root} onGo={onGo} dropping={dropping(dropDir, root)} />
           {crumbs.map((c, i) => (
             <span key={c.path} className="flex items-center">
               <ChevronRight className="h-3 w-3 text-mist-600" />
               <button
                 onClick={() => onGo(c.path)}
-                className={`rounded px-0.5 whitespace-nowrap hover:bg-ink-700 hover:text-mist-200 ${i === crumbs.length - 1 ? "text-mist-100" : ""}`}
+                data-drop-dir={c.path}
+                className={`rounded px-0.5 whitespace-nowrap hover:bg-ink-700 hover:text-mist-200 ${i === crumbs.length - 1 ? "text-mist-100" : ""} ${
+                  dropping(dropDir, c.path) ? "bg-sky-400/25 text-mist-100 ring-1 ring-sky-400/60" : ""
+                }`}
               >
                 {r(c.label)}
               </button>
@@ -83,7 +91,7 @@ function NavButton({ title, disabled, onClick, children }: { title: string; disa
 }
 
 /** The root crumb (`C:` or `/`): opens a menu of drives, home and the default folder. */
-function RootMenu({ host, path, root, onGo }: { host: string; path: string; root: string; onGo(path: string): void }) {
+function RootMenu({ host, path, root, onGo, dropping }: { host: string; path: string; root: string; onGo(path: string): void; dropping: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const drives = useDrives(host) ?? [];
@@ -115,9 +123,10 @@ function RootMenu({ host, path, root, onGo }: { host: string; path: string; root
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
+        data-drop-dir={root}
         title={root === "/" ? "Jump to…" : "Switch drive or jump to…"}
         className={`flex items-center gap-0.5 rounded px-1 ring-1 transition-colors hover:bg-ink-700 hover:text-mist-100 ${
-          open ? "bg-ink-700 text-mist-100 ring-sky-400/50" : "text-mist-300 ring-ink-600"
+          open || dropping ? "bg-ink-700 text-mist-100 ring-sky-400/50" : "text-mist-300 ring-ink-600"
         }`}
       >
         {label}

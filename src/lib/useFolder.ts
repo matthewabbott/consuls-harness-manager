@@ -1,12 +1,12 @@
-// A folder being browsed on the phone (the file browser, the new-session and folder pickers):
+// A folder being browsed (the phone's file browser and pickers, the desktop's folder picker):
 // its listing, and back/forward through where you've been, like the desktop's browsers.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
 import type { DirListing } from "../ipc/bindings/DirListing";
-import { canBack, canForward, emptyHistory, type History, pushHistory, replaceCurrent, stepHistory } from "../lib/history";
-import { sameFolder } from "../lib/paths";
+import { canBack, canForward, emptyHistory, type History, pushHistory, replaceCurrent, stepHistory } from "./history";
+import { sameFolder } from "./paths";
 
 export interface Folder {
   listing: DirListing | null;

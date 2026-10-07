@@ -1,5 +1,6 @@
 // A file opened on the phone: text with highlighting (read only, at a line when a tapped path
-// named one), an image, or what it is, with a way to download it.
+// named one), an image, or what it is, with a way to download it. A sideways swipe goes to the
+// next or previous file in the folder.
 
 import { LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
@@ -55,17 +56,73 @@ function CodeView({ text, name, line, wrap }: { text: string; name: string; line
   return <div ref={host} className="selectable h-full" />;
 }
 
-export default function FileViewer({ host, path, size, line, onClose }: { host: string; path: string; size?: number; line?: number; onClose(): void }) {
+interface Props {
+  host: string;
+  path: string;
+  size?: number;
+  line?: number;
+  /** Where it is among the folder's files, for "3 of 12" and swiping. */
+  position?: { index: number; count: number };
+  onStep?(delta: 1 | -1): void;
+  onClose(): void;
+}
+
+/** A sideways swipe: far enough, mostly sideways, quick, one finger, and not a scroll of wide text. */
+function useSwipe(onStep: ((delta: 1 | -1) => void) | undefined) {
+  const start = useRef<{ x: number; y: number; t: number; scroller: Element | null; left: number; multi: boolean } | null>(null);
+  if (!onStep) return {};
+  return {
+    onTouchStart: (e: React.TouchEvent) => {
+      const t = e.touches[0];
+      if (e.touches.length > 1) {
+        if (start.current) start.current.multi = true;
+        return;
+      }
+      // The nearest thing that scrolls sideways (unwrapped code): moving it isn't a swipe.
+      let scroller: Element | null = e.target as Element;
+      while (scroller && scroller !== e.currentTarget && !(scroller.scrollWidth > scroller.clientWidth + 1 && getComputedStyle(scroller).overflowX !== "visible")) {
+        scroller = scroller.parentElement;
+      }
+      if (scroller === e.currentTarget) scroller = null;
+      start.current = { x: t.clientX, y: t.clientY, t: e.timeStamp, scroller, left: scroller?.scrollLeft ?? 0, multi: false };
+    },
+    onTouchEnd: (e: React.TouchEvent) => {
+      const s = start.current;
+      if (!s || e.touches.length > 0) return;
+      start.current = null;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (s.multi || Math.abs(dx) < 60 || Math.abs(dx) < 2 * Math.abs(dy) || e.timeStamp - s.t > 700) return;
+      if (s.scroller && Math.abs(s.scroller.scrollLeft - s.left) > 2) return;
+      onStep(dx < 0 ? 1 : -1);
+    },
+  };
+}
+
+export default function FileViewer({ host, path, size, line, position, onStep, onClose }: Props) {
   const name = baseName(path);
   const image = IMAGE.test(name);
   const [content, setContent] = useState<FileContent | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wrap, setWrap] = useState(true);
+  // Which way the last step went, for the slide.
+  const [went, setWent] = useState<1 | -1 | 0>(0);
+  const step = onStep
+    ? (delta: 1 | -1) => {
+        setWent(delta);
+        onStep(delta);
+      }
+    : undefined;
+  const swipe = useSwipe(step);
 
   useEffect(() => {
     let url: string | null = null;
     let cancelled = false;
+    setContent(null);
+    setImageUrl(null);
+    setError(null);
     (async () => {
       const b = await backend();
       try {
@@ -100,7 +157,9 @@ export default function FileViewer({ host, path, size, line, onClose }: { host: 
         </button>
         <div className="ml-1 min-w-0 flex-1">
           <div className="personal truncate text-[16px] font-semibold text-mist-100">{name}</div>
-          {known !== undefined && <div className="text-[12px] text-mist-500">{fmtSize(known)}</div>}
+          <div className="text-[12px] text-mist-500">
+            {[position && position.count > 1 ? `${position.index + 1} of ${position.count}` : null, known !== undefined ? fmtSize(known) : null].filter(Boolean).join(" · ")}
+          </div>
         </div>
         {content?.kind === "text" && (
           <button
@@ -116,21 +175,23 @@ export default function FileViewer({ host, path, size, line, onClose }: { host: 
           <Download className="h-5 w-5" />
         </button>
       </header>
-      <main className="min-h-0 flex-1 overflow-auto">
-        {loading && (
-          <p className="flex items-center gap-2 p-4 text-[14px] text-mist-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Opening…
-          </p>
-        )}
-        {error && <p className="p-4 text-[14px] text-rose-400">{error}</p>}
-        {imageUrl && (
-          <div className="flex min-h-full items-center justify-center bg-[repeating-conic-gradient(#1a1f2b_0_25%,#141822_0_50%)] bg-[length:20px_20px] p-2">
-            <img src={imageUrl} alt={name} className="max-w-full object-contain" />
-          </div>
-        )}
-        {content?.kind === "text" && <CodeView text={content.text} name={name} line={line} wrap={wrap} />}
-        {content?.kind === "binary" && <Notice>Not a text file. Download it to open it in another app.</Notice>}
-        {content?.kind === "tooLarge" && <Notice>Too large to show here ({fmtSize(Number(content.stamp.size))}). Download it to open it in another app.</Notice>}
+      <main className="min-h-0 flex-1 overflow-auto" {...swipe}>
+        <div key={path} className={`h-full ${went > 0 ? "slide-next" : went < 0 ? "slide-prev" : ""}`}>
+          {loading && (
+            <p className="flex items-center gap-2 p-4 text-[14px] text-mist-500">
+              <Loader2 className="h-4 w-4 animate-spin" /> Opening…
+            </p>
+          )}
+          {error && <p className="p-4 text-[14px] text-rose-400">{error}</p>}
+          {imageUrl && (
+            <div className="flex min-h-full items-center justify-center bg-[repeating-conic-gradient(#1a1f2b_0_25%,#141822_0_50%)] bg-[length:20px_20px] p-2">
+              <img src={imageUrl} alt={name} className="max-w-full object-contain" />
+            </div>
+          )}
+          {content?.kind === "text" && <CodeView text={content.text} name={name} line={line} wrap={wrap} />}
+          {content?.kind === "binary" && <Notice>Not a text file. Download it to open it in another app.</Notice>}
+          {content?.kind === "tooLarge" && <Notice>Too large to show here ({fmtSize(Number(content.stamp.size))}). Download it to open it in another app.</Notice>}
+        </div>
       </main>
       <TransfersPanel />
     </div>

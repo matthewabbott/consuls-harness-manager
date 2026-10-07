@@ -42,7 +42,7 @@ import FolderBar, { Places } from "./FolderBar";
 import FolderPicker from "./FolderPicker";
 import { Sheet, SheetAction } from "./Sheet";
 import TransfersPanel from "./TransfersPanel";
-import { useFolder } from "./useFolder";
+import { useFolder } from "../lib/useFolder";
 
 const SHOW_HIDDEN = "consuls.files.hidden";
 const TEXT = /\.(txt|md|json|ya?ml|toml|ini|cfg|conf|log|csv|rs|ts|tsx|js|jsx|mjs|py|sh|zsh|bash|go|rb|c|h|cpp|hpp|java|kt|swift|html|css|scss|sql|xml|lock)$/i;
@@ -91,6 +91,13 @@ export default function FilesScreen({ at, onClose }: { at: FilesAt; onClose(): v
 
   const entries = (folder.listing?.entries ?? []).filter((e) => showHidden || !e.name.startsWith("."));
   const pathOf = (e: DirEntryInfo) => joinPath(cwd, e.name);
+  // The viewer steps through the folder's files, in the order shown.
+  const files = entries.filter((e) => !e.isDir);
+  const shown = viewing ? files.findIndex((e) => pathOf(e) === viewing.path) : -1;
+  const stepFile = (delta: 1 | -1) => {
+    const next = files[shown + delta];
+    if (next) setViewing({ path: pathOf(next), size: next.size });
+  };
   const op = async (o: FsOp) => {
     await (await backend()).fsOp(host, o);
     folder.reload();
@@ -346,7 +353,17 @@ export default function FilesScreen({ at, onClose }: { at: FilesAt; onClose(): v
         </Sheet>
       )}
 
-      {viewing && <FileViewer host={host} path={viewing.path} size={viewing.size} line={viewing.line} onClose={() => setViewing(null)} />}
+      {viewing && (
+        <FileViewer
+          host={host}
+          path={viewing.path}
+          size={viewing.size}
+          line={viewing.line}
+          position={shown >= 0 ? { index: shown, count: files.length } : undefined}
+          onStep={shown >= 0 ? stepFile : undefined}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </div>
   );
 }

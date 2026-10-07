@@ -1,7 +1,7 @@
 // A fake core for running the UI in a plain browser: a few hosts, panes with plausible
 // agent output, one pane that keeps "working", and a host awaiting Tailscale approval.
 
-import type { Backend } from "./backend";
+import type { Backend, TransferEvent } from "./backend";
 import type { CoreEvent } from "./bindings/CoreEvent";
 import type { CoreSnapshot } from "./bindings/CoreSnapshot";
 import type { FocusState } from "./bindings/FocusState";
@@ -181,6 +181,23 @@ function toAnsi(lines: Seg[][]): string {
     return `\x1b[${codes.join(";")}m`;
   };
   return lines.map((segs) => segs.map(([t, fg = 0, a = 0]) => sgr(fg, a) + t).join("") + "\x1b[0m").join("\r\n");
+}
+
+let mockTransferId = 1;
+const mockCancelled = new Set<number>();
+/** Ticks a pretend transfer along, until done or cancelled. */
+function mockProgress(id: number, total: number, onEvent: (e: TransferEvent) => void): Promise<void> {
+  return new Promise((resolve) => {
+    let done = 0;
+    const t = window.setInterval(() => {
+      done = Math.min(total, done + total / 10);
+      onEvent({ kind: "progress", id, done });
+      if (done >= total || mockCancelled.has(id)) {
+        window.clearInterval(t);
+        resolve();
+      }
+    }, 150);
+  });
 }
 
 export function mockBackend(): Backend {
@@ -561,6 +578,32 @@ export function mockBackend(): Backend {
         });
       }),
     fileUrl: async (_host, path) => URL.createObjectURL(new Blob([`mock contents of ${path}\n`], { type: "text/plain" })),
+    // Pretend dialogs and transfers: a couple of files, a second or two each.
+    uploadPaths: async (host, dir, paths, folder, onEvent) => {
+      const picked = paths ?? (folder ? ["/Users/me/Pictures/holiday"] : ["/Users/me/Documents/report.pdf", "/Users/me/notes.md"]);
+      const files = picked.map((p, i) => ({ id: mockTransferId++, name: p.split(/[\\/]/).pop()!, total: 400_000 * (i + 1) }));
+      files.forEach((f) => onEvent({ kind: "queued", id: f.id, name: f.name, total: f.total, upload: true }));
+      void (async () => {
+        for (const f of files) {
+          await mockProgress(f.id, f.total, onEvent);
+          if (mockCancelled.has(f.id)) onEvent({ kind: "failed", id: f.id, error: "cancelled" });
+          else onEvent({ kind: "done", id: f.id, path: mockUpload(host, dir, f.name, f.total) });
+        }
+      })();
+    },
+    downloadTo: async (_host, path, onEvent) => {
+      const id = mockTransferId++;
+      const name = path.split("/").pop()!;
+      onEvent({ kind: "queued", id, name, total: 900_000, upload: false });
+      void mockProgress(id, 900_000, onEvent).then(() =>
+        onEvent(mockCancelled.has(id) ? { kind: "failed", id, error: "cancelled" } : { kind: "done", id, path: `/Users/me/Downloads/${name}` }),
+      );
+    },
+    cancelTransfer: async (id) => {
+      mockCancelled.add(id);
+    },
+    prepareDrag: (_host, path) => new Promise((resolve) => window.setTimeout(() => resolve(`/tmp/consuls-drag/mock/${path.split("/").pop()}`), 400)),
+    startDragOut: async (paths) => console.info("[mock] dragging out", paths),
     statFile: async (host, path) => mockStat(host, path),
     writeFile: async (host, path, text, _bom, expect) => mockWriteFile(host, path, text, expect),
     sendInput: async (key, data) => {

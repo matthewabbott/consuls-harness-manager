@@ -8,7 +8,7 @@ import { Fragment, useLayoutEffect, useRef, useState } from "react";
 import { baseName, homeCrumbs, resolveTyped, rootOf, sameFolder, typedPath } from "../lib/paths";
 import { setDefaultFolder, useDefaultFolder } from "../store/prefs";
 import Chip from "./Chip";
-import type { Folder } from "./useFolder";
+import type { Folder } from "../lib/useFolder";
 
 function NavButton({ label, disabled, onClick, children }: { label: string; disabled: boolean; onClick(): void; children: React.ReactNode }) {
   return (

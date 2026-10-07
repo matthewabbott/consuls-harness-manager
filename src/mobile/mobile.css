@@ -12,6 +12,20 @@ html {
   touch-action: manipulation;
 }
 
+/* The file viewer's next / previous file slides in from the side it came from. */
+.slide-next {
+  animation: slide-next 180ms ease-out both;
+}
+.slide-prev {
+  animation: slide-prev 180ms ease-out both;
+}
+@keyframes slide-next {
+  from { opacity: 0; transform: translateX(28px); }
+}
+@keyframes slide-prev {
+  from { opacity: 0; transform: translateX(-28px); }
+}
+
 /* Sideways is the browser's (zoomed-in text); up and down is the app's own scrolling. */
 .terminal-frame {
   touch-action: pan-x;

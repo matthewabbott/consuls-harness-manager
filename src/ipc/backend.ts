@@ -112,6 +112,19 @@ export interface Backend {
   uploadFile(host: string, dir: string, file: File, onProgress?: (sent: number) => void, signal?: AbortSignal): Promise<string>;
   /** A link a file can be downloaded through (the web app: good for five minutes). */
   fileUrl(host: string, path: string): Promise<string>;
+  /**
+   * Desktop: sends files or folders from this computer into `dir` on another machine: `paths`
+   * (dropped on the explorer), or picked in a dialog when null (`folder`: pick folders).
+   * Resolves once it's under way; `onEvent` follows each file.
+   */
+  uploadPaths(host: string, dir: string, paths: string[] | null, folder: boolean, onEvent: (e: TransferEvent) => void): Promise<void>;
+  /** Desktop: asks where to save a file from another machine, then downloads it there. */
+  downloadTo(host: string, path: string, onEvent: (e: TransferEvent) => void): Promise<void>;
+  cancelTransfer(id: number): Promise<void>;
+  /** Desktop: a local copy of a file to drag out of the window (fetched from another machine). */
+  prepareDrag(host: string, path: string): Promise<string>;
+  /** Desktop: hands a drag of these local files to the system (Finder / File Explorer). */
+  startDragOut(paths: string[]): Promise<void>;
   statFile(host: string, path: string): Promise<FileStamp | null>;
   /** Rejects with a SaveError ({ kind: "conflict" | "failed" }). `expect: null` overwrites. */
   writeFile(host: string, path: string, text: string, bom: boolean, expect: FileStamp | null): Promise<FileStamp>;
@@ -119,6 +132,13 @@ export interface Backend {
   installIntegration(host: string): Promise<IntegrationStatus>;
   uninstallIntegration(host: string): Promise<IntegrationStatus>;
 }
+
+/** From the app shell (not the core, so not in bindings/): a desktop upload or download, per file. */
+export type TransferEvent =
+  | { kind: "queued"; id: number; name: string; total: number; upload: boolean }
+  | { kind: "progress"; id: number; done: number }
+  | { kind: "done"; id: number; path: string }
+  | { kind: "failed"; id: number; error: string };
 
 /** From the app shell (not the core, so not in bindings/). */
 export interface VsCodeStatus {
@@ -225,8 +245,17 @@ async function tauriBackend(): Promise<Backend> {
     },
     // Raw bytes as the request body; the rest as headers.
     savePaste: (host, bytes, ext) => invoke("save_paste", bytes, { headers: { "chm-host": host, "chm-ext": ext } }),
-    uploadFile: () => Promise.reject("not in the desktop app yet"),
-    fileUrl: () => Promise.reject("not in the desktop app yet"),
+    uploadFile: () => Promise.reject("the desktop app sends files from disk (uploadPaths)"),
+    fileUrl: () => Promise.reject("the desktop app saves files itself (downloadTo)"),
+    uploadPaths: async (host, dir, paths, folder, onEvent) => {
+      await invoke("upload_paths", { host, dir, paths, folder, onEvent: new Channel<TransferEvent>(onEvent) });
+    },
+    downloadTo: async (host, path, onEvent) => {
+      await invoke("download_to", { host, path, onEvent: new Channel<TransferEvent>(onEvent) });
+    },
+    cancelTransfer: (id) => invoke("cancel_transfer", { id }),
+    prepareDrag: (host, path) => invoke("prepare_drag", { host, path }),
+    startDragOut: (paths) => invoke("start_drag_out", { paths }),
   };
 }
 

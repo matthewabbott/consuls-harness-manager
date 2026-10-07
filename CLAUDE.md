@@ -274,11 +274,31 @@ shell built as an iPhone app. See README.md.
   random, 5 min, reusable — iOS fetches again for previews and the share sheet). Downloads are
   attachments with nosniff and `CSP: sandbox`. The web backend's `readBytes`/`fileUrl` use them.
 - Phone (`src/mobile/`): `FilesScreen` (opened through `files.ts`'s `useFilesScreen`), `FileViewer`
-  (read-only CodeMirror, `editor/theme.ts` shared with the desktop editor), `FolderPicker`.
-  `useFolder` + `FolderBar` (crumbs with `~`, typed paths, back/forward via `lib/history.ts`)
-  are shared with `NewSessionSheet`. Transfers live in `files.ts` (`useTransfers`), so they
+  (read-only CodeMirror, `editor/theme.ts` shared with the desktop editor; a sideways swipe
+  steps through the folder's files), `FolderPicker`. `lib/useFolder` + `FolderBar` (crumbs
+  with `~`, typed paths, back/forward via `lib/history.ts`) are shared with `NewSessionSheet`. Transfers live in `files.ts` (`useTransfers`), so they
   carry on with the browser closed; downloads are fetched first, then "Save…" calls
   `navigator.share` (it needs its own tap).
+- Desktop transfers (`src-tauri/src/transfers.rs`, other machines only): `upload_paths` (paths
+  dropped on the explorer, or picked with `tauri-plugin-dialog` called from Rust — no JS
+  permission) and `download_to` (save dialog; written to `.name.consuls-part`, then renamed over
+  the destination the dialog already confirmed). Folders go whole under a free name; links to
+  folders aren't followed. Per-file progress over a `Channel<TransferEvent>`; `cancel_transfer`.
+  The UI: `store/transfers.ts`, `TransfersList`, `MoveDialog` (Move to… / Copy to…, on
+  `lib/useFolder.ts`). Drops come from `getCurrentWebview().onDragDropEvent`: **Windows reports
+  physical px** (÷ devicePixelRatio). **On macOS they're CSS px measured from the
+  web view's top, but the web view runs up under the title bar while the page starts below it**
+  (adding outer − inner window height changed nothing): positions came out ~32 px too low. `pointer_in_page` (`pointer.rs`) returns AppKit's pointer in the web view's coordinates
+  (same as Tauri's, within a pixel) and the web view's height; the page subtracts
+  `height − innerHeight` →
+  `folderAt` (`useTreeDrag.ts`): `elementFromPoint` → the row's `data-path`/`data-dir`, a crumb's or
+  place's `data-drop-dir`, else `[data-drop-root]`. The app has no HTML5 drag and drop, so the
+  native drop stays enabled.
+- Dragging inside the explorer (`components/useTreeDrag.ts`, pointer events): onto folders,
+  crumbs or places moves (Option/Alt copies). Out of the window it hands off to the system's
+  drag (`dragout.rs`, the `drag` crate): that carries only local files, so a remote file is
+  fetched to `$TMPDIR/consuls-drag/` (`prepare_drag`, ≤ 256 MB, pruned after an hour) as the
+  drag starts. Native drops of paths under `consuls-drag` are ignored (a drag-out brought back).
 - `git status --porcelain=v2 -z --ignored=matching` from the repo root (`fs/git.rs`);
   `Core::git_status` shares one run between concurrent callers. The UI rolls statuses up to
   folders (`store/files.ts`), except ignored, which instead dims everything beneath.

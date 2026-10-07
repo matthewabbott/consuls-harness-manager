@@ -44,7 +44,7 @@ pub(crate) fn check_name(name: &str) -> Result<(), String> {
 
 /// `name` for `n` = 0, then `name (1).ext`, `name (2).ext`, …: where an upload goes when its
 /// name is taken.
-pub(crate) fn numbered(name: &str, n: u32) -> String {
+pub fn numbered(name: &str, n: u32) -> String {
     if n == 0 {
         return name.to_string();
     }

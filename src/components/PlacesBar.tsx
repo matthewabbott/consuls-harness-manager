@@ -10,7 +10,7 @@ import { useApp } from "../store/app";
 import { useDefaultFolder } from "../store/prefs";
 import { useRedact } from "../store/recording";
 
-export default function PlacesBar({ host, path, onGo }: { host: string; path: string | null; onGo(path: string): void }) {
+export default function PlacesBar({ host, path, onGo, dropDir }: { host: string; path: string | null; onGo(path: string): void; dropDir?: string | null }) {
   const def = useDefaultFolder(host);
   const home = useApp((s) => s.hosts[host]?.facts?.home ?? null);
   const known = useDrives(host);
@@ -30,23 +30,23 @@ export default function PlacesBar({ host, path, onGo }: { host: string; path: st
   return (
     <div className="flex flex-wrap items-center gap-1">
       {def && (
-        <Place on={active === "default"} onClick={() => onGo(def)} title={r(`Default folder on ${hostLabel(host)}: ${def}`)}>
+        <Place on={active === "default"} drop={def} dropDir={dropDir} onClick={() => onGo(def)} title={r(`Default folder on ${hostLabel(host)}: ${def}`)}>
           <Star className="h-3 w-3 fill-current text-ember-400" />
           <span className="max-w-28 truncate">{r(baseName(def))}</span>
         </Place>
       )}
       {home && (
-        <Place on={active === "home"} onClick={() => onGo(home)} title={r(`Home: ${home}`)}>
+        <Place on={active === "home"} drop={home} dropDir={dropDir} onClick={() => onGo(home)} title={r(`Home: ${home}`)}>
           <Home className="h-3 w-3" />
         </Place>
       )}
       {drives.map((d) => (
-        <Place key={d.path} on={active === d.path} onClick={() => onGo(d.path)} title={`${d.label} · ${driveName(d)}`}>
+        <Place key={d.path} on={active === d.path} drop={d.path} dropDir={dropDir} onClick={() => onGo(d.path)} title={`${d.label} · ${driveName(d)}`}>
           <span className="font-mono">{d.label}</span>
         </Place>
       ))}
       {known?.length === 0 && (
-        <Place on={active === "/"} onClick={() => onGo("/")} title="The root folder">
+        <Place on={active === "/"} drop="/" dropDir={dropDir} onClick={() => onGo("/")} title="The root folder">
           <span className="font-mono">/</span>
         </Place>
       )}
@@ -54,13 +54,29 @@ export default function PlacesBar({ host, path, onGo }: { host: string; path: st
   );
 }
 
-function Place({ on, onClick, title, children }: { on: boolean; onClick(): void; title: string; children: React.ReactNode }) {
+interface PlaceProps {
+  on: boolean;
+  onClick(): void;
+  title: string;
+  /** The folder it is, as a place to drop dragged items. */
+  drop: string;
+  dropDir?: string | null;
+  children: React.ReactNode;
+}
+
+function Place({ on, onClick, title, drop, dropDir, children }: PlaceProps) {
+  const dropping = !!dropDir && sameFolder(dropDir, drop);
   return (
     <button
       onClick={onClick}
       title={title}
+      data-drop-dir={drop}
       className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] ring-1 transition-colors ${
-        on ? "bg-sky-400/15 text-sky-300 ring-sky-400/50" : "bg-ink-850 text-mist-300 ring-ink-700 hover:bg-ink-750 hover:text-mist-100"
+        dropping
+          ? "bg-sky-400/30 text-mist-100 ring-sky-400/70"
+          : on
+            ? "bg-sky-400/15 text-sky-300 ring-sky-400/50"
+            : "bg-ink-850 text-mist-300 ring-ink-700 hover:bg-ink-750 hover:text-mist-100"
       }`}
     >
       {children}

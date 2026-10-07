@@ -230,6 +230,11 @@ export async function webBackend(): Promise<Backend> {
     },
     uploadFile,
     fileUrl,
+    uploadPaths: notHere("Sending files from disk"),
+    downloadTo: notHere("Saving to a folder"),
+    cancelTransfer: async () => {},
+    prepareDrag: notHere("Dragging files out"),
+    startDragOut: notHere("Dragging files out"),
     subscribeFrames: async (cb) => {
       conn.onFrames(cb);
       await conn.call("subscribe_frames");
