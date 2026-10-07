@@ -43,7 +43,7 @@ export default function FolderPicker({ host, start, title, action, onPick, onClo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-ink-900">
+    <div className="overlay z-50 flex flex-col bg-ink-900">
       <header className="safe-top flex shrink-0 items-center gap-1 px-1.5 pb-2">
         <button onClick={onClose} aria-label="Cancel" className="rounded-full p-1.5 text-ember-400 active:bg-ink-700">
           <X className="h-6 w-6" />

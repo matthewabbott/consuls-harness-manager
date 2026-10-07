@@ -42,7 +42,7 @@ export default function AddMachineSheet({ onClose }: { onClose(): void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col justify-end bg-ink-950/60" onClick={onClose}>
+    <div className="overlay z-40 flex flex-col justify-end bg-ink-950/60" onClick={onClose}>
       <div className="safe-bottom max-h-[85%] overflow-y-auto rounded-t-3xl bg-ink-850 px-4 pt-4 ring-1 ring-ink-700" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center">
           <h2 className="flex-1 text-[18px] font-semibold text-mist-100">Add a machine</h2>

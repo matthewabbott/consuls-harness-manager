@@ -30,8 +30,33 @@ const RAW: Record<string, string> = {
   Space: " ",
 };
 
-/** The same key as bytes, for a pane without tmux (xterm's encoding). */
-export function rawBytes(name: string, mods: HeldMods): string {
+/** Keys whose modified forms are `CSI 1;<mod> X` or `CSI n;<mod> ~` (xterm). */
+const CSI: Record<string, [string, string]> = {
+  Up: ["1", "A"],
+  Down: ["1", "B"],
+  Right: ["1", "C"],
+  Left: ["1", "D"],
+  Home: ["1", "H"],
+  End: ["1", "F"],
+  PPage: ["5", "~"],
+  NPage: ["6", "~"],
+};
+
+/**
+ * The same key as bytes, for a pane without tmux (xterm's encoding). Takes tmux-style names
+ * with their own modifiers too (`C-c`, `M-x`, `C-M-Up`).
+ */
+export function rawBytes(name: string, mods: HeldMods, shift = false): string {
+  const named = name.match(/^([CMS])-(.+)$/);
+  if (named) {
+    const [, m, rest] = named;
+    return rawBytes(rest, { ctrl: mods.ctrl || m === "C", alt: mods.alt || m === "M" }, shift || m === "S");
+  }
+  const csi = CSI[name];
+  if (csi && (mods.ctrl || mods.alt || shift)) {
+    const p = 1 + (shift ? 1 : 0) + (mods.alt ? 2 : 0) + (mods.ctrl ? 4 : 0);
+    return csi[1] === "~" ? `\x1b[${csi[0]};${p}~` : `\x1b[1;${p}${csi[1]}`;
+  }
   let s = RAW[name] ?? name;
   if (mods.ctrl && s.length === 1) {
     const c = s.toUpperCase().charCodeAt(0);

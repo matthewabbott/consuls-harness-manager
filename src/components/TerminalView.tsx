@@ -39,6 +39,8 @@ export interface TerminalHandle {
    * modifiers, then through the tmux prefix like any key press.
    */
   sendKey(name: string): void;
+  /** Keys as they are (no held modifiers, no prefix), in one batch: one message, one burst. */
+  press(names: string[]): void;
 }
 
 interface Props {
@@ -107,6 +109,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
   const propsRef = useRef({ prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed, onLink });
   propsRef.current = { prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed, onLink };
   const routeRef = useRef<(name: string) => void>(() => {});
+  const pressRef = useRef<(names: string[]) => void>(() => {});
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -133,6 +136,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     focus: () => termRef.current?.focus(),
     cellSize: () => (termRef.current ? cellSizeOf(termRef.current) : null),
     sendKey: (name) => routeRef.current(name),
+    press: (names) => pressRef.current(names),
   }));
 
   useEffect(() => {
@@ -292,6 +296,15 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       }
     };
     routeRef.current = route;
+    pressRef.current = (names: string[]) => {
+      if (names.length === 0) return;
+      if (raw) {
+        textBuf += names.map((n) => rawBytes(n, NO_MODS)).join("");
+        flushText();
+      } else {
+        sendKeys(names);
+      }
+    };
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return !e.ctrlKey && !e.altKey; // let keypress produce text
       // tmux panes: the server's prefix (Ctrl+B) and the key after it (see term/tmuxPrefix.ts).

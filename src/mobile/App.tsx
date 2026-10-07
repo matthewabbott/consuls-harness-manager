@@ -19,7 +19,8 @@ import SettingsScreen from "./SettingsScreen";
 
 /**
  * Keeps `--visible-height` at the height above the keyboard: iOS overlays the keyboard on the
- * page instead of shrinking it, and pans the page to show the focused field.
+ * page instead of shrinking it, and pans the page to show the focused field. The page stays put
+ * instead, sized to what's visible, and the field is scrolled into view within its sheet.
  */
 function useVisibleHeight() {
   useEffect(() => {
@@ -31,12 +32,26 @@ function useVisibleHeight() {
       root.classList.toggle("keyboard", window.innerHeight - vv.height > 120);
       if (window.scrollY !== 0) window.scrollTo(0, 0);
     };
-    vv.addEventListener("resize", update);
+    // The terminal keeps its own cursor line in view (PaneScreen).
+    const reveal = () => {
+      const el = document.activeElement;
+      if (!(el instanceof HTMLElement) || !el.matches("input, textarea") || el.closest(".terminal-frame")) return;
+      el.scrollIntoView({ block: "nearest" });
+    };
+    const resized = () => {
+      update();
+      reveal();
+    };
+    // Moving to another field with the keyboard already up resizes nothing.
+    const focused = () => window.setTimeout(reveal, 50);
+    vv.addEventListener("resize", resized);
     vv.addEventListener("scroll", update);
+    document.addEventListener("focusin", focused);
     update();
     return () => {
-      vv.removeEventListener("resize", update);
+      vv.removeEventListener("resize", resized);
       vv.removeEventListener("scroll", update);
+      document.removeEventListener("focusin", focused);
     };
   }, []);
 }

@@ -7,6 +7,14 @@ body,
   height: var(--visible-height, 100%);
 }
 
+/* Full-screen overlays (sheets, pickers, the file browser) cover what's above the keyboard:
+   iOS lays the keyboard over the page, so `inset: 0` would put their bottom under it. */
+.overlay {
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: var(--visible-height, 100%);
+}
+
 /* No double-tap zoom (iOS ignores user-scalable=no); the terminal pinches by itself. */
 html {
   touch-action: manipulation;

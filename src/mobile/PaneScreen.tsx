@@ -1,11 +1,11 @@
-import { ALargeSmall, Bell, ChevronLeft, Copy, Eye, EyeOff, FolderOpen, Keyboard, Minus, MoreHorizontal, Pencil, Plus, Power, Search, X } from "lucide-react";
+import { ALargeSmall, ArrowUpDown, Bell, ChevronLeft, Copy, Eye, EyeOff, FolderOpen, Minus, MoreHorizontal, Pencil, Plus, Power, Search, X } from "lucide-react";
+import type { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 
 import Composer, { type ComposerHandle } from "../components/Composer";
 import { isAgent } from "../components/HarnessBadge";
 import { canTrack, notifyTitle, toggleNotify } from "../components/NotifyToggle";
 import { PrefixHelp, PrefixPending, TmuxRenameField, usePrefixKeys } from "../components/PrefixKeys";
-import QuickKeys from "../components/QuickKeys";
 import TerminalView, { type TerminalHandle } from "../components/TerminalView";
 import { backend } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
@@ -21,6 +21,7 @@ import { useFilesScreen } from "./files";
 import FindBar, { type FindResult } from "./FindBar";
 import PaneTitle, { type TitleMode } from "./PaneTitle";
 import LinkSheet from "./LinkSheet";
+import ScrollSheet, { LINE_KEYS, scrollsByLines, setScrollsByLines } from "./ScrollSheet";
 import { MATCH_DECORATIONS } from "../term/find";
 import type { TappedLink } from "../term/linkAt";
 
@@ -66,10 +67,16 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
   const direct = isDirect(pane);
   const ended = pane.ended !== null;
   const [sizeBar, setSizeBar] = useState(false);
-  const [keyBar, setKeyBar] = useState(!isAgent(pane.harness));
   const [holds, setHolds] = useState<Holds>(NO_HOLDS);
   const [typing, setTyping] = useState(false);
-  const [menu, setMenu] = useState<"actions" | null>(null);
+  const [menu, setMenu] = useState<"actions" | "scrolling" | null>(null);
+  // How a drag scrolls a full-screen program here: pages, or lines (irssi with bindings).
+  const [lineScroll, setLineScroll] = useState(() => scrollsByLines(id));
+  const lineScrollRef = useRef(lineScroll);
+  /** Called when the terminal has drawn new output (the touch scrolling waits on it). */
+  const onOutput = useRef<(() => void) | null>(null);
+  lineScrollRef.current = lineScroll;
+  useEffect(() => setLineScroll(scrollsByLines(id)), [id]);
   const [titleMode, setTitleMode] = useState<TitleMode>("short");
   useEffect(() => setTitleMode("short"), [pane.key]);
   const [copying, setCopying] = useState(false);
@@ -125,12 +132,86 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
     let glide = 0;
     const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
 
+    /**
+     * A full-screen program (irssi, less, vim) is on the alternate screen, which has no
+     * scrollback here: a drag pages through its own instead. The frame goes first; then a key
+     * per line for irssi set up for it (ScrollSheet), wheel events if the program takes the
+     * mouse, else PgUp / PgDn for every half screen (irssi's own step). Not arrow keys: those
+     * recall typed lines in irssi and shells.
+     *
+     * Every key comes back as a redraw the phone has to receive and draw, all of it (a control
+     * client gets each byte, where a terminal attached to tmux sees only where it ended up). So
+     * keys go out in batches, each once the last one's output has arrived: the scroll keeps
+     * pace with what the phone can show, there's no backlog, and it stops when the finger does.
+     */
+    let paged = 0; // px towards the next page, carried over
+    let pending = 0; // steps not sent yet: negative is older
+    let inFlight = 0; // the timer while a batch is out, waiting for its output
+    const flush = () => {
+      const term = termRef.current?.term;
+      if (inFlight || pending === 0 || !term) return;
+      const n = pending;
+      pending = 0;
+      const count = Math.abs(n);
+      if (lineScrollRef.current) {
+        termRef.current?.press(Array(count).fill(n < 0 ? LINE_KEYS.up : LINE_KEYS.down));
+      } else if (term.modes.mouseTrackingMode !== "none") {
+        const screen = term.element?.querySelector(".xterm-screen");
+        const r = screen?.getBoundingClientRect();
+        for (let i = 0; i < count; i++) {
+          screen?.dispatchEvent(
+            new WheelEvent("wheel", { deltaY: Math.sign(n), deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: r ? r.x + r.width / 2 : 0, clientY: r ? r.y + r.height / 2 : 0, bubbles: true, cancelable: true }),
+          );
+        }
+      } else {
+        termRef.current?.press(Array(count).fill(n < 0 ? "PPage" : "NPage"));
+      }
+      // Its output settles it; a batch that redraws nothing (the end of the history) times out.
+      inFlight = window.setTimeout(settle, 400);
+    };
+    const settle = () => {
+      window.clearTimeout(inFlight);
+      inFlight = 0;
+      flush();
+    };
+    onOutput.current = () => {
+      if (inFlight) settle();
+    };
+    const page = (px: number, term: Terminal, cell: { height: number }): boolean => {
+      if (px < 0) {
+        const take = Math.min(frame.scrollTop, -px);
+        frame.scrollTop -= take;
+        px += take;
+      } else {
+        const take = Math.min(Math.max(0, frame.scrollHeight - frame.clientHeight - frame.scrollTop), px);
+        frame.scrollTop += take;
+        px -= take;
+      }
+      if (px === 0) return true;
+      if (lineScrollRef.current || term.modes.mouseTrackingMode !== "none") {
+        lines += px / cell.height;
+        const n = Math.trunc(lines);
+        lines -= n;
+        pending += n;
+      } else {
+        paged += px;
+        const step = Math.max(1, Math.floor(term.rows / 2)) * cell.height;
+        while (Math.abs(paged) >= step) {
+          pending += Math.sign(paged);
+          paged -= Math.sign(paged) * step;
+        }
+      }
+      flush();
+      return true;
+    };
+
     /** Scrolls by `px` (positive: towards the latest). Returns whether there's more that way. */
     const scrollBy = (px: number): boolean => {
       const term = termRef.current?.term;
       const cell = termRef.current?.cellSize();
       if (!term || !cell) return false;
       const buf = term.buffer.active;
+      if (buf.type === "alternate") return page(px, term, cell);
       if (px < 0) {
         // Up: the frame first, then into the history.
         const take = Math.min(frame.scrollTop, -px);
@@ -170,6 +251,8 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
         const t = e.touches[0];
         drag = { x: t.clientX, y: t.clientY, lastY: t.clientY, lastT: e.timeStamp, axis: null, v: 0 };
         lines = 0;
+        paged = 0;
+        pending = 0; // a touch stops a scroll: what wasn't sent yet isn't
       }
     };
     const onMove = (e: TouchEvent) => {
@@ -205,8 +288,9 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
         pinch = null;
         return;
       }
-      if (drag?.axis === "y" && e.touches.length === 0) {
-        // A flick carries on, slowing down.
+      // A flick carries on, slowing down; not for a full-screen program, where each step is a
+      // key that can't be taken back.
+      if (drag?.axis === "y" && e.touches.length === 0 && termRef.current?.term?.buffer.active.type !== "alternate") {
         let v = drag.v * 16; // px per frame
         const step = () => {
           if (Math.abs(v) < 0.5 || !scrollBy(v)) return;
@@ -225,6 +309,8 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
     frame.addEventListener("gesturestart", noPageZoom);
     return () => {
       cancelAnimationFrame(glide);
+      window.clearTimeout(inFlight);
+      onOutput.current = null;
       frame.removeEventListener("touchstart", onStart, { capture: true });
       frame.removeEventListener("touchmove", onMove, { capture: true });
       frame.removeEventListener("touchend", onEnd, { capture: true });
@@ -233,13 +319,20 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
     };
   }, [id]);
 
-  // Scrolled back into the history: a button back to the latest.
+  // Scrolled back into the history: a button back to the latest. (Output also settles a batch of
+  // scroll keys sent to a full-screen program, above.)
   const [scrolledBack, setScrolledBack] = useState(false);
   useEffect(() => {
     const term = termRef.current?.term;
     if (!term) return;
     const check = () => setScrolledBack(term.buffer.active.viewportY < term.buffer.active.baseY);
-    const subs = [term.onScroll(check), term.onWriteParsed(check)];
+    const subs = [
+      term.onScroll(check),
+      term.onWriteParsed(() => {
+        check();
+        onOutput.current?.();
+      }),
+    ];
     return () => subs.forEach((s) => s.dispose());
   }, [pane.key]);
 
@@ -386,6 +479,16 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           </>
         )}
       </header>
+      {menu === "scrolling" && (
+        <ScrollSheet
+          lines={lineScroll}
+          onLines={(on) => {
+            setScrollsByLines(id, on);
+            setLineScroll(on);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
       {menu === "actions" && (
         <Sheet onClose={() => setMenu(null)}>
           {canTrack(pane) && (
@@ -420,6 +523,12 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
               }}
             >
               <FolderOpen className="h-5 w-5 text-mist-400" /> Browse files here
+            </SheetAction>
+          )}
+          {/* A full-screen program (irssi, less): how a drag scrolls it. */}
+          {(termRef.current?.term?.buffer.active.type === "alternate" || lineScroll) && (
+            <SheetAction onClick={() => setMenu("scrolling")}>
+              <ArrowUpDown className="h-5 w-5 text-mist-400" /> Scrolling…
             </SheetAction>
           )}
           {pane.hidden ? (
@@ -540,23 +649,12 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
       </div>
 
       <div className={`safe-bottom shrink-0 space-y-2 border-t border-ink-700/80 px-2 pt-2 ${ended ? "pointer-events-none opacity-40" : ""}`}>
-        {keyBar && (
-          <KeyBar holds={holds} onHold={(mod) => setHolds((h) => ({ ...h, [mod]: nextHold(h[mod]) }))} onKey={(name) => termRef.current?.sendKey(name)} />
-        )}
-        <div className="flex items-center gap-1.5">
-          <button
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => setKeyBar(!keyBar)}
-            aria-label="Terminal keys: Ctrl, Alt, arrows, PgUp…"
-            aria-pressed={keyBar}
-            className={`shrink-0 rounded-lg p-2 ring-1 ${keyBar ? "bg-sky-400/15 text-sky-300 ring-sky-400/50" : "bg-ink-800 text-mist-300 ring-ink-700"}`}
-          >
-            <Keyboard className="h-5 w-5" />
-          </button>
-          <div className="min-w-0 flex-1">
-            <QuickKeys paneKey={pane.key} harness={pane.harness} touch />
-          </div>
-        </div>
+        <KeyBar
+          harness={pane.harness}
+          holds={holds}
+          onHold={(mod) => setHolds((h) => ({ ...h, [mod]: nextHold(h[mod]) }))}
+          onKey={(name) => termRef.current?.sendKey(name)}
+        />
         <div className="transition-[height]" style={{ height: typing ? 46 : 92 }}>
           <Composer ref={composerRef} pane={pane} returnSends={false} onEscapeEmpty={() => backend().then((b) => b.sendKeys(pane.key, ["Escape"]))} />
         </div>

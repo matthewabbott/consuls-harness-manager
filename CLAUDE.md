@@ -231,15 +231,31 @@ shell built as an iPhone app. See README.md.
 - Sizing: a pinch scales the picture, then sets the font (no tmux resize); −/+ set the font and
   resize the tmux window to fit (`resizePane`); Fit resizes at the font shown; Reset is auto font
   + `releasePaneSize`. The phone's font floor is 5 px (`setFontSize(id, size, min)`).
-- `KeyBar`: sticky Ctrl/Alt (once → locked → off) reach `TerminalView` as `heldMods`; characters
-  typed with them held, and bar keys (`TerminalHandle.sendKey`), get the modifiers
-  (`term/softKeys.ts`) and then go through the tmux prefix like real keys. Touch quick keys make
-  ^C a two-tap key (two quit Claude Code).
-- iOS overlays the keyboard: `--visible-height` follows `visualViewport`, and the terminal keeps
-  the cursor line in view.
+- `KeyBar`: one row that scrolls sideways (an arrow at the edge while there's more; tapped, it
+  wraps into all the keys), holding the agent's quick keys (`quickKeys` from `QuickKeys.tsx`)
+  and the extras. Sticky Ctrl/Alt (once → locked → off) reach `TerminalView` as `heldMods`;
+  characters typed with them held, and every row key (`TerminalHandle.sendKey`, tmux names like
+  `C-c`), get the modifiers (`term/softKeys.ts`; `rawBytes` encodes tmux-style names for panes
+  without tmux) and then go through the tmux prefix like real keys. ^C takes two taps (two quit
+  Claude Code).
+- iOS overlays the keyboard: `--visible-height` follows `visualViewport` (the page is pinned at
+  scroll 0, so iOS can't pan to a field), and the terminal keeps the cursor line in view. Phone
+  overlays use the `overlay` class (mobile.css), sized to the visible height, never
+  `fixed inset-0` (its bottom would sit under the keyboard); a focused field is scrolled into
+  view within its sheet (`useVisibleHeight`).
 - Touch in `PaneScreen` (web app too): xterm doesn't scroll by touch, so one finger up/down is
   ours — the frame first, then the scrollback (`term.scrollLines`, with momentum);
-  `.terminal-frame` is `touch-action: pan-x`. A tap on a URL or path opens `LinkSheet`
+  `.terminal-frame` is `touch-action: pan-x`. On the alternate screen (irssi, less, vim: the
+  seed switches xterm to it too, so `buffer.active.type` tells) there's no scrollback: a drag
+  sends PgUp/PgDn per half screen, or wheel events (synthetic, so xterm encodes them) when the
+  program has mouse reporting on. Never arrows: they recall typed lines in irssi and shells.
+  irssi has no line-scroll key, only `/scrollback goto ±N`: with two `/bind`s (shown in
+  `ScrollSheet`, ⋯ → Scrolling…) a pane set to "lines" (per pane, per device) gets Ctrl+Alt+↑/↓
+  per line instead. Each key comes back as a redraw, and a control client gets every byte of
+  every redraw (a terminal attached to tmux only sees where it ended up), so keys go out in
+  batches (`TerminalHandle.press`, one `send-keys`), each after the last one's output arrived
+  (or 400 ms): the scroll keeps pace with the phone instead of building a backlog. No momentum
+  there, and a touch drops unsent steps. A tap on a URL or path opens `LinkSheet`
   (`term/linkAt.ts`); iOS only opens a link within a tap, so Open clicks an anchor right there.
   The copy view (`CopySheet`) cuts output into blocks at Claude Code/Codex markers
   (`term/textBlocks.ts`). Find (`FindBar`): xterm's search add-on in the terminal, marks from

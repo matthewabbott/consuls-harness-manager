@@ -60,7 +60,7 @@ function Offline({ connecting }: { connecting: boolean }) {
 function TakenOver() {
   const retry = useConnection((s) => s.retry);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/85 px-6">
+    <div className="overlay z-50 flex items-center justify-center bg-ink-950/85 px-6">
       <div className="w-full max-w-sm rounded-2xl bg-ink-800 px-5 py-5 text-center ring-1 ring-ink-600">
         <h2 className="text-[17px] font-semibold text-mist-100">Open on another device</h2>
         <p className="mt-1.5 text-[14px] leading-snug text-mist-400">Consuls is in use elsewhere (one device at a time).</p>

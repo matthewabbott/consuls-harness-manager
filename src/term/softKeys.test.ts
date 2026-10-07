@@ -22,5 +22,19 @@ describe("soft keys", () => {
     expect(rawBytes("NPage", NO_MODS)).toBe("\x1b[6~");
     expect(rawBytes("x", alt)).toBe("\x1bx");
     expect(rawBytes("|", NO_MODS)).toBe("|");
+    expect(rawBytes("-", NO_MODS)).toBe("-");
+  });
+
+  it("takes tmux-style names with their own modifiers", () => {
+    expect(rawBytes("C-c", NO_MODS)).toBe("\x03");
+    expect(rawBytes("C-o", NO_MODS)).toBe("\x0f");
+    expect(rawBytes("M-x", NO_MODS)).toBe("\x1bx");
+    expect(rawBytes("BTab", NO_MODS)).toBe("\x1b[Z");
+    // Modified cursor and paging keys, xterm style (irssi binds these).
+    expect(rawBytes("Up", ctrl)).toBe("\x1b[1;5A");
+    expect(rawBytes("C-M-Up", NO_MODS)).toBe("\x1b[1;7A");
+    expect(rawBytes("C-M-Down", NO_MODS)).toBe("\x1b[1;7B");
+    expect(rawBytes("S-Left", NO_MODS)).toBe("\x1b[1;2D");
+    expect(rawBytes("PPage", ctrl)).toBe("\x1b[5;5~");
   });
 });

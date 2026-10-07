@@ -150,7 +150,7 @@ export default function FileViewer({ host, path, size, line, position, onStep, o
   const loading = !error && !content && !imageUrl;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-ink-900">
+    <div className="overlay z-50 flex flex-col bg-ink-900">
       <header className="safe-top flex shrink-0 items-center gap-1 border-b border-ink-700/80 px-1.5 pb-2">
         <button onClick={onClose} aria-label="Close" className="rounded-full p-1.5 text-ember-400 active:bg-ink-700">
           <X className="h-6 w-6" />

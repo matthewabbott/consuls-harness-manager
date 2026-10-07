@@ -133,7 +133,7 @@ export default function CopySheet({ term, pane, query: initial = "", onClose }: 
   const agent = pane.harness && pane.harness !== "shell" ? harnessLabel(pane.harness) : "Agent";
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-ink-900">
+    <div className="overlay z-40 flex flex-col bg-ink-900">
       <header className="safe-top flex min-h-[44px] shrink-0 items-center gap-2 border-b border-ink-700/80 px-1.5 pb-2">
         {finding ? (
           <div className="flex min-w-0 flex-1 items-center pl-1">
