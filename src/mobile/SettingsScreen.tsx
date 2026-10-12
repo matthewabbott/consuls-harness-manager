@@ -5,6 +5,7 @@ import { backend, inWebApp } from "../ipc/backend";
 import { phaseText } from "../lib/agents";
 import { useApp } from "../store/app";
 import NotificationSettings, { PushPrefs } from "./NotificationSettings";
+import SpeechTest from "./SpeechTest";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -103,6 +104,13 @@ export default function SettingsScreen({ onBack, onAdd }: { onBack(): void; onAd
             </div>
           )}
         </Section>
+
+        {/* Temporary: does speech recognition work in the Home Screen app? */}
+        {(inWebApp || import.meta.env.DEV) && (
+          <Section title="Speech (test)">
+            <SpeechTest />
+          </Section>
+        )}
       </main>
     </div>
   );
