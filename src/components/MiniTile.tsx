@@ -11,6 +11,7 @@ import { useRecording, useRedact } from "../store/recording";
 import { resolveLabels } from "../lib/labels";
 import { displayTitle, isDirect, paneIdentity, paneWhere } from "../lib/panes";
 import { paneTarget } from "../lib/layoutTree";
+import HotkeyBadge from "./HotkeyBadge";
 import { paintTile } from "../term/tilePainter";
 import { getTile, subscribeTile } from "../term/tiles";
 import HarnessBadge from "./HarnessBadge";
@@ -110,6 +111,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
             <div className="truncate text-[13px] leading-tight font-medium text-mist-100" title={r(pane.title) || title}>
               {title}
             </div>
+            <HotkeyBadge target={paneTarget(paneIdentity(pane))} />
             {att?.activity === "working" && (
               <span title={att.source === "heuristic" ? "Working (guessed from output)" : "Working"} className="flex shrink-0 items-center gap-1 text-[10.5px] text-sky-400">
                 <span className="h-1.5 w-1.5 animate-breathe rounded-full bg-sky-400" />

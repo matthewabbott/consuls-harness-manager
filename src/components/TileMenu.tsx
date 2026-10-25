@@ -1,4 +1,4 @@
-import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Pencil, Plus, Power, Smartphone, SquareCode, Tag } from "lucide-react";
+import { BellRing, Check, EyeOff, FolderSearch, Maximize2, Pencil, Plus, Power, Smartphone, SquareCode, Tag, Keyboard } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -6,6 +6,10 @@ import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { useApp } from "../store/app";
+import { paneIdentity } from "../lib/panes";
+import { digitOf, useHotkeys } from "../store/hotkeys";
+import { assignLabel, jumpLabel } from "../lib/hotkeys";
+import { paneTarget } from "../lib/layoutTree";
 import { LabelEditor } from "./LabelsPanel";
 import { NOTIFY_MODES, setNotifyMode } from "../lib/notifyModes";
 import { canTrack } from "./NotifyToggle";
@@ -51,6 +55,7 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
         <MenuItem icon={<Maximize2 className="h-3.5 w-3.5" />} onClick={() => { backend().then((b) => b.ackPane(pane.key)); useApp.getState().setExpanded(pane.key); onClose(); }}>
           Open
         </MenuItem>
+        <HotkeyRow target={paneTarget(paneIdentity(pane))} />
         {renaming ? (
           <div className="px-1.5 py-1">
             <PaneNameField pane={pane} onDone={onClose} className="w-full text-[12.5px]" />
@@ -136,5 +141,26 @@ function MenuItem({ icon, children, onClick, danger }: { icon: React.ReactNode; 
       <span className="text-mist-400">{icon}</span>
       {children}
     </button>
+  );
+}
+
+/** Digits 1–9: the one that jumps to `target` lit; a click gives it (or takes it back). */
+function HotkeyRow({ target }: { target: string }) {
+  const keys = useHotkeys((s) => s.keys);
+  const mine = digitOf(keys, target);
+  return (
+    <div className="flex items-center gap-0.5 px-2.5 py-1" title={`Jump here with ${jumpLabel(mine ?? 1)}…; ${assignLabel(1)}… gives the focused split a key`}>
+      <Keyboard className="mr-1.5 h-3.5 w-3.5 shrink-0 text-mist-500" />
+      {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => (
+        <button
+          key={d}
+          onClick={() => useHotkeys.getState().assign(d, target)}
+          title={mine === d ? `Remove ${jumpLabel(d)}` : keys[d] ? `${jumpLabel(d)} (moves it here)` : jumpLabel(d)}
+          className={`h-5 w-5 rounded font-mono text-[10.5px] ${mine === d ? "bg-sky-400/90 text-ink-950" : keys[d] ? "text-mist-400 hover:bg-ink-700" : "text-mist-500 hover:bg-ink-700 hover:text-mist-200"}`}
+        >
+          {d}
+        </button>
+      ))}
+    </div>
   );
 }

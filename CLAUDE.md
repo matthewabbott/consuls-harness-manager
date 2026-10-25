@@ -409,13 +409,48 @@ shell built as an iPhone app. See README.md.
 
 - `term/links.ts` finds `path[:line[:col]]` / `path(line,col)` references (a separator, a line
   number, or a known extension is required, and nothing inside a URL) and resolves them against
-  the pane's cwd. Ctrl+click only. URLs go through `open_external`, which stays https-only;
+  the pane's cwd. On the desktop a plain click opens one beside its pane (`openFileBeside`; a
+  folder opens in the explorer); the phone has its own tap (`onLink`), so xterm's links only open
+  on a plain click when `onLink` isn't set. Paths a program wrapped at the edge are joined like
+  URLs (`findPathSpans`, `continuesPath`: the next row's first word must look like more path).
+  URLs stay Ctrl+click (⌘ on macOS) and go through `open_external`, which stays https-only;
   other schemes are copied instead.
 - URLs are found across rows (`term/urls.ts`): terminal soft wraps, and hard wraps where a row
   ran to the edge and the next carries on with URL characters. Claude Code prints its sign-in
   link that way (Ink wraps it), and a link cut at the first wrap fails with "Missing
   redirect_uri". Smart copy joins such a URL without a space. OSC 8 hyperlinks (Claude Code
   sends the whole URL as one) take precedence: xterm's own provider is registered first.
+
+## Windows and split views
+
+- **Windows** (`src-tauri/src/windows.rs`): "main" plus `win-N` from Window → New Window (⌘⇧N),
+  the tray, or Ctrl+Shift+N. Extra windows are listed in the UI state (`consuls.windows.v1`) and
+  open again at launch (window-state restores their geometry by label); closing one forgets it
+  and its layout. Main still hides on close.
+  - Frames go out per window: tiles to all, RAW/RESET only to the windows streaming that pane
+    (`frames_for`). `stream_pane` is counted per window: starting always reaches the core (it
+    re-seeds, which redraws the pane in every window showing it), stopping only when no window
+    streams it. `subscribe_frames` calls `refresh_tiles`, which doesn't stop streams.
+  - Each window reports its focus; the core gets the merge (`merge`: focused if any window is,
+    `expanded` from the focused or last focused one, `visible` = everything any window shows).
+  - Events for one window (`focus-pane`, `confirm-quit`, `focus-target`) are sent with `emit_to`
+    and must be heard with the window's own `listen`: an app-wide `listen` gets every window's.
+  - `set_ui_state` is broadcast (`ui-state`, with the sender): drafts, history, text sizes,
+    hotkeys and recently-opened re-read what another window saved (`onUiStateChange`).
+- **Splits** (`lib/layoutTree.ts`, `store/layout.ts`): per window, the grid or a tree of up to 4
+  leaves, each `pane:<paneIdentity>` or `file:<fileId>` (one leaf per target). `LayoutView`
+  renders leaves as absolutely placed siblings keyed by leaf id, so changing the tree never
+  remounts a terminal. One `show` rule (`setExpanded` goes through it on the desktop): on screen →
+  focus; from the grid → alone (the split it replaces is kept as `previous`); else the focused
+  leaf's place. `useApp.expanded` mirrors the composer's pane (the focused pane leaf). A pane leaf
+  goes when its pane, seen this session, goes; a file leaf when its file is closed.
+  - Visible panes other than the focused one are acked and marked seen (pushes cancel) but still
+    ping (`FocusState.visible`). Two views of one tmux window scale instead of resizing it.
+  - Maximize is per leaf (`toggleZoom`): the others stay mounted, hidden, so nothing re-seeds.
+- **Hotkeys** (`lib/hotkeys.ts`, `store/hotkeys.ts`): ⌘digit jumps, ⌘⌥digit assigns the focused
+  leaf (Ctrl / Ctrl+Shift elsewhere), read from `e.code`, 1–9 (⌘0 resets text size). The handler
+  is capture-phase, so xterm and CodeMirror never see the keys. A jump goes to the leaf showing the
+  target, else the window showing it (`focus_window`), else shows it here.
 
 ## tmux prefix keys
 
