@@ -29,6 +29,18 @@ import type { TailnetStatus } from "./bindings/TailnetStatus";
 import type { Transcription } from "./bindings/Transcription";
 import type { UiPrefs } from "./bindings/UiPrefs";
 
+export interface WindowView {
+  label: string;
+  targets: string[];
+}
+
+export interface UiStateChange {
+  key: string;
+  value: string | null;
+  /** The window that changed it. */
+  from: string;
+}
+
 export interface Backend {
   readonly kind: "tauri" | "mock" | "web";
   getSnapshot(): Promise<CoreSnapshot>;
@@ -38,11 +50,24 @@ export interface Backend {
   onFocusPane(cb: (key: number) => void): Promise<() => void>;
   /** Tray → Quit while shells on this PC are running: ask, then call quitApp. */
   onConfirmQuit(cb: (liveShells: number) => void): Promise<() => void>;
+  /** This window's label ("main" for the first, and everywhere but the desktop). */
+  readonly windowLabel: string;
+  /** Desktop: a new window with a grid of its own. */
+  openWindow(): Promise<void>;
+  /** Desktop: brings up window `label` showing `target` (a layout target, `pane:…` / `file:…`). */
+  focusWindow(label: string, target: string): Promise<void>;
+  /** Another window asked this one to show `target` (`focusWindow`). */
+  onFocusTarget(cb: (target: string) => void): Promise<() => void>;
+  /** What every window's layout shows (after one of them changed). */
+  onWindowViews(cb: (views: WindowView[]) => void): Promise<() => void>;
+  /** A window changed a UI-state value (`set_ui_state`). */
+  onUiState(cb: (change: UiStateChange) => void): Promise<() => void>;
   quitApp(): Promise<void>;
   localShells(): Promise<LocalShell[]>;
   /** Drives on this PC (Windows; empty elsewhere). */
   localDrives(): Promise<DriveInfo[]>;
-  setFocus(focus: FocusState): Promise<void>;
+  /** What this window shows: `focus`, and its layout's targets (desktop). */
+  setFocus(focus: FocusState, targets?: string[]): Promise<void>;
   setSoundPrefs(prefs: SoundPrefs): Promise<void>;
   testChime(kind: AlertKind, volume: number): Promise<void>;
   setWindowTitle(title: string): Promise<void>;
@@ -179,7 +204,7 @@ export function commands(call: Call) {
     quitApp: () => call<void>("quit_app"),
     localShells: () => call<LocalShell[]>("local_shells"),
     localDrives: () => call<DriveInfo[]>("local_drives"),
-    setFocus: (focus: FocusState) => call<void>("set_focus", { focus }),
+    setFocus: (focus: FocusState, targets?: string[]) => call<void>("set_focus", { focus, targets }),
     setSoundPrefs: (prefs: SoundPrefs) => call<void>("set_sound_prefs", { prefs }),
     testChime: (kind: AlertKind, volume: number) => call<void>("test_chime", { kind, volume }),
     ackPane: (key: number) => call<void>("ack_pane", { key }),
@@ -238,13 +263,22 @@ export function commands(call: Call) {
 async function tauriBackend(): Promise<Backend> {
   const { invoke, Channel } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
+  const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  // Events meant for one window (emit_to) reach every app-wide listener: listen on the window.
+  const win = getCurrentWebviewWindow();
   return {
     kind: "tauri",
     ...commands((method, args) => invoke(method, args)),
     onEvent: async (cb) => listen<CoreEvent>("core-event", (e) => cb(e.payload)),
     onAlert: async (cb) => listen<Alert>("alert", (e) => cb(e.payload)),
-    onFocusPane: async (cb) => listen<number>("focus-pane", (e) => cb(e.payload)),
-    onConfirmQuit: async (cb) => listen<number>("confirm-quit", (e) => cb(e.payload)),
+    onFocusPane: async (cb) => win.listen<number>("focus-pane", (e) => cb(e.payload)),
+    onConfirmQuit: async (cb) => win.listen<number>("confirm-quit", (e) => cb(e.payload)),
+    windowLabel: win.label,
+    openWindow: () => invoke("open_window"),
+    focusWindow: (label, target) => invoke("focus_window", { label, target }),
+    onFocusTarget: async (cb) => win.listen<string>("focus-target", (e) => cb(e.payload)),
+    onWindowViews: async (cb) => listen<WindowView[]>("window-views", (e) => cb(e.payload)),
+    onUiState: async (cb) => listen<UiStateChange>("ui-state", (e) => cb(e.payload)),
     setWindowTitle: async (title) => {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
       await getCurrentWindow().setTitle(title);

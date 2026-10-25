@@ -629,6 +629,12 @@ export function mockBackend(): Backend {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(data === "\r" ? "\r\n" : data)));
     },
     onConfirmQuit: async () => () => {},
+    windowLabel: "main",
+    openWindow: async () => {},
+    focusWindow: async () => {},
+    onFocusTarget: async () => () => {},
+    onWindowViews: async () => () => {},
+    onUiState: async () => () => {},
     quitApp: async () => {},
     localShells: async () => [
       { id: "pwsh", name: "PowerShell", path: "C:/Program Files/PowerShell/7/pwsh.exe" },

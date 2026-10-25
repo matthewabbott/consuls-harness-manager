@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import type { GroupBy, SortBy } from "../lib/organize";
-import { uiStorage } from "../lib/uiState";
+import { onUiStateChange, uiStorage } from "../lib/uiState";
 
 export type SidebarTab = "machines" | "files";
 
@@ -85,3 +85,18 @@ export const useUi = create<UiState>()(
     },
   ),
 );
+
+// Another window opened panes: merge its "recently opened" times (its panels stay its own).
+onUiStateChange("consuls.ui.v1", () => {
+  try {
+    const theirs = (JSON.parse(uiStorage.getItem("consuls.ui.v1") ?? "{}") as { state?: { lastOpened?: Record<string, number> } }).state?.lastOpened ?? {};
+    const mine = useUi.getState().lastOpened;
+    if (Object.entries(theirs).some(([id, t]) => t > (mine[id] ?? 0))) {
+      const merged = { ...mine };
+      for (const [id, t] of Object.entries(theirs)) merged[id] = Math.max(t, mine[id] ?? 0);
+      useUi.setState({ lastOpened: merged });
+    }
+  } catch {
+    /* unreadable: keep ours */
+  }
+});

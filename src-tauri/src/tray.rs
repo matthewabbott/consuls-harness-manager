@@ -22,7 +22,7 @@ pub fn request_quit(app: &AppHandle) {
         return;
     }
     show_main(app);
-    let _ = app.emit("confirm-quit", live);
+    let _ = app.emit_to(crate::windows::MAIN, "confirm-quit", live);
 }
 
 /// The macOS menu bar's menus: the standard ones, except that Quit (⌘Q) is our own item, so it
@@ -65,11 +65,19 @@ pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         ],
     )?;
     let view = Submenu::with_items(app, "View", true, &[&PredefinedMenuItem::fullscreen(app, None)?])?;
+    let new_window = MenuItem::with_id(app, NEW_WINDOW, "New Window", true, Some("CmdOrCtrl+Shift+N"))?;
     let window = Submenu::with_items(
         app,
         "Window",
         true,
-        &[&PredefinedMenuItem::minimize(app, None)?, &PredefinedMenuItem::maximize(app, None)?, &sep()?, &PredefinedMenuItem::close_window(app, None)?],
+        &[
+            &new_window,
+            &sep()?,
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            &sep()?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
     )?;
     Menu::with_items(app, &[&app_menu, &edit, &view, &window])
 }
@@ -77,11 +85,14 @@ pub fn app_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 /// The app menu's Quit (macOS); not "quit", which the tray's menu uses.
 #[cfg(target_os = "macos")]
 pub const APP_QUIT: &str = "app-quit";
+/// Window → New Window (macOS; elsewhere the tray's menu and Ctrl+Shift+N in the window).
+pub const NEW_WINDOW: &str = "new-window";
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Harness Manager", true, None::<&str>)?;
+    let new_window = MenuItem::with_id(app, NEW_WINDOW, "New Window", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Harness Manager", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &new_window, &PredefinedMenuItem::separator(app)?, &quit])?;
     // macOS: a click opens the menu, as menu bar items do. Elsewhere it opens the window.
     let mac = cfg!(target_os = "macos");
     let mut builder = TrayIconBuilder::with_id("main")
@@ -90,6 +101,11 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(mac)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main(app),
+            NEW_WINDOW => {
+                if let Err(e) = crate::windows::open(app) {
+                    tracing::warn!("couldn't open a window: {e}");
+                }
+            }
             "quit" => request_quit(app),
             _ => {}
         })

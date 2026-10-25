@@ -10,7 +10,7 @@ import DragGhost from "./components/DragGhost";
 import TileMenu from "./components/TileMenu";
 import Modal, { Button } from "./components/Modal";
 import { paneIdentity } from "./lib/panes";
-import { appMod } from "./lib/platform";
+import { appMod, isMac } from "./lib/platform";
 import TerminateDialog from "./components/TerminateDialog";
 import Grid from "./components/Grid";
 import Notices from "./components/Notices";
@@ -138,6 +138,11 @@ export default function App() {
       if (mod && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         useUi.getState().toggleSidebar();
+      }
+      // Ctrl+Shift+N: a new window (macOS has Window → New Window, ⌘⇧N).
+      if (!isMac && mod && e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        void backend().then((b) => b.openWindow());
       }
       if (mod && e.shiftKey && (e.key === " " || e.code === "Space")) {
         e.preventDefault();

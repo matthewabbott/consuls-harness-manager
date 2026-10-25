@@ -133,7 +133,7 @@ impl Alerter {
         }
         #[cfg(desktop)]
         if alert.flash
-            && let Some(w) = app.get_webview_window("main")
+            && let Some(w) = app.get_webview_window(&app.state::<crate::AppState>().sink.windows.window_for(None))
         {
             let _ = w.request_user_attention(Some(UserAttentionType::Informational));
         }
@@ -174,14 +174,7 @@ fn show_toast(app: &AppHandle, alert: &Alert) {
         .text1(&alert.body)
         .sound(None) // we play our own chime
         .on_activated(move |_action| {
-            if let Some(w) = handle.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-            if let Some(key) = key {
-                let _ = handle.emit("focus-pane", key);
-            }
+            crate::windows::show_pane(&handle, key);
             Ok(())
         })
         .show();

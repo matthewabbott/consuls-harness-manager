@@ -14,7 +14,7 @@ use objc2_user_notifications::{
     UNAuthorizationOptions, UNMutableNotificationContent, UNNotification, UNNotificationPresentationOptions, UNNotificationRequest,
     UNNotificationResponse, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 use tracing::{info, warn};
 
 /// Set once notifications can be posted.
@@ -102,8 +102,6 @@ pub fn show(title: &str, body: &str, key: Option<u32>) {
 /// A notification was clicked: bring the window up on its pane.
 fn clicked(id: &str) {
     let Some(app) = APP.get() else { return };
-    crate::tray::show_main(app);
-    if let Some(key) = id.strip_prefix("pane-").and_then(|rest| rest.split('-').next()).and_then(|k| k.parse::<u32>().ok()) {
-        let _ = app.emit("focus-pane", key);
-    }
+    let key = id.strip_prefix("pane-").and_then(|rest| rest.split('-').next()).and_then(|k| k.parse::<u32>().ok());
+    crate::windows::show_pane(app, key);
 }

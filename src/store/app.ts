@@ -153,7 +153,8 @@ export const useApp = create<AppStore>((set) => ({
           return { notices: [...st.notices, { id: noticeId++, host: ev.host, level: ev.level, message: ev.message }].slice(-6) };
         case "clipboard": {
           // A program in a pane copied something (OSC 52); the core only sends this while the
-          // app is focused.
+          // app is focused, and only the focused window copies it.
+          if (!document.hasFocus()) return {};
           const pane = Object.values(st.panes).flat().find((p) => p.key === ev.key);
           const text = ev.text;
           void navigator.clipboard

@@ -1,5 +1,5 @@
-//! Tauri shell: bridges chm-core to the webview. JSON events go through `emit`; pane
-//! frames are batched and streamed as raw bytes over a single IPC channel.
+//! Tauri shell: bridges chm-core to the webviews. JSON events go through `emit`; pane
+//! frames are batched and streamed as raw bytes over an IPC channel per window (`windows.rs`).
 
 mod alerts;
 mod commands;
@@ -11,19 +11,19 @@ mod mac_notify;
 mod tray;
 mod transfers;
 mod vscode;
+mod windows;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chm_core::model::{Alert, CoreEvent};
 use chm_core::{Core, CoreOptions, Sink};
-use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager};
 
 pub struct AppSink {
     app: tauri::AppHandle,
     frames: Mutex<Vec<u8>>,
-    channel: Mutex<Option<Channel<InvokeResponseBody>>>,
+    windows: windows::Windows,
     alerter: alerts::Alerter,
 }
 
@@ -59,9 +59,7 @@ impl AppSink {
             }
             std::mem::take(&mut *frames)
         };
-        if let Some(channel) = self.channel.lock().unwrap().as_ref() {
-            let _ = channel.send(InvokeResponseBody::Raw(batch));
-        }
+        self.windows.send(batch);
     }
 }
 
@@ -82,6 +80,10 @@ pub fn run() {
     let builder = builder.menu(tray::app_menu).on_menu_event(|app, event| {
         if event.id() == tray::APP_QUIT {
             tray::request_quit(app);
+        } else if event.id() == tray::NEW_WINDOW
+            && let Err(e) = windows::open(app)
+        {
+            tracing::warn!("couldn't open a window: {e}");
         }
     });
     #[cfg(desktop)]
@@ -100,10 +102,15 @@ pub fn run() {
             // Closing the window keeps Consuls running in the tray, so agents can still
             // ping you. Quit from the tray menu.
             #[cfg(desktop)]
-            tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
+            tauri::WindowEvent::CloseRequested { api, .. } if window.label() == windows::MAIN => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // Other windows close for good (quitting doesn't come through here: they open
+            // again at the next launch).
+            #[cfg(desktop)]
+            tauri::WindowEvent::CloseRequested { .. } => windows::closed(window.app_handle(), window.label()),
+            tauri::WindowEvent::Destroyed => windows::destroyed(window.app_handle(), window.label()),
             // iPhone: the app may be ended while in the background, so save now; coming back,
             // the connections may be gone (they're probed and reconnected).
             #[cfg(mobile)]
@@ -129,7 +136,7 @@ pub fn run() {
             let sink = Arc::new(AppSink {
                 app: app.handle().clone(),
                 frames: Mutex::new(Vec::new()),
-                channel: Mutex::new(None),
+                windows: Default::default(),
                 alerter: alerts::Alerter::new(),
             });
             // The iPhone can't run programs: it watches remote machines only.
@@ -138,6 +145,8 @@ pub fn run() {
             sink.alerter.set_prefs(core.sound_prefs());
             sink.alerter.set_recording(core.ui_prefs().recording);
             app.manage(AppState { core: core.clone(), sink: sink.clone(), transfers: Default::default() });
+            #[cfg(desktop)]
+            windows::restore(app.handle());
 
             tauri::async_runtime::spawn(async move {
                 core.start();
@@ -214,6 +223,8 @@ pub fn run() {
             commands::list_dir,
             commands::get_ui_state,
             commands::set_ui_state,
+            commands::open_window,
+            commands::focus_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Consuls")

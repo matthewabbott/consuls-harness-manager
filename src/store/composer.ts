@@ -1,7 +1,7 @@
 // Per-pane composer drafts and prompt history, kept in the UI's own state (lib/uiState.ts) so
 // a half-written prompt survives switching panes or restarting the app.
 
-import { uiStorage } from "../lib/uiState";
+import { onUiStateChange, uiStorage } from "../lib/uiState";
 
 const DRAFTS = "consuls.drafts.v1";
 const HISTORY = "consuls.history.v1";
@@ -23,6 +23,10 @@ let draftsCache: Record<string, string> | null = null;
 let historyCache: Record<string, string[]> | null = null;
 const drafts = () => (draftsCache ??= load<Record<string, string>>(DRAFTS, {}));
 const history = () => (historyCache ??= load<Record<string, string[]>>(HISTORY, {}));
+// Another window saved: read them again (drafts typed here and not saved yet are kept apart).
+onUiStateChange(DRAFTS, () => (draftsCache = null));
+onUiStateChange(HISTORY, () => (historyCache = null));
+const unsaved = new Map<string, string>();
 let saveTimer = 0;
 
 /** Moves a pane's draft and history to a new identity (it gained a stable @chm_id). */
@@ -42,15 +46,21 @@ export function renameIdentity(from: string, to: string) {
 }
 
 export function getDraft(id: string): string {
-  return drafts()[id] ?? "";
+  return unsaved.get(id) ?? drafts()[id] ?? "";
 }
 
 export function setDraft(id: string, text: string) {
-  const d = drafts();
-  if (text) d[id] = text;
-  else delete d[id];
+  unsaved.set(id, text);
   window.clearTimeout(saveTimer);
-  saveTimer = window.setTimeout(() => save(DRAFTS, d), 400);
+  saveTimer = window.setTimeout(() => {
+    const d = drafts();
+    for (const [id, text] of unsaved) {
+      if (text) d[id] = text;
+      else delete d[id];
+    }
+    unsaved.clear();
+    save(DRAFTS, d);
+  }, 400);
 }
 
 export function getHistory(id: string): string[] {

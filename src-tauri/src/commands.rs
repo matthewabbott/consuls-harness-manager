@@ -3,8 +3,8 @@ use chm_core::model::{
     TailnetStatus, TerminateOutcome, UiPrefs,
 };
 use chm_core::integration::install::IntegrationStatus;
-use tauri::State;
 use tauri::ipc::{Channel, InvokeResponseBody};
+use tauri::{AppHandle, Emitter, Manager, State, Webview};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::AppState;
@@ -17,11 +17,14 @@ pub fn get_snapshot(state: State<'_, AppState>) -> CoreSnapshot {
     state.core.snapshot()
 }
 
-/// The UI hands us a channel for binary pane frames; every tile is re-sent.
+/// A window hands us a channel for binary pane frames; every tile is re-sent. Streams it held
+/// before (it reloaded) stop, unless another window still shows them.
 #[tauri::command]
-pub fn subscribe_frames(state: State<'_, AppState>, channel: Channel<InvokeResponseBody>) {
-    *state.sink.channel.lock().unwrap() = Some(channel);
-    state.core.resend_tiles();
+pub fn subscribe_frames(webview: Webview, state: State<'_, AppState>, channel: Channel<InvokeResponseBody>) {
+    for key in state.sink.windows.subscribe(webview.label(), channel) {
+        state.core.stream_pane(key, false);
+    }
+    state.core.refresh_tiles();
 }
 
 #[tauri::command]
@@ -140,8 +143,10 @@ pub fn open_in_vscode(state: State<'_, AppState>, host: String, path: String, li
 }
 
 #[tauri::command]
-pub fn stream_pane(state: State<'_, AppState>, key: u32, on: bool) {
-    state.core.stream_pane(key, on);
+pub fn stream_pane(webview: Webview, state: State<'_, AppState>, key: u32, on: bool) {
+    if state.sink.windows.stream(webview.label(), key, on) {
+        state.core.stream_pane(key, on);
+    }
 }
 
 #[tauri::command]
@@ -268,9 +273,14 @@ pub fn test_chime(state: State<'_, AppState>, kind: AlertKind, volume: f32) {
     state.sink.alerter.test(kind, volume);
 }
 
+/// What a window shows; `targets` are its layout's (for hotkeys that jump across windows).
 #[tauri::command]
-pub fn set_focus(state: State<'_, AppState>, focus: FocusState) {
-    state.core.set_focus(focus);
+pub fn set_focus(webview: Webview, state: State<'_, AppState>, focus: FocusState, targets: Option<Vec<String>>) {
+    let (merged, views) = state.sink.windows.set_focus(webview.label(), focus, targets);
+    state.core.set_focus(merged);
+    if let Some(views) = views {
+        let _ = webview.app_handle().emit("window-views", views);
+    }
 }
 
 #[tauri::command]
@@ -369,9 +379,39 @@ pub fn get_ui_state(state: State<'_, AppState>) -> std::collections::BTreeMap<St
     state.core.ui_state()
 }
 
+/// Other windows hear of it (`ui-state`), so they don't write back what they read earlier.
 #[tauri::command]
-pub fn set_ui_state(state: State<'_, AppState>, key: String, value: Option<String>) {
-    state.core.set_ui_state(key, value);
+pub fn set_ui_state(webview: Webview, state: State<'_, AppState>, key: String, value: Option<String>) {
+    state.core.set_ui_state(key.clone(), value.clone());
+    let _ = webview.app_handle().emit("ui-state", UiStateChange { key, value, from: webview.label().to_string() });
+}
+
+#[derive(serde::Serialize, Clone)]
+struct UiStateChange {
+    key: String,
+    value: Option<String>,
+    from: String,
+}
+
+/// A new window with a grid of its own; returns its label. (Async: creating a window in a sync
+/// command can deadlock WebView2.)
+#[tauri::command]
+pub async fn open_window(app: AppHandle) -> CmdResult<String> {
+    #[cfg(desktop)]
+    return crate::windows::open(&app).map_err(|e| e.to_string());
+    #[cfg(mobile)]
+    {
+        let _ = app;
+        Err("one window only here".into())
+    }
+}
+
+/// Brings up window `label` and has it show `target` (a hotkey for something it shows).
+#[tauri::command]
+pub fn focus_window(app: AppHandle, label: String, target: String) {
+    #[cfg(desktop)]
+    crate::windows::show(&app, &label);
+    let _ = app.emit_to(label.as_str(), "focus-target", target);
 }
 
 #[tauri::command]

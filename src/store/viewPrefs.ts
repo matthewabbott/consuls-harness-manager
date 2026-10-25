@@ -4,7 +4,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
-import { uiStorage } from "../lib/uiState";
+import { onUiStateChange, uiStorage } from "../lib/uiState";
 
 /**
  * - `fit`: resize the tmux window to fill the view (default the first time a pane is expanded).
@@ -71,3 +71,6 @@ export function zoom(id: string, rendered: number, dir: 1 | -1) {
   const current = useViewPrefs.getState().prefs[id]?.fontSize ?? rendered;
   useViewPrefs.getState().setFontSize(id, current + dir * FONT.step);
 }
+
+// Another window changed text sizes or size modes.
+onUiStateChange("consuls.viewprefs.v1", () => void useViewPrefs.persist.rehydrate());
