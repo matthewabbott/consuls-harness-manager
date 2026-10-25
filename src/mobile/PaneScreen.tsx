@@ -656,7 +656,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           onKey={(name) => termRef.current?.sendKey(name)}
         />
         <div className="transition-[height]" style={{ height: typing ? 46 : 92 }}>
-          <Composer ref={composerRef} pane={pane} returnSends={false} onEscapeEmpty={() => backend().then((b) => b.sendKeys(pane.key, ["Escape"]))} />
+          <Composer ref={composerRef} pane={pane} returnSends={false} dictation onEscapeEmpty={() => backend().then((b) => b.sendKeys(pane.key, ["Escape"]))} />
         </div>
       </div>
     </div>

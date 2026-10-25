@@ -204,6 +204,18 @@ shell built as an iPhone app. See README.md.
   simple. Never rotate the VAPID key: every subscription is bound to it.
 - `build.rs` embeds `dist-web/` (a placeholder page when it isn't built, so `cargo test` needs
   no npm).
+- Dictation (`stt.rs`): Fluid Speech Mini (FluidVoice, CC BY 4.0, Parakeet v3-based; punctuates)
+  through parakeet.cpp's CLI, both in `<install>/stt/`. `GET /api/stt` → memory level;
+  `POST /api/stt` (16 kHz mono WAV, `X-Consuls`) → text. Each piece starts the engine and it
+  exits (the model is read into memory, ~350 MB, not mapped); one piece at a time; the engine runs
+  with `oom_score_adj` 1000 (killed first) and nice 10. Memory grows with piece length (Spark:
+  364 MB at 1 s, 507 MB at 20 s, 1.5 GB at 2 min), so `level` sets the longest piece from
+  `MemAvailable` (≥1 GB: 30 s; ≥600 MB: 15 s; ≥450 MB: 8 s; else none). Whisper tiny/base were
+  lighter but dropped whole paragraphs on long clips.
+  - `scripts/stt-build.sh` cross-compiles the engine on the Mac with zig (pinned commit):
+    zig's clang crashes on ggml's ARM kernels tuned for cortex-a725, so it targets a generic
+    Armv8.6 with dotprod/i8mm/bf16/fp16, and the wrappers drop `-march` (zig reads it as a CPU).
+    `server.sh install` uploads it and fetches the model on the server (pinned revision, sha256).
 - iOS web push: only from the Home Screen app, enabling needs a tap, every push must show a
   notification (iOS drops subscriptions that get silent ones), no action buttons.
 - E2E: `cargo test -p chm-daemon --test e2e -- --ignored --nocapture` runs the real binary
@@ -260,6 +272,21 @@ shell built as an iPhone app. See README.md.
   The copy view (`CopySheet`) cuts output into blocks at Claude Code/Codex markers
   (`term/textBlocks.ts`). Find (`FindBar`): xterm's search add-on in the terminal, marks from
   `term/find.ts` in the copy view.
+- Dictation (the phone's composer, `dictation` prop), on the server by default:
+  - `lib/dictation.ts` records (`recorder.ts`: an AudioWorklet file, `captureWorklet.js`; the
+    CSP allows same-origin scripts only), cuts at pauses (`pieces.ts` `Segmenter`, piece length
+    and pause from the server's memory level) and posts each piece as a WAV to `/api/stt`; text
+    comes back in order while you keep talking. Recording never stops for a cut.
+  - Fallback: Safari's recognizer (`lib/speech.ts`, `webkitSpeechRecognition`, continuous), when
+    the server's engine isn't installed, memory is `out`, or Settings → Dictation says off. It
+    gives no punctuation and capitalizes every utterance: `spoken` turns "comma"/"new line"
+    into marks, `continuing` lowercases mid-sentence capitals, `Resumes` adds the space Safari
+    leaves out after a pause (a guess at how it reports them).
+  - The composer (`dictated` StateField): final text is written in for good; the range holds
+    only what may still change (dimmed; "…" while the server transcribes). An edit inside it
+    ends dictation. Carrying on where the last one stopped starts a new paragraph
+    (`lastDictated`). Send while dictating waits for the last words. A "hang-up" plays when
+    recording stops (`lib/sounds.ts`, Web Audio, media volume).
 - Simulator: `npx tauri ios dev "iPhone 17"`. Its data folder is
   `$(xcrun simctl get_app_container booted dev.consuls.harness-manager data)/Library/Application Support/dev.consuls.harness-manager`
   (a `config.json` can be seeded there); `SIMCTL_CHILD_CHM_TMUX_SOCKET=<private> xcrun simctl launch

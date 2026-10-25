@@ -28,6 +28,7 @@ use ts_rs::TS;
 use crate::Daemon;
 use crate::push::store::Subscription;
 use crate::push::{Delivery, Payload, Urgency};
+use crate::stt::{SttError, SttStatus};
 
 /// Everything the phone's pane list needs, in one request.
 #[derive(Serialize, Deserialize, TS)]
@@ -78,6 +79,7 @@ pub fn router(d: Arc<Daemon>) -> Router {
         .route("/api/paste", post(paste).layer(DefaultBodyLimit::max(21 << 20)))
         .route("/api/upload", post(upload).layer(DefaultBodyLimit::disable()))
         .route("/api/download", get(download))
+        .route("/api/stt", get(stt_status).post(transcribe).layer(DefaultBodyLimit::max(8 << 20)))
         .route("/api/push", get(push_info))
         .route("/api/state", get(state))
         .route("/api/panes/{key}/notify", post(notify))
@@ -109,7 +111,7 @@ async fn guard(State(d): State<Arc<Daemon>>, req: Request, next: Next) -> Respon
     d.human_here();
     if req.method() != Method::GET && req.method() != Method::HEAD {
         // Images and files arrive as raw bytes: a header a form can't send stands in for "JSON only".
-        let checked = if matches!(req.uri().path(), "/api/paste" | "/api/upload") {
+        let checked = if matches!(req.uri().path(), "/api/paste" | "/api/upload" | "/api/stt") {
             if req.headers().get("x-consuls").is_some_and(|v| v == "1") { same_origin(req.headers(), &d) } else { Err("not from the web app") }
         } else {
             same_origin_json(req.headers(), &d)
@@ -184,6 +186,27 @@ async fn upload(State(d): State<Arc<Daemon>>, Query(q): Query<UploadQuery>, head
         Ok(Ok(path)) => Json(path).into_response(),
         Ok(Err(e)) => reject(StatusCode::BAD_REQUEST, &e),
         Err(e) => reject(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
+    }
+}
+
+/// Whether dictation is installed, and how much memory there is for it.
+async fn stt_status(State(d): State<Arc<Daemon>>) -> Json<SttStatus> {
+    Json(d.stt.status())
+}
+
+/// One piece of speech (16 kHz mono WAV) as text.
+async fn transcribe(State(d): State<Arc<Daemon>>, body: bytes::Bytes) -> Response {
+    match d.stt.transcribe(body.to_vec()).await {
+        Ok(t) => Json(t).into_response(),
+        Err(e) => {
+            let status = match e {
+                SttError::NotInstalled => StatusCode::NOT_IMPLEMENTED,
+                SttError::BadAudio(_) => StatusCode::BAD_REQUEST,
+                SttError::NoMemory { .. } => StatusCode::SERVICE_UNAVAILABLE,
+                SttError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            reject(status, &e.to_string())
+        }
     }
 }
 

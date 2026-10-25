@@ -2,6 +2,7 @@
 // agent output, one pane that keeps "working", and a host awaiting Tailscale approval.
 
 import type { Backend, TransferEvent } from "./backend";
+import type { SttStatus } from "./bindings/SttStatus";
 import type { CoreEvent } from "./bindings/CoreEvent";
 import type { CoreSnapshot } from "./bindings/CoreSnapshot";
 import type { FocusState } from "./bindings/FocusState";
@@ -578,6 +579,13 @@ export function mockBackend(): Backend {
         });
       }),
     fileUrl: async (_host, path) => URL.createObjectURL(new Blob([`mock contents of ${path}\n`], { type: "text/plain" })),
+    // Pretend dictation: free memory from `window.mockSttFree` (MB; set it in the console), and
+    // text that says how long each piece was.
+    sttStatus: async () => mockSttStatus(),
+    transcribe: async (audio) => {
+      await new Promise((r) => setTimeout(r, 700));
+      return { text: `(a ${((audio.size - 44) / 32_000).toFixed(1)} s piece.)`, status: mockSttStatus() };
+    },
     // Pretend dialogs and transfers: a couple of files, a second or two each.
     uploadPaths: async (host, dir, paths, folder, onEvent) => {
       const picked = paths ?? (folder ? ["/Users/me/Pictures/holiday"] : ["/Users/me/Documents/report.pdf", "/Users/me/notes.md"]);
@@ -621,4 +629,12 @@ export function mockBackend(): Backend {
       if (frameCb && streaming.has(key)) frameCb(encodeFrame(FRAME_RAW, key, new TextEncoder().encode(text.replace(/\n/g, "\r\n"))));
     },
   };
+}
+
+/** What the server would say about dictation, with `window.mockSttFree` MB free (default 8 GB). */
+function mockSttStatus(): SttStatus {
+  const free = (window as { mockSttFree?: number }).mockSttFree ?? 8192;
+  const [level, maxPieceSecs, pauseMs] =
+    free < 450 ? (["out", 0, 0] as const) : free < 600 ? (["red", 8, 250] as const) : free < 1024 ? (["yellow", 15, 400] as const) : (["green", 30, 700] as const);
+  return { installed: true, availableMb: free, level, maxPieceSecs, pauseMs };
 }

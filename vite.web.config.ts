@@ -19,6 +19,9 @@ export default defineConfig({
     target: "es2022",
     outDir: "dist-web",
     emptyOutDir: true,
+    // The page's CSP allows scripts from its own origin only: the audio worklet (dictation) stays
+    // a file instead of becoming a data: URL.
+    assetsInlineLimit: (file) => (file.endsWith(".js") ? false : undefined),
     rollupOptions: { input: "web.html" },
   },
   server: {

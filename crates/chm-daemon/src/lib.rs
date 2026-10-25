@@ -19,6 +19,7 @@ pub mod push;
 pub mod rpc;
 pub mod rundir;
 pub mod serve;
+pub mod stt;
 pub mod ws;
 
 use std::path::PathBuf;
@@ -66,6 +67,8 @@ pub struct Daemon {
     pub approvals: Mutex<approvals::Approvals>,
     pub clients: Arc<ws::Clients>,
     pub downloads: downloads::Grants,
+    /// Dictation (`stt/` in the install folder).
+    pub stt: stt::Stt,
 }
 
 /// What `consuls-server status` says.
@@ -372,6 +375,7 @@ pub async fn start(config: ServerConfig, home: &Home, lease: Arc<Lease>) -> anyh
         approvals: Default::default(),
         clients,
         downloads: Default::default(),
+        stt: stt::Stt::new(home.path().join("stt")),
     });
     tokio::spawn(drive(daemon.clone(), rx));
     tokio::spawn(revive(daemon.clone()));

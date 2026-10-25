@@ -8,6 +8,7 @@
 //! - `subscriptions.json` (0600): the phones to push to, kept up to date.
 //! - `core/`: the core's own data folder (its `config.json` with the machines, labels and UI
 //!   prefs; `known_hosts.json`; `ui-state.json`).
+//! - `stt/`: dictation's engine and model (`stt.rs`), put there by `scripts/server.sh`.
 
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;

@@ -17,7 +17,8 @@
 # host defaults to spark-d683. The configuration, push key included, is kept here too:
 # ~/.config/consuls-server/<host>.json (0600). SERVER_USER (default consulear) is the SSH user,
 # SERVER_TARGET (default aarch64-unknown-linux-gnu.2.39) the Rust target and glibc version.
-# Builds need zig and cargo-zigbuild (brew install zig; cargo install --locked cargo-zigbuild).
+# Builds need zig, cmake and cargo-zigbuild (brew install zig cmake; cargo install --locked
+# cargo-zigbuild).
 set -eu
 
 VERB=${1:-}
@@ -28,6 +29,9 @@ TRIPLE=${TARGET%.*.*}
 DEST="$LOGIN@$HOST"
 KEEP="$HOME/.config/consuls-server"
 CUSTODY="$KEEP/$HOST.json"
+# Dictation's model: Fluid Speech Mini by FluidVoice (CC BY 4.0), at a pinned revision.
+MODEL_URL=https://huggingface.co/FluidVoice-Labs/fluid-speech-mini-gguf/resolve/490bcd5de891f5efd0e732434dfb0a4b0899aead/fluid-speech-mini-q2k-q4k.gguf
+MODEL_SUM=f0796bf40274cc49d3db58563c23cd024b52ca7e2ae4749ccf27af85841726b5
 cd "$(dirname "$0")/.."
 
 # Every remote script starts with this: its install folder, made private if it isn't there yet.
@@ -64,6 +68,18 @@ install() {
     fi
     mkdir -p "$H" && chmod 700 "$H"
     cat >"$S.new" && chmod 700 "$S.new" && mv -f "$S.new" "$S"' <"target/$TRIPLE/server/consuls-server"
+  # Dictation (crates/chm-daemon/src/stt.rs): the engine, built here, and its model, fetched there
+  # once (pinned, checked). Without them the phone falls back to Safari's recognizer.
+  scripts/stt-build.sh
+  remote "URL=$MODEL_URL SUM=$MODEL_SUM"'
+    umask 077
+    mkdir -p "$H/stt" && E="$H/stt/parakeet-cli" && M="$H/stt/${URL##*/}"
+    cat >"$E.new" && chmod 700 "$E.new" && mv -f "$E.new" "$E"
+    if [ "$(sha256sum "$M" 2>/dev/null | cut -d" " -f1)" != "$SUM" ]; then
+      echo "fetching the speech model (Fluid Speech Mini, 347 MB)…"
+      if curl -sSLf -o "$M.part" "$URL" && [ "$(sha256sum "$M.part" | cut -d" " -f1)" = "$SUM" ]; then mv -f "$M.part" "$M"
+      else rm -f "$M.part"; echo "the speech model did not download: dictation stays on Safari'"'"'s recognizer" >&2; fi
+    fi' <"target/stt/aarch64-linux-gnu/parakeet-cli"
   # The config only when it has none: from then on the server's own (machines added from the
   # app, phones) is the one that's current; `pull` brings it here.
   remote '

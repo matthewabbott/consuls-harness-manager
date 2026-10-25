@@ -22,9 +22,11 @@ import type { NotifyMode } from "./bindings/NotifyMode";
 import type { NotifyPrefs } from "./bindings/NotifyPrefs";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
+import type { SttStatus } from "./bindings/SttStatus";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
 import type { TmuxOp } from "./bindings/TmuxOp";
 import type { TailnetStatus } from "./bindings/TailnetStatus";
+import type { Transcription } from "./bindings/Transcription";
 import type { UiPrefs } from "./bindings/UiPrefs";
 
 export interface Backend {
@@ -112,6 +114,10 @@ export interface Backend {
   uploadFile(host: string, dir: string, file: File, onProgress?: (sent: number) => void, signal?: AbortSignal): Promise<string>;
   /** A link a file can be downloaded through (the web app: good for five minutes). */
   fileUrl(host: string, path: string): Promise<string>;
+  /** Dictation on the server (the web app): whether it's there and how much memory it has; null elsewhere. */
+  sttStatus(): Promise<SttStatus | null>;
+  /** One piece of speech (16 kHz mono WAV) as text. */
+  transcribe(wav: Blob): Promise<Transcription>;
   /**
    * Desktop: sends files or folders from this computer into `dir` on another machine: `paths`
    * (dropped on the explorer), or picked in a dialog when null (`folder`: pick folders).
@@ -247,6 +253,8 @@ async function tauriBackend(): Promise<Backend> {
     savePaste: (host, bytes, ext) => invoke("save_paste", bytes, { headers: { "chm-host": host, "chm-ext": ext } }),
     uploadFile: () => Promise.reject("the desktop app sends files from disk (uploadPaths)"),
     fileUrl: () => Promise.reject("the desktop app saves files itself (downloadTo)"),
+    sttStatus: async () => null,
+    transcribe: () => Promise.reject("dictation runs on the Consuls server"),
     uploadPaths: async (host, dir, paths, folder, onEvent) => {
       await invoke("upload_paths", { host, dir, paths, folder, onEvent: new Channel<TransferEvent>(onEvent) });
     },

@@ -230,6 +230,15 @@ export async function webBackend(): Promise<Backend> {
     },
     uploadFile,
     fileUrl,
+    sttStatus: async () => {
+      const res = await fetch("/api/stt");
+      return res.ok ? res.json() : null;
+    },
+    transcribe: async (audio) => {
+      const res = await fetch("/api/stt", { method: "POST", headers: { "X-Consuls": "1", "Content-Type": "audio/wav" }, body: audio });
+      if (!res.ok) throw (await res.text()) || res.statusText;
+      return res.json();
+    },
     uploadPaths: notHere("Sending files from disk"),
     downloadTo: notHere("Saving to a folder"),
     cancelTransfer: async () => {},

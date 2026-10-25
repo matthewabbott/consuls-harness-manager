@@ -62,6 +62,7 @@ On the machine itself, the binary takes `start`, `stop`, `status`, `log` and `un
 | `…/subscriptions.json` (0600) | The phones to push to, kept up to date. |
 | `…/core/` | The core's own data: the machines it watches (added from the app), their host keys, the app's UI state. |
 | `…/server.log` | The current run's log. |
+| `…/stt/` | Dictation: `parakeet-cli` (built on the Mac by `scripts/stt-build.sh`) and the Fluid Speech Mini model (347 MB, fetched by `install`). Without them the phone uses Safari's recognizer. |
 | `/tmp/consuls-<uid>/` | Its sockets while it runs (`ctl.sock` for the commands, `web.sock` for the API). Removed when it stops. |
 | `~/.config/consuls-server/<host>.json` on the Mac | A copy of the configuration, refreshed by `pull`, `stop` and `uninstall`. |
 
