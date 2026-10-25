@@ -119,7 +119,7 @@ export default function App() {
 
   // Tell the core what's on screen: looking at a waiting agent marks it seen (so no push).
   useEffect(() => {
-    const report = () => backend().then((b) => b.setFocus({ expanded: useApp.getState().expanded, windowFocused: !document.hidden }));
+    const report = () => backend().then((b) => b.setFocus({ expanded: useApp.getState().expanded, windowFocused: !document.hidden, visible: [] }));
     document.addEventListener("visibilitychange", report);
     const unsub = useApp.subscribe((s, prev) => {
       if (s.expanded !== prev.expanded) report();

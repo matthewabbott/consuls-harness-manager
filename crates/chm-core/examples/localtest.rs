@@ -71,7 +71,7 @@ async fn main() -> anyhow::Result<()> {
     let rec = Arc::new(Recorder::default());
     let core = Core::new(dir.clone(), rec.clone());
     core.start();
-    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
     let assets = local::ensure_assets().map_err(anyhow::Error::msg)?;
     println!("     hook assets in {} (sh: {})", assets.dir, assets.sh);
 
@@ -160,14 +160,14 @@ async fn main() -> anyhow::Result<()> {
             _ => Some("printf '\\033]52;c;bG9jYWwtY29weQ==\\a'"),
         };
         if let Some(c) = osc52 {
-            core.set_focus(FocusState { expanded: Some(key), window_focused: true });
+            core.set_focus(FocusState { expanded: Some(key), window_focused: true, ..Default::default() });
             core.send_text(key, c.into());
             core.send_keys(key, vec!["Enter".into()]);
             wait_for("OSC 52 copy reaches the UI", Duration::from_secs(10), || {
                 rec.clipboard.lock().unwrap().iter().any(|(k, t)| *k == key && t == "local-copy")
             })
             .await;
-            core.set_focus(FocusState { expanded: None, window_focused: false });
+            core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
         }
 
         let hook = match shell.id.as_str() {

@@ -662,12 +662,38 @@ pub struct Alert {
 }
 
 /// What the user is looking at.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
 pub struct FocusState {
+    /// The pane being worked in: the one shown, or the focused split of the focused window.
     pub expanded: Option<u32>,
     pub window_focused: bool,
+    /// Other panes on screen (the desktop's splits and other windows).
+    #[serde(default)]
+    pub visible: Vec<u32>,
+}
+
+impl FocusState {
+    /// The pane is on screen: the one worked in, or another split.
+    pub fn on_screen(&self, key: u32) -> bool {
+        self.expanded == Some(key) || self.visible.contains(&key)
+    }
+
+    /// The user is looking right at it: the pane worked in, in a focused window.
+    pub fn looking(&self, key: u32) -> bool {
+        self.window_focused && self.expanded == Some(key)
+    }
+
+    /// It counts as seen: on screen in a focused window.
+    pub fn seen(&self, key: u32) -> bool {
+        self.window_focused && self.on_screen(key)
+    }
+
+    /// Every pane on screen.
+    pub fn shown(&self) -> impl Iterator<Item = u32> + '_ {
+        self.expanded.into_iter().chain(self.visible.iter().copied().filter(move |k| Some(*k) != self.expanded))
+    }
 }
 
 #[cfg(test)]

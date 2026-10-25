@@ -27,8 +27,8 @@ pub(crate) enum HostCmd {
     Reconfigure(HostConfig),
     /// Verify the link (after resume / network change); reconnect if it's dead.
     Probe,
-    /// The UI reloaded: re-send every tile and stop any raw streams.
-    ResendTiles,
+    /// Re-send every tile; `stop_streams` when the UI reloaded (it asks for its streams again).
+    ResendTiles { stop_streams: bool },
     /// Drop the connection and reconnect right away.
     Reconnect,
     Pane(PaneCmd),
@@ -397,8 +397,10 @@ async fn connected_phase(
                     conn.disconnect().await;
                     return Outcome::Lost("reconnect requested".into());
                 }
-                Some(HostCmd::ResendTiles) => {
-                    mgr.stop_streams();
+                Some(HostCmd::ResendTiles { stop_streams }) => {
+                    if stop_streams {
+                        mgr.stop_streams();
+                    }
                     mgr.resend_all();
                 }
                 Some(HostCmd::Pane(cmd)) => mgr.pane_cmd(cmd).await,

@@ -268,7 +268,7 @@ export function mockBackend(): Backend {
   let mockSound: SoundPrefs = { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true };
   let mockUi: UiPrefs = { defaultFolders: {}, recording: false, hideMachineNames: false };
   const attention = new Map<number, PaneAttention>();
-  let mockFocus: FocusState = { expanded: null, windowFocused: true };
+  let mockFocus: FocusState = { expanded: null, windowFocused: true, visible: [] };
   const setAttention = (st: PaneAttention) => {
     attention.set(st.key, st);
     emit({ type: "attention", state: st });
@@ -311,8 +311,10 @@ export function mockBackend(): Backend {
     onFocusPane: async () => () => {},
     setFocus: async (focus) => {
       mockFocus = focus;
-      const st = attention.get(focus.expanded ?? -1);
-      if (st && st.attention === "unacked") setAttention({ ...st, attention: "acked" });
+      for (const key of [focus.expanded ?? -1, ...focus.visible]) {
+        const st = attention.get(key);
+        if (st && st.attention === "unacked") setAttention({ ...st, attention: "acked" });
+      }
     },
     ackPane: async (key) => {
       const st = attention.get(key);

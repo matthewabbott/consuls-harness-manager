@@ -440,16 +440,26 @@ impl Core {
         self.resend_tiles();
     }
 
-    /// Re-send every tile (the UI reloaded or re-subscribed).
+    /// Re-send every tile and stop every stream (the UI reloaded or re-subscribed: it asks for
+    /// the streams it wants again).
     pub fn resend_tiles(&self) {
+        self.resend(true);
+    }
+
+    /// Re-send every tile, leaving streams alone (another window subscribed).
+    pub fn refresh_tiles(&self) {
+        self.resend(false);
+    }
+
+    fn resend(&self, stop_streams: bool) {
         for h in self.hosts.lock().unwrap().values() {
-            h.send(HostCmd::ResendTiles);
+            h.send(HostCmd::ResendTiles { stop_streams });
         }
         if let Some(tmux) = self.local_tmux.get() {
-            tmux.send(LocalTmuxCmd::ResendTiles);
+            tmux.send(LocalTmuxCmd::ResendTiles { stop_streams });
         }
         for d in self.ctx.direct.lock().unwrap().values() {
-            let _ = d.tx.send(direct::DirectMsg::Resend);
+            let _ = d.tx.send(direct::DirectMsg::Resend { stop_streams });
         }
     }
 
@@ -610,13 +620,12 @@ impl Core {
         self.pane(key, PaneCmd::MarkSeen { key });
     }
 
-    /// What the user is looking at (drives ping/toast/ack rules). Looking at a pane in a
-    /// focused window counts as having seen it.
+    /// What the user is looking at (drives ping/toast/ack rules). A pane on screen in a focused
+    /// window counts as seen.
     pub fn set_focus(&self, focus: FocusState) {
+        let seen: Vec<u32> = if focus.window_focused { focus.shown().collect() } else { Vec::new() };
         self.ctx.set_focus(focus);
-        if focus.window_focused
-            && let Some(key) = focus.expanded
-        {
+        for key in seen {
             self.mark_pane_seen(key);
         }
     }

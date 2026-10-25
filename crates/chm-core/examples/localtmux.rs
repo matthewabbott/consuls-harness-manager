@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
     let rec = Arc::new(Recorder::default());
     let core = Core::new(dir.join("data"), rec.clone());
     core.start();
-    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
     // Elsewhere tmux is found through the login shell, if it's there at all.
     let found = wait_for("This PC reports tmux", Duration::from_secs(30), || rec.facts.lock().unwrap().as_ref().is_some_and(|f| f.tmux_version.is_some())).await;
     if found.is_err() && cygwin.is_none() {
@@ -186,14 +186,14 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
     wait_for("tracked (@chm_notify)", Duration::from_secs(10), || pane(key).is_some_and(|p| p.notify == Some(NotifyMode::Delay))).await?;
     anyhow::ensure!(option("@chm_notify").await == "delay", "@chm_notify not set on the tmux pane");
     // It waits (the Stop above). Expanded in an unfocused window isn't "seen"...
-    core.set_focus(FocusState { expanded: Some(key), window_focused: false });
+    core.set_focus(FocusState { expanded: Some(key), window_focused: false, ..Default::default() });
     tokio::time::sleep(Duration::from_millis(800)).await;
     anyhow::ensure!(pane(key).is_some_and(|p| p.seen.is_none()), "an unfocused window marked the pane seen");
     // ...looking at it in a focused one is.
-    core.set_focus(FocusState { expanded: Some(key), window_focused: true });
+    core.set_focus(FocusState { expanded: Some(key), window_focused: true, ..Default::default() });
     wait_for("seen when looked at (@chm_seen)", Duration::from_secs(10), || pane(key).is_some_and(|p| p.seen.is_some())).await?;
     anyhow::ensure!(!option("@chm_seen").await.is_empty(), "@chm_seen not set on the tmux pane");
-    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
     // Another device turns it off.
     let off = format!("{tmux} set-option -p -u -t {} @chm_notify", pane(key).and_then(|p| p.tmux).map(|t| t.pane_id).unwrap_or_default());
     sh.exec(&off, Duration::from_secs(10)).await?;

@@ -231,7 +231,7 @@ pub async fn serve(socket: WebSocket, d: Arc<Daemon>) {
     let _ = out.close().await;
     info!("phone disconnected (client {id}): {why}");
     if d.clients.leave(id) {
-        d.core.set_focus(FocusState { expanded: None, window_focused: false });
+        d.core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
         for key in streams.lock().unwrap().drain() {
             d.core.stream_pane(key, false);
         }

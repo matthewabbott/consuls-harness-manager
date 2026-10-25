@@ -32,8 +32,8 @@ pub(crate) enum DirectMsg {
     Pane(PaneCmd),
     /// A harness hook event for this pane (routed by `CHM_PANE=direct:<chm_id>`).
     Hook { event: HookEvent, stale: bool },
-    /// The UI reloaded: re-send the tile, stop streaming.
-    Resend,
+    /// Re-send the tile; `stop_streams` when the UI reloaded.
+    Resend { stop_streams: bool },
     /// Hang up and remove the pane (its host was removed).
     Close,
 }
@@ -150,8 +150,10 @@ async fn run(mut d: Direct, mut output: mpsc::UnboundedReceiver<PtyOutput>, mut 
                     d.close();
                     return;
                 }
-                Some(DirectMsg::Resend) => {
-                    d.streaming = false;
+                Some(DirectMsg::Resend { stop_streams }) => {
+                    if stop_streams {
+                        d.streaming = false;
+                    }
                     d.dirty = true;
                 }
                 Some(DirectMsg::Hook { event, stale }) => d.on_hook(&event, stale),

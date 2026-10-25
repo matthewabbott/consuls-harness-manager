@@ -249,7 +249,7 @@ kill -CONT "$pid""#
     // an OSC title doesn't)
     let bell_alerts = || rec.alerts.lock().unwrap().iter().filter(|a| a.kind == AlertKind::Bell && a.key == Some(key)).count();
     core.stream_pane(key, false);
-    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
     core.send_text(key, r"printf '\a'".into());
     core.send_keys(key, vec!["Enter".into()]);
     tokio::time::sleep(Duration::from_millis(1200)).await;
@@ -314,14 +314,14 @@ kill -CONT "$pid""#
         core.send_keys(dkey, vec!["Enter".into()]);
         wait_for("the user's rc files ran (PATH has their tmux)", Duration::from_secs(5), || draw(dkey).contains(&format!("rc-tmux:{tmux_path}"))).await;
     }
-    core.set_focus(FocusState { expanded: Some(dkey), window_focused: true });
+    core.set_focus(FocusState { expanded: Some(dkey), window_focused: true, ..Default::default() });
     core.send_text(dkey, "printf '\\033]52;c;ZGlyZWN0LWNvcHk=\\a'".into());
     core.send_keys(dkey, vec!["Enter".into()]);
     wait_for("OSC 52 copy reaches the UI", Duration::from_secs(5), || {
         rec.clipboard.lock().unwrap().iter().any(|(k, t)| *k == dkey && t == "direct-copy")
     })
     .await;
-    core.set_focus(FocusState { expanded: None, window_focused: false });
+    core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
     core.send_text(dkey, "sh ~/.local/share/consuls/chm-hook.sh claude Stop </dev/null".into());
     core.send_keys(dkey, vec!["Enter".into()]);
     wait_for("hook inside the direct shell reaches its pane (CHM_PANE)", Duration::from_secs(10), || {
@@ -448,7 +448,7 @@ kill -CONT "$pid""#
     // Fire the real hook script from inside the pane (tmux sets $TMUX_PANE there) and check
     // the event travels events.jsonl -> tail -> attention -> alert.
     if harness == Harness::Shell {
-        core.set_focus(FocusState { expanded: None, window_focused: false });
+        core.set_focus(FocusState { expanded: None, window_focused: false, ..Default::default() });
         core.send_text(new_key, "sh ~/.local/share/consuls/chm-hook.sh claude Stop </dev/null; clear".into());
         core.send_keys(new_key, vec!["Enter".into()]);
         wait_for("Stop hook -> attention Unacked", Duration::from_secs(10), || {

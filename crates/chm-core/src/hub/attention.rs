@@ -4,6 +4,8 @@
 //! - A pane that finishes / needs input while not expanded: ping, glow (Unacked) until the
 //!   user interacts with it, then a "waiting on you" banner (Acked).
 //! - The expanded pane: counts as seen immediately; pings only if the app isn't focused.
+//! - Other panes on screen (splits, other windows): seen, so they don't glow, but they still ping
+//!   (nobody watches four panes at once).
 //! - Toasts and taskbar flashes only when the app window isn't focused.
 //! - Subagent completions: a soft ping and a pulse, no state change.
 //! - Events replayed after a reconnect are folded into one summary alert.
@@ -126,8 +128,8 @@ impl AttentionBook {
         }
         let entry = self.panes.entry(key).or_insert_with(|| PaneAttention { key, source: "hook".into(), ..Default::default() });
         let source = if sig.heuristic { "heuristic" } else { "hook" };
-        let expanded = self.focus.expanded == Some(key);
-        let looking = expanded && self.focus.window_focused;
+        let expanded = self.focus.on_screen(key);
+        let looking = self.focus.looking(key);
         let muted = self.muted.contains(&key);
 
         match classify(&sig.event, &sig.detail, entry.activity) {
@@ -213,10 +215,11 @@ impl AttentionBook {
         None
     }
 
-    /// Updates focus; expanding a pane acknowledges it.
+    /// Updates focus; showing a pane acknowledges it.
     pub fn set_focus(&mut self, focus: FocusState) -> Vec<PaneAttention> {
+        let shown: Vec<u32> = focus.shown().collect();
         self.focus = focus;
-        focus.expanded.and_then(|k| self.ack(k)).into_iter().collect()
+        shown.into_iter().filter_map(|k| self.ack(k)).collect()
     }
 
     /// Forgets panes that no longer exist.
@@ -241,7 +244,7 @@ mod tests {
     #[test]
     fn collapsed_pane_glows_then_banner() {
         let mut b = AttentionBook::default();
-        b.set_focus(FocusState { expanded: None, window_focused: true });
+        b.set_focus(FocusState { expanded: None, window_focused: true, ..Default::default() });
         b.apply(1, &sig("UserPromptSubmit"), &label(), 1.0, false);
         let out = b.apply(1, &sig("Stop"), &label(), 2.0, false);
         let st = out.changed.unwrap();
@@ -257,12 +260,12 @@ mod tests {
     #[test]
     fn expanded_pane_rules() {
         let mut b = AttentionBook::default();
-        b.set_focus(FocusState { expanded: Some(1), window_focused: true });
+        b.set_focus(FocusState { expanded: Some(1), window_focused: true, ..Default::default() });
         let out = b.apply(1, &sig("Stop"), &label(), 1.0, false);
         assert_eq!(out.changed.unwrap().attention, AttentionLevel::Acked);
         assert!(out.alert.is_none(), "looking at it: silent");
 
-        b.set_focus(FocusState { expanded: Some(1), window_focused: false });
+        b.set_focus(FocusState { expanded: Some(1), window_focused: false, ..Default::default() });
         let out = b.apply(1, &sig("PermissionRequest"), &label(), 2.0, false);
         assert_eq!(out.changed.unwrap().attention, AttentionLevel::Acked, "expanded counts as interacted");
         let a = out.alert.unwrap();
@@ -274,8 +277,23 @@ mod tests {
     fn expanding_acks() {
         let mut b = AttentionBook::default();
         b.apply(4, &sig("Stop"), &label(), 1.0, false);
-        let changed = b.set_focus(FocusState { expanded: Some(4), window_focused: true });
+        let changed = b.set_focus(FocusState { expanded: Some(4), window_focused: true, ..Default::default() });
         assert_eq!(changed[0].attention, AttentionLevel::Acked);
+    }
+
+    #[test]
+    fn other_panes_on_screen() {
+        let mut b = AttentionBook::default();
+        b.apply(3, &sig("Stop"), &label(), 1.0, false);
+        let changed = b.set_focus(FocusState { expanded: Some(1), window_focused: true, visible: vec![2, 3] });
+        assert_eq!(changed.iter().map(|p| p.key).collect::<Vec<_>>(), vec![3], "showing a pane acks it");
+        b.apply(2, &sig("UserPromptSubmit"), &label(), 2.0, false);
+        let out = b.apply(2, &sig("Stop"), &label(), 3.0, false);
+        assert_eq!(out.changed.unwrap().attention, AttentionLevel::Acked, "on screen: no glow");
+        let a = out.alert.unwrap();
+        assert!(a.sound && !a.toast && !a.flash, "a split still pings, no toast while focused");
+        assert!(b.apply(1, &sig("Stop"), &label(), 4.0, false).alert.is_none(), "the pane worked in stays silent");
+        assert!(b.focus.seen(2) && !b.focus.looking(2) && !b.focus.seen(9));
     }
 
     #[test]
@@ -313,7 +331,7 @@ mod tests {
         assert!(o.alert.is_none() && o.changed.is_none());
         assert!(b.apply(1, &bell, &label(), 26.0, false).alert.is_some());
         // Looking right at it: nothing.
-        b.set_focus(FocusState { expanded: Some(2), window_focused: true });
+        b.set_focus(FocusState { expanded: Some(2), window_focused: true, ..Default::default() });
         assert!(b.apply(2, &bell, &label(), 30.0, false).alert.is_none());
         // Bells don't count as hooks (heuristics keep working).
         assert!(!b.has_hooks(3));

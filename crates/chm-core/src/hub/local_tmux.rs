@@ -23,7 +23,7 @@ pub(crate) enum LocalTmuxCmd {
     Pane(PaneCmd),
     CreatePane { spec: NewPaneSpec, reply: oneshot::Sender<Result<u32, String>> },
     Hook(HookEvent),
-    ResendTiles,
+    ResendTiles { stop_streams: bool },
     Probe,
 }
 
@@ -131,8 +131,10 @@ async fn run(ctx: Arc<Ctx>, flavor: Flavor, mut rx: mpsc::UnboundedReceiver<Loca
                 Some(LocalTmuxCmd::Hook(event)) => {
                     mgr.on_hook(&event, false);
                 }
-                Some(LocalTmuxCmd::ResendTiles) => {
-                    mgr.stop_streams();
+                Some(LocalTmuxCmd::ResendTiles { stop_streams }) => {
+                    if stop_streams {
+                        mgr.stop_streams();
+                    }
                     mgr.resend_all();
                 }
                 Some(LocalTmuxCmd::Probe) => {

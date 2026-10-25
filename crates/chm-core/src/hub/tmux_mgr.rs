@@ -656,11 +656,10 @@ impl TmuxManager {
         }
     }
 
-    /// The pane's state changed while the user was looking right at it: that counts as seen.
+    /// The pane's state changed while it was on screen in a focused window: that counts as seen.
     fn seen_if_looking(&mut self, key: u32) {
-        let focus = self.ctx.attention.lock().unwrap().focus;
-        if focus.window_focused
-            && focus.expanded == Some(key)
+        let seen = self.ctx.attention.lock().unwrap().focus.seen(key);
+        if seen
             && let Some(p) = self.panes.values_mut().find(|p| p.key == key)
         {
             p.seen_due = true;

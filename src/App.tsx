@@ -76,7 +76,7 @@ export default function App() {
   // Tell the core what the user is looking at: it decides ping/toast/ack from this.
   useEffect(() => {
     const report = () =>
-      backend().then((b) => b.setFocus({ expanded: useApp.getState().expanded, windowFocused: document.hasFocus() && !document.hidden }));
+      backend().then((b) => b.setFocus({ expanded: useApp.getState().expanded, windowFocused: document.hasFocus() && !document.hidden, visible: [] }));
     window.addEventListener("focus", report);
     window.addEventListener("blur", report);
     document.addEventListener("visibilitychange", report);

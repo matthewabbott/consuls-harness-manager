@@ -3,4 +3,12 @@
 /**
  * What the user is looking at.
  */
-export type FocusState = { expanded: number | null, windowFocused: boolean, };
+export type FocusState = { 
+/**
+ * The pane being worked in: the one shown, or the focused split of the focused window.
+ */
+expanded: number | null, windowFocused: boolean, 
+/**
+ * Other panes on screen (the desktop's splits and other windows).
+ */
+visible: Array<number>, };
