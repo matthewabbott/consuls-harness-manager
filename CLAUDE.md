@@ -214,10 +214,7 @@ shell built as an iPhone app. See README.md.
   ~0.07 s per second of audio); one at a time; the engine runs with `oom_score_adj` 1000 (killed
   first) and nice 10. Memory grows with piece length (Spark: 364 MB at 1 s, 507 MB at 20 s,
   1.5 GB at 2 min), so `level` sets the longest piece from `MemAvailable` (≥1 GB: 30 s; ≥600 MB:
-  15 s; ≥450 MB: 8 s; else none). Whisper tiny/base were lighter but dropped whole paragraphs on
-  long clips; Underdog Bark 3.0 (Parakeet v3 fine-tune) recognised words as well but often
-  dropped all punctuation and capitals (noise especially), and broke at Fluid Speech Mini's Q2_K
-  mix.
+  15 s; ≥450 MB: 8 s; else none).
   - `scripts/stt-build.sh` cross-compiles the engine on the Mac with zig (pinned commit):
     zig's clang crashes on ggml's ARM kernels tuned for cortex-a725, so it targets a generic
     Armv8.6 with dotprod/i8mm/bf16/fp16, and the wrappers drop `-march` (zig reads it as a CPU).
