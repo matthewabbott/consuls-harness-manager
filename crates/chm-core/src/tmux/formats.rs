@@ -8,7 +8,7 @@ use crate::model::NotifyMode;
 pub const SEP: &str = "|~|";
 
 /// `pane_title` is last because it's the only free-form field likely to contain `SEP`.
-pub const PANE_FORMAT: &str = "#{pane_id}|~|#{window_id}|~|#{session_id}|~|#{session_name}|~|#{window_index}|~|#{window_name}|~|#{pane_index}|~|#{pane_width}|~|#{pane_height}|~|#{pane_current_command}|~|#{pane_current_path}|~|#{pane_pid}|~|#{pane_dead}|~|#{alternate_on}|~|#{window_active}|~|#{pane_active}|~|#{@chm_id}|~|#{@chm_harness}|~|#{@chm_hidden}|~|#{session_group}|~|#{window_panes}|~|#{window_width}|~|#{window_height}|~|#{@chm_sized}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{@chm_notify}|~|#{@chm_seen}|~|#{@chm_state}|~|#{pane_title}";
+pub const PANE_FORMAT: &str = "#{pane_id}|~|#{window_id}|~|#{session_id}|~|#{session_name}|~|#{window_index}|~|#{window_name}|~|#{pane_index}|~|#{pane_width}|~|#{pane_height}|~|#{pane_current_command}|~|#{pane_current_path}|~|#{pane_pid}|~|#{pane_dead}|~|#{alternate_on}|~|#{window_active}|~|#{pane_active}|~|#{@chm_id}|~|#{@chm_harness}|~|#{@chm_hidden}|~|#{session_group}|~|#{window_panes}|~|#{window_width}|~|#{window_height}|~|#{@chm_sized}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{@chm_notify}|~|#{@chm_seen}|~|#{@chm_state}|~|#{@chm_session}|~|#{pane_title}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaneRow {
@@ -49,6 +49,8 @@ pub struct PaneRow {
     pub seen: Option<u64>,
     /// `@chm_state`: the last hook event the pane's agent reported (it has hooks).
     pub hook_state: Option<String>,
+    /// `@chm_session`: the agent session running here, as its hooks report it.
+    pub agent_session: Option<String>,
     pub title: String,
 }
 
@@ -75,8 +77,8 @@ fn opt(s: &str) -> Option<String> {
 }
 
 pub fn parse_pane_row(line: &str) -> Option<PaneRow> {
-    let f: Vec<&str> = line.splitn(31, SEP).collect();
-    if f.len() < 31 {
+    let f: Vec<&str> = line.splitn(32, SEP).collect();
+    if f.len() < 32 {
         return None;
     }
     Some(PaneRow {
@@ -110,7 +112,8 @@ pub fn parse_pane_row(line: &str) -> Option<PaneRow> {
         notify: NotifyMode::parse(f[27]),
         seen: f[28].trim().parse().ok(),
         hook_state: opt(f[29]),
-        title: f[30].to_string(),
+        agent_session: opt(f[30]),
+        title: f[31].to_string(),
     })
 }
 
@@ -229,7 +232,7 @@ mod tests {
 
     #[test]
     fn pane_row() {
-        let line = "%1|~|@1|~|$1|~|annotator-omp-1|~|1|~|bash|~|1|~|68|~|22|~|omp|~|/home/c/proj|~|401604|~|0|~|0|~|1|~|1|~||~||~||~|annotator-omp|~|2|~|137|~|22|~|1|~|terrarium,urgent|~|0|~|PR #12 review|~|delay|~|1790000000|~|Stop|~|_ > Hysteresis|~|benchmark";
+        let line = "%1|~|@1|~|$1|~|annotator-omp-1|~|1|~|bash|~|1|~|68|~|22|~|omp|~|/home/c/proj|~|401604|~|0|~|0|~|1|~|1|~||~||~||~|annotator-omp|~|2|~|137|~|22|~|1|~|terrarium,urgent|~|0|~|PR #12 review|~|delay|~|1790000000|~|Stop|~|0b5a3f0e-1111|~|_ > Hysteresis|~|benchmark";
         let row = parse_pane_row(line).unwrap();
         assert_eq!((row.pane, row.window, row.session), (1, 1, 1));
         assert_eq!((row.width, row.height), (68, 22));
@@ -242,6 +245,7 @@ mod tests {
         assert_eq!(row.bell, Some(false));
         assert_eq!(row.name.as_deref(), Some("PR #12 review"));
         assert_eq!((row.notify, row.seen, row.hook_state.as_deref()), (Some(NotifyMode::Delay), Some(1_790_000_000), Some("Stop")));
+        assert_eq!(row.agent_session.as_deref(), Some("0b5a3f0e-1111"));
     }
 
     #[test]

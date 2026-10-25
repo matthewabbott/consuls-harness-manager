@@ -33,6 +33,7 @@ pub fn is_slow(method: &str) -> bool {
             | "terminate_pane"
             | "list_dir"
             | "download_token"
+            | "recent_sessions"
     )
 }
 
@@ -236,6 +237,7 @@ pub async fn call(d: &Daemon, method: &str, p: Value) -> Result<Value, Value> {
             core.set_ui_state(arg(&p, "key")?, arg(&p, "value")?);
             DONE
         }
+        "recent_sessions" => ok(core.recent_sessions(&host()?).await.map_err(err)?),
         m if DESKTOP_ONLY.contains(&m) => Err(err(format!("{m} isn't available in the web app"))),
         m => Err(err(format!("unknown method {m}"))),
     }

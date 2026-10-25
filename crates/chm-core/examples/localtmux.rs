@@ -6,8 +6,9 @@
 //! Creates a tmux pane under `@local` in a given folder (on Windows: Windows path in, Windows path
 //! out), types into it through the control client, sends a full-screen program wheel reports
 //! (and checks the seed restores its mouse reporting), resizes it, fires the hook from inside it
-//! (routed through the local events file to the tmux pane), closes it, and kills the private
-//! server. Hook events go to a scratch state folder, never the real one.
+//! (routed through the local events file to the tmux pane; the session it reports lands in
+//! `@chm_session`), reopens a session (pi's, where pi isn't installed), closes it, and kills the
+//! private server. Hook events go to a scratch state folder, never the real one.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -105,7 +106,7 @@ async fn main() -> anyhow::Result<()> {
 
     // tmux reports a folder by its real path (macOS: /var/folders/… is /private/var/folders/…).
     let folder = if cfg!(windows) { local::to_slash(&dir) } else { local::to_slash(&dir.canonicalize()?) };
-    let spec = NewPaneSpec { host: LOCAL_HOST.into(), cwd: folder.clone(), harness: Harness::Shell, name: None, session: None, args: None, direct: None, shell: None };
+    let spec = NewPaneSpec { host: LOCAL_HOST.into(), cwd: folder.clone(), harness: Harness::Shell, name: None, session: None, args: None, direct: None, shell: None, resume: None };
     let result = run(&core, &rec, spec, &folder, &cleanup, &format!("{tmux} -L {socket}")).await;
     if result.is_err() {
         for p in rec.panes.lock().unwrap().iter() {
@@ -226,8 +227,63 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
     sh.exec(&off, Duration::from_secs(10)).await?;
     wait_for("untracked by another client", Duration::from_secs(10), || pane(key).is_some_and(|p| p.notify.is_none())).await?;
 
+    // The agent session its hooks report is kept on the pane (@chm_session) until it ends.
+    let id = "0b5a3f0e-1111-4222-8333-944455556666";
+    let hook = |event: &str| format!("printf '{{\"session_id\":\"{id}\"}}' | '{}' '{}' claude {event}", assets.sh, assets.hook);
+    core.send_text(key, hook("SessionStart"));
+    core.send_keys(key, vec!["Enter".into()]);
+    wait_for("its session noted (@chm_session)", Duration::from_secs(15), || pane(key).is_some_and(|p| p.session.as_deref() == Some(id))).await?;
+    anyhow::ensure!(option("@chm_session").await == id, "@chm_session not set on the tmux pane");
+    core.send_text(key, hook("SessionEnd"));
+    core.send_keys(key, vec!["Enter".into()]);
+    wait_for("forgotten when it ends", Duration::from_secs(15), || pane(key).is_some_and(|p| p.session.is_none())).await?;
+    anyhow::ensure!(option("@chm_session").await.is_empty(), "@chm_session left on the tmux pane");
+    resume(core, rec, folder, sh, tmux, id).await?;
+
     let outcome = core.terminate_pane(key, true).await.map_err(anyhow::Error::msg)?;
     println!("     terminate: {outcome:?}");
     wait_for("pane removed", Duration::from_secs(10), || pane(key).is_none()).await?;
+    Ok(())
+}
+
+/// Reopening a session from the history list (`NewPaneSpec::resume`).
+async fn resume(core: &Arc<Core>, rec: &Arc<Recorder>, folder: &str, sh: &Link, tmux: &str, id: &str) -> anyhow::Result<()> {
+    let spec = |harness: Harness, cwd: String, resume: &str| NewPaneSpec {
+        host: LOCAL_HOST.into(),
+        cwd,
+        harness,
+        name: None,
+        session: None,
+        args: None,
+        direct: None,
+        shell: None,
+        resume: Some(resume.into()),
+    };
+    let gone = core.create_pane(spec(Harness::Claude, format!("{folder}/gone"), id)).await.map(|_| ()).unwrap_err();
+    anyhow::ensure!(gone.contains("no such directory"), "a missing folder: {gone}");
+    let shell = core.create_pane(spec(Harness::Shell, folder.into(), id)).await.map(|_| ()).unwrap_err();
+    anyhow::ensure!(shell.contains("can't be reopened"), "a shell: {shell}");
+    println!("ok   clear errors for a missing folder and a harness that can't reopen sessions");
+    // Only where pi isn't installed: the command line is all this checks.
+    if sh.exec("command -v pi", Duration::from_secs(10)).await.is_ok_and(|o| o.success()) {
+        println!("     pi is installed here: not reopening a session with it");
+        return Ok(());
+    }
+    let file = format!("{folder}/my sessions/s.jsonl");
+    let key = core.create_pane(spec(Harness::Pi, folder.into(), &file)).await.map_err(anyhow::Error::msg)?;
+    let pane_id = rec.panes.lock().unwrap().iter().find(|p| p.key == key).and_then(|p| p.tmux.clone()).map(|t| t.pane_id).unwrap_or_default();
+    // After the extension that reports pi's turns (`pi -e …`).
+    let typed = format!("--session '{file}'");
+    let start = Instant::now();
+    loop {
+        let screen = sh.exec(&format!("{tmux} capture-pane -p -J -t {pane_id}"), Duration::from_secs(10)).await?.stdout_str();
+        if screen.contains(&typed) {
+            println!("ok   pi asked for that session file, quoted ({:?})", start.elapsed());
+            break;
+        }
+        anyhow::ensure!(start.elapsed() < Duration::from_secs(15), "pi wasn't started with `{typed}`:\n{screen}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    core.terminate_pane(key, true).await.map_err(anyhow::Error::msg)?;
     Ok(())
 }

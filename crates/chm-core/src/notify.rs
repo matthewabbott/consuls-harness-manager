@@ -342,6 +342,7 @@ mod tests {
             bell_pings: false,
             notify,
             seen,
+            session: None,
         }
     }
 

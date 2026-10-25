@@ -51,4 +51,9 @@ notify: NotifyMode | null,
  * When a device last showed you this pane while it waited (tmux: `@chm_seen`, unix
  * seconds): the push daemon drops a push you've already seen.
  */
-seen: number | null, };
+seen: number | null, 
+/**
+ * The agent session running here, as its hooks report it (tmux: `@chm_session`): the
+ * history list opens this pane instead of reopening the session a second time.
+ */
+session: string | null, };

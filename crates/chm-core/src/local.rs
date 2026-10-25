@@ -260,6 +260,20 @@ pub(crate) fn hook_sh() -> Option<String> {
     }
 }
 
+/// Runs a POSIX script here as scripts run on other machines (the login shell execs `sh`, and
+/// the script's own exit status is reported): `/bin/sh` on macOS and Linux, Git for Windows'
+/// `sh` on Windows, where it prints MSYS paths (`/c/Users/…`, see [`from_msys`]).
+pub(crate) async fn run_script(script: &str, timeout: Duration) -> Result<crate::ssh::exec::ExecOutput, String> {
+    #[cfg(unix)]
+    let sh = crate::link::LocalSh::posix(Vec::new());
+    #[cfg(windows)]
+    let sh = {
+        let sh = hook_sh().ok_or("Git for Windows (for its sh) wasn't found")?;
+        Arc::new(crate::link::LocalSh { sh: sh.into(), env: vec![("SHELL".into(), "/usr/bin/sh".into())], control_needs_pty: false })
+    };
+    crate::link::Link::Local(sh).exec(script, timeout).await.map_err(|e| e.to_string())
+}
+
 /// Shells available on this machine, most useful first.
 pub(crate) fn shell_defs() -> Vec<ShellDef> {
     let mut out = Vec::new();

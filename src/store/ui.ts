@@ -7,7 +7,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import type { GroupBy, SortBy } from "../lib/organize";
 import { onUiStateChange, uiStorage } from "../lib/uiState";
 
-export type SidebarTab = "machines" | "files";
+export type SidebarTab = "machines" | "files" | "history";
 
 interface UiState {
   sidebarWidth: number;

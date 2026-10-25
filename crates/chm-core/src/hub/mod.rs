@@ -698,11 +698,14 @@ impl Core {
         } else {
             None
         };
-        let launch = if agent { spec.harness.launch_command_for(assets.as_ref(), spec.args.as_deref().unwrap_or(""), def.quoting) } else { None };
+        let launch = if agent { spec.harness.launch_command_for(assets.as_ref(), &spec.harness_args(def.quoting), def.quoting) } else { None };
         let cwd = match spec.cwd.as_str() {
             "" | "~" => local::home(),
             c => c.to_string(),
         };
+        if !std::path::Path::new(&cwd).is_dir() {
+            return Err(format!("no such directory: {cwd}"));
+        }
         let (args, extra_env) = local::integrate(&def, assets.as_ref());
         let mut env = local::pane_env(&def, &chm_id);
         env.extend(extra_env);
@@ -725,6 +728,11 @@ impl Core {
 
     /// Creates a pane running `spec.harness` and returns its key.
     pub async fn create_pane(&self, spec: NewPaneSpec) -> Result<u32, String> {
+        if let Some(target) = &spec.resume
+            && spec.harness.resume_args(target, crate::harness::Quoting::Posix).is_none()
+        {
+            return Err(format!("{} sessions can't be reopened", spec.harness.name()));
+        }
         if spec.host == LOCAL_HOST {
             self.local_only()?;
             return match self.local_tmux.get() {
@@ -987,6 +995,31 @@ impl Core {
         result
     }
 
+    /// Recent agent sessions on `host` (Claude Code, Codex, pi, omp), newest first, from the
+    /// harnesses' own session files there.
+    pub async fn recent_sessions(&self, host: &str) -> Result<Vec<crate::history::SessionSummary>, String> {
+        let out = if host == LOCAL_HOST {
+            self.local_only()?;
+            local::run_script(crate::history::SCRIPT, Duration::from_secs(60)).await?
+        } else {
+            self.exec(host, crate::history::SCRIPT).await?
+        };
+        if !out.success() {
+            return Err(format!("couldn't list its sessions: {}", out.stderr_str().trim()));
+        }
+        let mut sessions = crate::history::parse(host, &out.stdout_str());
+        if host == LOCAL_HOST && cfg!(windows) {
+            // Git's sh names files the MSYS way; the harnesses write Windows paths.
+            for s in &mut sessions {
+                s.cwd = s.cwd.replace('\\', "/");
+                if matches!(s.harness, Harness::Pi | Harness::Omp) {
+                    s.resume = local::from_msys(&s.resume);
+                }
+            }
+        }
+        Ok(sessions)
+    }
+
     pub async fn exec(&self, id: &str, script: &str) -> Result<ExecOutput, String> {
         let (tx, rx) = oneshot::channel();
         self.send(id, HostCmd::Exec { script: script.to_string(), reply: tx });
@@ -1058,9 +1091,47 @@ mod tests {
             args: None,
             direct: Some(true),
             shell: None,
+            resume: None,
         };
         assert!(rt.block_on(core.create_pane(spec)).is_err(), "no shells started here");
         drop(rt);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The history list on real session files (read-only; prints counts only), of this machine
+    /// or `CHM_HISTORY_HOST` (as `CHM_HISTORY_USER`; with `CHM_TMUX_SOCKET=<private>`, so no tmux
+    /// session there is attached): `cargo test -p chm-core lists_sessions -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn lists_sessions() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("chm-history-here-{}", std::process::id()));
+        let core = Core::new(dir.clone(), Arc::new(Collect(Mutex::new(Vec::new()))));
+        let host = std::env::var("CHM_HISTORY_HOST").unwrap_or_else(|_| LOCAL_HOST.into());
+        if host != LOCAL_HOST {
+            rt.block_on(async {
+                core.refresh_tailnet().await;
+                core.upsert_host(HostConfig::new(&host, std::env::var("CHM_HISTORY_USER").unwrap_or_default()));
+                for _ in 0..60 {
+                    if core.snapshot().hosts.iter().any(|h| h.id == host && h.phase == HostPhase::Connected) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            });
+        }
+        let started = Instant::now();
+        let sessions = rt.block_on(core.recent_sessions(&host)).unwrap();
+        let mut counts: BTreeMap<&str, [usize; 5]> = BTreeMap::new();
+        for s in &sessions {
+            let c = counts.entry(s.harness.name()).or_default();
+            let has = [true, s.title.is_some(), !s.cwd.is_empty(), s.first_prompt.is_some(), s.last_prompt.is_some()];
+            for (n, h) in c.iter_mut().zip(has) {
+                *n += usize::from(h);
+            }
+        }
+        println!("{} sessions in {:?}; per harness [sessions, titled, with a folder, first prompt, last prompt]: {counts:?}", sessions.len(), started.elapsed());
+        assert!(sessions.windows(2).all(|w| w[0].last_active >= w[1].last_active), "newest first");
         let _ = std::fs::remove_dir_all(dir);
     }
 

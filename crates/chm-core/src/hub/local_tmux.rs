@@ -129,7 +129,7 @@ async fn run(ctx: Arc<Ctx>, flavor: Flavor, mut rx: mpsc::UnboundedReceiver<Loca
                     announce(link.clone(), prefix.clone(), state_dir.clone()).await;
                 }
                 Some(LocalTmuxCmd::Hook(event)) => {
-                    mgr.on_hook(&event, false);
+                    mgr.on_hook(&event, false).await;
                 }
                 Some(LocalTmuxCmd::ResendTiles { stop_streams }) => {
                     if stop_streams {

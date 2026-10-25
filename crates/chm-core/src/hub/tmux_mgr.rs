@@ -496,6 +496,7 @@ impl TmuxManager {
             bell_pings: crate::harness::bell_pings(r.bell, &r.current_command),
             notify: r.notify,
             seen: r.seen,
+            session: r.agent_session.clone(),
         }
     }
 
@@ -794,7 +795,7 @@ impl TmuxManager {
     }
 
     /// A hook event from the host's events.jsonl. Returns whether it raised an alert.
-    pub fn on_hook(&mut self, ev: &crate::integration::events::HookEvent, stale: bool) -> bool {
+    pub async fn on_hook(&mut self, ev: &crate::integration::events::HookEvent, stale: bool) -> bool {
         let Some(id) = ev.pane.strip_prefix('%').and_then(|n| n.parse::<PaneId>().ok()) else { return false };
         let Some(p) = self.panes.get(&id) else { return false };
         if let Some((event, ts)) = self.last_hook.get(&id)
@@ -808,7 +809,33 @@ impl TmuxManager {
         let (key, label) = (p.key, self.label(p));
         let alerted = self.ctx.signal(key, &sig, &label, stale);
         self.seen_if_looking(key);
+        self.note_session(id, ev).await;
         alerted
+    }
+
+    /// Keeps the agent session the pane runs in `@chm_session`, written only when it changes
+    /// (and cleared when that session ends), so every device's history list knows it's open.
+    async fn note_session(&mut self, id: PaneId, ev: &crate::integration::events::HookEvent) {
+        let Some(session) = ev.session_id() else { return };
+        let Some(p) = self.panes.get(&id) else { return };
+        let ended = ev.event == "SessionEnd";
+        let line = match (&p.row.agent_session, ended) {
+            (Some(current), true) if current == session => format!("set-option -pu -t {} @chm_session", quote(&format!("%{id}"))),
+            (current, false) if current.as_deref() != Some(session) => {
+                format!("set-option -p -t {} @chm_session {}", quote(&format!("%{id}")), quote(session))
+            }
+            _ => return,
+        };
+        let Some(client) = self.clients.get(&p.client).map(|c| c.client.clone()) else { return };
+        match client.command(&line).await {
+            Ok(_) => {
+                if let Some(p) = self.panes.get_mut(&id) {
+                    p.row.agent_session = (!ended).then(|| session.to_string());
+                }
+                self.publish_due = true;
+            }
+            Err(e) => debug!(host = %self.host, "couldn't note %{id}'s session: {e}"),
+        }
     }
 
     /// Fallback for agent panes without hooks: sustained output = working; a long silence
@@ -877,7 +904,7 @@ impl TmuxManager {
     pub async fn create_pane(&mut self, spec: NewPaneSpec) -> Result<u32, String> {
         self.home.as_ref().ok_or("host details unknown (still connecting?)")?;
         let assets = self.ensure_assets().await;
-        let launch = spec.harness.launch_command(assets.as_ref(), spec.args.as_deref().unwrap_or(""));
+        let launch = spec.harness.launch_command(assets.as_ref(), &spec.harness_args(crate::harness::Quoting::Posix));
 
         let base = spec
             .name

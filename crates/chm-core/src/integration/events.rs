@@ -25,6 +25,16 @@ pub struct HookEvent {
     pub transcript: String,
 }
 
+impl HookEvent {
+    /// The harness's session id (Claude Code's `session_id`, Codex's `thread-id`, …), when it
+    /// sent one that's plain enough to keep on a tmux pane (`@chm_session`).
+    pub fn session_id(&self) -> Option<&str> {
+        let s = self.session.as_str();
+        let plain = !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+        plain.then_some(s)
+    }
+}
+
 #[derive(Debug)]
 pub enum TailMsg {
     /// Where the tail started (bytes into the file).
@@ -102,6 +112,9 @@ mod tests {
         let line = r#"{"v":1,"ts":1790553770,"pane":"%2","harness":"claude","event":"SessionStart","detail":"","session":"2b09","transcript":"/x.jsonl"}"#;
         let e: HookEvent = serde_json::from_str(line).unwrap();
         assert_eq!((e.pane.as_str(), e.event.as_str(), e.ts), ("%2", "SessionStart", 1790553770));
+        assert_eq!(e.session_id(), Some("2b09"));
+        let odd = |session: &str| HookEvent { session: session.into(), ..e.clone() }.session_id().is_none();
+        assert!(odd("") && odd("a b") && odd("x|~|y") && odd(&"a".repeat(129)));
     }
 
     #[test]

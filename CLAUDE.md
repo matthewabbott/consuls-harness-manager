@@ -537,6 +537,30 @@ shell built as an iPhone app. See README.md.
   Reports go out byte for byte (`sendInput`, `binary` for legacy bytes > 0x7f), as
   `send-keys -H` for tmux panes.
 
+## Agent session history
+
+- The History tab (`HistoryPanel`) and the phone's Recent screen (`RecentScreen`) list the
+  harnesses' own session files on each machine (`history.rs`), so sessions started outside
+  Consuls are there too: Claude Code `~/.claude/projects/<dir>/<id>.jsonl` (title: last
+  `custom-title`, else `ai-title`; gist: `last-prompt`), Codex
+  `~/.codex/sessions/…/rollout-*-<id>.jsonl` (+ `session_index.jsonl` thread names), pi
+  `~/.pi/agent/sessions/<dir>/*.jsonl` (`session_info` names), omp `~/.omp/agent/sessions/`
+  (`title` header, `title_change`). Runs without a person (`claude -p` = `entrypoint` sdk-*,
+  `codex exec`) are skipped, as their own pickers do.
+- `history::SCRIPT` (one exec per machine; This PC through `local::run_script`) prints a few
+  cut-short lines per session (newest 80 of 30 days): first user lines from the first MB, the
+  last line of each kind from the last 8 MB. It reads ends with `dd` and uses one regex per grep:
+  BSD `tail -c` and several `-e` patterns are slow on macOS. `parse` reads lines that may be cut
+  off mid-string (`json_str`).
+- `@chm_session` (direct panes: in memory) is the session id hooks report (Claude `session_id`,
+  Codex `thread-id` after a turn, pi's from its extension, omp's with permission requests), written when it changes and cleared on `SessionEnd`. A session is open
+  where a pane has its id and its harness still runs (`lib/recent.ts` `sessionPane`); a click
+  shows that pane, else `NewPaneSpec.resume` reopens it: `claude --resume <id>`,
+  `codex resume <id>`, `pi --session <file>`, `omp --resume <file>` (`Harness::resume_args`).
+- Real files, read-only, counts only: `cargo test -p chm-core lists_sessions -- --ignored
+  --nocapture` (another machine: `CHM_HISTORY_HOST`/`CHM_HISTORY_USER`, with
+  `CHM_TMUX_SOCKET=<private>`).
+
 ## Bells
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
@@ -563,7 +587,8 @@ shell built as an iPhone app. See README.md.
 - This PC shells: `cargo run -p chm-core --example localtest` (every local shell: typing,
   resize, hook routing, exit → ended, dismiss; scratch state dir, private tmux socket).
 - This PC tmux: `cargo run -p chm-core --example localtmux` (Cygwin, or the native tmux on
-  macOS/Linux; private socket, scratch state dir). For the real app, start it with
+  macOS/Linux; private socket, scratch state dir; hooks, `@chm_session`, reopening a session).
+  For the real app, start it with
   `CHM_TMUX_SOCKET=<private>` (and, on Windows, run `scripts/e2e/local-tmux.mjs`).
 - Label sharing: `cargo run -p chm-core --example labelsync` (macOS/Linux: two cores with
   scratch configs on one private tmux server; edits both ways, a third device, a server restart).

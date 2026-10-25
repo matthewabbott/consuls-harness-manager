@@ -78,6 +78,7 @@ pub(crate) fn spawn(ctx: &Arc<Ctx>, rt: &tokio::runtime::Handle, spec: DirectSpe
         bell_pings: false,
         notify: None,
         seen: None,
+        session: None,
     };
     let (tx, rx) = mpsc::unbounded_channel();
     ctx.direct.lock().unwrap().insert(key, DirectHandle { info: info.clone(), tx });
@@ -367,6 +368,18 @@ impl Direct {
         {
             self.info.harness = Some(h);
             self.publish();
+        }
+        // The agent session running here (the history list opens this pane for it).
+        if let Some(session) = event.session_id() {
+            let next = match event.event.as_str() {
+                "SessionEnd" if self.info.session.as_deref() == Some(session) => None,
+                "SessionEnd" => self.info.session.clone(),
+                _ => Some(session.to_string()),
+            };
+            if next != self.info.session {
+                self.info.session = next;
+                self.publish();
+            }
         }
         let sig = Signal { event: event.event.clone(), detail: event.detail.clone(), ts: event.ts, heuristic: false };
         self.ctx.signal(self.key, &sig, &self.label(), stale);

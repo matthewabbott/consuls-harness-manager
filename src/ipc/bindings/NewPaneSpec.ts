@@ -28,4 +28,8 @@ direct?: boolean,
 /**
  * Local shells: which one (a [`LocalShell`] id). Remote direct shells use the login shell.
  */
-shell?: string, };
+shell?: string, 
+/**
+ * Reopen this session of the harness ([`crate::history::SessionSummary::resume`]).
+ */
+resume?: string, };

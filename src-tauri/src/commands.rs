@@ -425,6 +425,12 @@ pub fn set_visible_panes(state: State<'_, AppState>, keys: Option<Vec<u32>>) {
     state.core.set_visible_panes(keys);
 }
 
+/// Recent agent sessions on a machine (the History tab), from the harnesses' session files.
+#[tauri::command]
+pub async fn recent_sessions(state: State<'_, AppState>, host: String) -> CmdResult<Vec<chm_core::history::SessionSummary>> {
+    state.core.recent_sessions(&host).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::local_path;

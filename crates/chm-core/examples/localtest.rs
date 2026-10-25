@@ -90,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
             args: None,
             direct: Some(true),
             shell: Some(shell.id.clone()),
+            resume: None,
         };
         let key = core.create_pane(spec).await.map_err(anyhow::Error::msg)?;
         let pane = |k: u32| rec.panes.lock().unwrap().iter().find(|p| p.key == k).cloned();

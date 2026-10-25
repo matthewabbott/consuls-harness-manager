@@ -21,6 +21,7 @@ import type { NewPaneSpec } from "./bindings/NewPaneSpec";
 import type { NotifyMode } from "./bindings/NotifyMode";
 import type { NotifyPrefs } from "./bindings/NotifyPrefs";
 import type { ResizeOutcome } from "./bindings/ResizeOutcome";
+import type { SessionSummary } from "./bindings/SessionSummary";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
 import type { SttStatus } from "./bindings/SttStatus";
 import type { TerminateOutcome } from "./bindings/TerminateOutcome";
@@ -171,6 +172,8 @@ export interface Backend {
   integrationStatus(host: string): Promise<IntegrationStatus>;
   installIntegration(host: string): Promise<IntegrationStatus>;
   uninstallIntegration(host: string): Promise<IntegrationStatus>;
+  /** Recent agent sessions on a machine, newest first (reopen one with createPane's `resume`). */
+  recentSessions(host: string): Promise<SessionSummary[]>;
 }
 
 /** From the app shell (not the core, so not in bindings/): a desktop upload or download, per file. */
@@ -263,6 +266,7 @@ export function commands(call: Call) {
     integrationStatus: (host: string) => call<IntegrationStatus>("integration_status", { host }),
     installIntegration: (host: string) => call<IntegrationStatus>("install_integration", { host }),
     uninstallIntegration: (host: string) => call<IntegrationStatus>("uninstall_integration", { host }),
+    recentSessions: (host: string) => call<SessionSummary[]>("recent_sessions", { host }),
   };
 }
 

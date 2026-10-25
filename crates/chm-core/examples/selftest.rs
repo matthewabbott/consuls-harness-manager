@@ -278,6 +278,7 @@ kill -CONT "$pid""#
         args: None,
         direct: Some(true),
         shell: None,
+        resume: None,
     };
     let dkey = core.create_pane(spec).await.map_err(anyhow::Error::msg)?;
     wait_for("direct pane listed", Duration::from_secs(5), || pane(dkey).is_some_and(|p| p.kind == PaneKind::Direct && p.ended.is_none())).await;
@@ -430,7 +431,7 @@ kill -CONT "$pid""#
     println!("ok   list_dir ~ -> {} ({} entries)", listing.path, listing.entries.len());
     let harness = args.get(2).and_then(|h| Harness::from_name(h)).unwrap_or(Harness::Shell);
     let cwd = args.get(3).cloned().unwrap_or_else(|| listing.path.clone());
-    let spec = NewPaneSpec { host: host.clone(), cwd: cwd.clone(), harness, name: None, session: None, args: None, direct: None, shell: None };
+    let spec = NewPaneSpec { host: host.clone(), cwd: cwd.clone(), harness, name: None, session: None, args: None, direct: None, shell: None, resume: None };
     let new_key = core.create_pane(spec).await.map_err(anyhow::Error::msg)?;
     println!("ok   create_pane {} in {cwd} -> key {new_key}", harness.name());
     let find = |k: u32| rec.panes.lock().unwrap().iter().find(|p| p.key == k).cloned();

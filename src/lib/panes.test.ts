@@ -39,6 +39,7 @@ const pane = (extra: Partial<PaneInfo>): PaneInfo => ({
   bellPings: false,
   notify: null,
   seen: null,
+  session: null,
   ...extra,
 });
 

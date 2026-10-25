@@ -5,6 +5,7 @@
 pub mod cygwin;
 pub mod fs;
 pub mod harness;
+pub mod history;
 pub mod hub;
 pub mod integration;
 pub mod labels;

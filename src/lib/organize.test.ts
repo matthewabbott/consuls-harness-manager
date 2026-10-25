@@ -40,6 +40,7 @@ const pane = (key: number, extra: Partial<PaneInfo> = {}): PaneInfo => ({
   bellPings: false,
   notify: null,
   seen: null,
+  session: null,
   ...extra,
 });
 

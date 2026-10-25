@@ -1,4 +1,4 @@
-import { Files, Server, Settings, Video } from "lucide-react";
+import { Files, History, Server, Settings, Video } from "lucide-react";
 
 import { keyLabel } from "../lib/platform";
 import { useApp } from "../store/app";
@@ -23,6 +23,7 @@ export default function ActivityBar() {
   const tabs: Tab[] = [
     { id: "machines", label: "Machines & panes", icon: <Server className="h-[18px] w-[18px]" />, badge: waiting },
     { id: "files", label: "Files", icon: <Files className="h-[18px] w-[18px]" /> },
+    { id: "history", label: "Recent agent sessions", icon: <History className="h-[18px] w-[18px]" /> },
   ];
 
   return (

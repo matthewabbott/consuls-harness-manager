@@ -534,7 +534,7 @@ async fn connected_phase(
                     // Events replayed right after (re)connecting that are clearly old: fold
                     // them into one summary instead of a burst of pings.
                     let stale = replaying_since.elapsed() < Duration::from_secs(3) && event.ts + 20 < now;
-                    let alerted = direct::route_hook(ctx, &event, stale) || mgr.on_hook(&event, stale);
+                    let alerted = direct::route_hook(ctx, &event, stale) || mgr.on_hook(&event, stale).await;
                     if stale && !alerted && matches!(event.event.as_str(), "Stop" | "PermissionRequest" | "AskUserQuestion") {
                         missed += 1;
                         last_missed_at = Some(std::time::Instant::now());
@@ -579,7 +579,7 @@ async fn create_direct(
     let chm_id = uuid::Uuid::new_v4().simple().to_string()[..12].to_string();
     // Deployed even for a plain shell: hooks of agents started in it by hand use the script.
     let assets = mgr.ensure_assets().await;
-    let launch = spec.harness.launch_command(assets.as_ref(), spec.args.as_deref().unwrap_or(""));
+    let launch = spec.harness.launch_command(assets.as_ref(), &spec.harness_args(crate::harness::Quoting::Posix));
     // Run through sh so the user's own shell (bash, zsh, fish, …) only has to parse a plain
     // command line; then exec their login shell interactively. bash and zsh start with the
     // shell integration ($3), which reports the folder at each prompt.

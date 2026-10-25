@@ -457,6 +457,9 @@ pub struct PaneInfo {
     /// seconds): the push daemon drops a push you've already seen.
     #[ts(type = "number | null")]
     pub seen: Option<u64>,
+    /// The agent session running here, as its hooks report it (tmux: `@chm_session`): the
+    /// history list opens this pane instead of reopening the session a second time.
+    pub session: Option<String>,
 }
 
 /// When a tracked pane pushes to your phone.
@@ -547,6 +550,18 @@ pub struct NewPaneSpec {
     #[serde(default)]
     #[ts(optional)]
     pub shell: Option<String>,
+    /// Reopen this session of the harness ([`crate::history::SessionSummary::resume`]).
+    #[serde(default)]
+    #[ts(optional)]
+    pub resume: Option<String>,
+}
+
+impl NewPaneSpec {
+    /// The harness's arguments: what reopens [`NewPaneSpec::resume`], then [`NewPaneSpec::args`].
+    pub fn harness_args(&self, quoting: crate::harness::Quoting) -> String {
+        let resume = self.resume.as_deref().and_then(|r| self.harness.resume_args(r, quoting));
+        [resume.as_deref(), self.args.as_deref()].into_iter().flatten().map(str::trim).filter(|a| !a.is_empty()).collect::<Vec<_>>().join(" ")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]

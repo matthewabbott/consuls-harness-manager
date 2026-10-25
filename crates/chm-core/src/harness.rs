@@ -91,6 +91,21 @@ impl Harness {
         Some(if extra.is_empty() { base } else { format!("{base} {extra}") })
     }
 
+    /// The arguments that reopen a session: `target` is its id, or its session file for pi and
+    /// omp (see [`crate::history::SessionSummary::resume`]). `None` for a harness that can't.
+    pub fn resume_args(self, target: &str, quoting: Quoting) -> Option<String> {
+        if target.trim().is_empty() || target.chars().any(char::is_control) {
+            return None;
+        }
+        let q = quoting.quote(target);
+        Some(match self {
+            Harness::Claude | Harness::Omp => format!("--resume {q}"),
+            Harness::Codex => format!("resume {q}"),
+            Harness::Pi => format!("--session {q}"),
+            _ => return None,
+        })
+    }
+
     /// What to type to make the harness exit gracefully.
     pub fn quit_command(self) -> Option<&'static str> {
         match self {
@@ -289,5 +304,20 @@ mod tests {
             Harness::Omp.launch_command_for(Some(&w), "", Quoting::Cmd).unwrap(),
             "omp --hook \"C:/Users/A B/.local/share/consuls/omp-extension.ts\""
         );
+    }
+
+    #[test]
+    fn resume_arguments() {
+        let id = "0b5a3f0e-1111-4222-8333-944455556666";
+        assert_eq!(Harness::Claude.resume_args(id, Quoting::Posix).unwrap(), format!("--resume '{id}'"));
+        assert_eq!(Harness::Codex.resume_args(id, Quoting::Posix).unwrap(), format!("resume '{id}'"));
+        assert_eq!(Harness::Pi.resume_args("/h/.pi/agent/sessions/--h-my dir--/s.jsonl", Quoting::Posix).unwrap(), "--session '/h/.pi/agent/sessions/--h-my dir--/s.jsonl'");
+        assert_eq!(Harness::Omp.resume_args("C:/Users/A B/s.jsonl", Quoting::PowerShell).unwrap(), "--resume 'C:/Users/A B/s.jsonl'");
+        assert_eq!(Harness::Shell.resume_args(id, Quoting::Posix), None);
+        assert_eq!(Harness::Claude.resume_args("a\nb", Quoting::Posix), None);
+        // After the hooks' own arguments: `codex -c notify=… resume <id>`.
+        let a = Assets::at("/home/u");
+        let resume = Harness::Codex.resume_args(id, Quoting::Posix).unwrap();
+        assert!(Harness::Codex.launch_command(Some(&a), &resume).unwrap().ends_with(&format!("\"codex\",\"Stop\"]' resume '{id}'")));
     }
 }

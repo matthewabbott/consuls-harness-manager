@@ -1,4 +1,4 @@
-import { ChevronRight, FolderOpen, Layers, Plus, Settings, Tag } from "lucide-react";
+import { ChevronRight, FolderOpen, History, Layers, Plus, Settings, Tag } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import NotifySwitch from "../components/NotifySwitch";
@@ -60,7 +60,7 @@ function AgentRow({ pane, att, machine }: { pane: PaneInfo; att: PaneAttention |
   );
 }
 
-export default function MachinesScreen({ onSettings, onAdd, onNew }: { onSettings(): void; onAdd(): void; onNew(host: string): void }) {
+export default function MachinesScreen({ onSettings, onAdd, onNew, onRecent }: { onSettings(): void; onAdd(): void; onNew(host: string): void; onRecent(): void }) {
   const config = useApp((s) => s.config);
   const hosts = useApp((s) => s.hosts);
   const panes = useApp((s) => s.panes);
@@ -118,6 +118,9 @@ export default function MachinesScreen({ onSettings, onAdd, onNew }: { onSetting
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="safe-top flex shrink-0 items-center px-4 pb-2">
         <h1 className="flex-1 text-[28px] font-bold tracking-tight text-mist-100">Consuls</h1>
+        <button onClick={onRecent} aria-label="Recent sessions" className="rounded-full p-2 text-mist-300 active:bg-ink-700">
+          <History className="h-5.5 w-5.5" />
+        </button>
         <button onClick={onSettings} aria-label="Settings" className="rounded-full p-2 text-mist-300 active:bg-ink-700">
           <Settings className="h-5.5 w-5.5" />
         </button>

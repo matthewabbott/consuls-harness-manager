@@ -12,6 +12,7 @@ import type { UiPrefs } from "./bindings/UiPrefs";
 import type { HostConfig } from "./bindings/HostConfig";
 import type { NotifyPrefs } from "./bindings/NotifyPrefs";
 import type { LabelDef } from "./bindings/LabelDef";
+import type { SessionSummary } from "./bindings/SessionSummary";
 import { MOCK_DRIVES, mockFsCount, mockFsOp, mockGitStatus, mockListDir, mockGitHead, mockReadFile, mockStat, mockTouch, mockUpload, mockWriteFile } from "./mockFs";
 import type { HostState } from "./bindings/HostState";
 import type { IntegrationStatus } from "./bindings/IntegrationStatus";
@@ -160,6 +161,7 @@ function pane(key: number, host: string, extra: PaneExtra, lines: Seg[][], curso
       bellPings: rest.currentCommand === "irssi",
       notify: null,
       seen: null,
+      session: null,
       ...rest,
     },
     lines,
@@ -184,6 +186,36 @@ function toAnsi(lines: Seg[][]): string {
   return lines.map((segs) => segs.map(([t, fg = 0, a = 0]) => sgr(fg, a) + t).join("") + "\x1b[0m").join("\r\n");
 }
 
+/** Recent agent sessions per machine (the History tab, the phone's Recent screen). */
+function mockSessions(): Record<string, SessionSummary[]> {
+  const now = Math.floor(Date.now() / 1000);
+  const s = (host: string, harness: SessionSummary["harness"], id: string, cwd: string, minsAgo: number, title: string | null, first: string, last: string | null): SessionSummary => ({
+    host,
+    harness,
+    id,
+    resume: harness === "pi" || harness === "omp" ? `/home/consulear/.${harness === "pi" ? "pi" : "omp"}/agent/sessions/${cwd.replace(/\//g, "-")}/${id}.jsonl` : id,
+    cwd,
+    title,
+    firstPrompt: first,
+    lastPrompt: last,
+    lastActive: now - minsAgo * 60,
+  });
+  return {
+    "spark-d683": [
+      s("spark-d683", "claude", "4f1c2a9e-7b3d-4e8a-9c21-5d6e7f8a9b0c", "/home/consulear/code/consuls", 2, "Refactor session supervisor", "refactor the session supervisor so reconnects re-seed panes", "run the crash hunt again with 8 seeds"),
+      s("spark-d683", "codex", "019a1b2c-3d4e-7f00-8a9b-0c1d2e3f4a5b", "/home/consulear/Programming/open-webui", 47, "Fix flaky login test", "why does the login e2e test fail one run in five?", "add a retry around the token refresh and rerun the suite"),
+      s("spark-d683", "omp", "01a10225-bddd-75a1-9ca6-79bcd69647af", "/home/consulear/Programming/terrarium-annotator", 190, "Hysteresis benchmark control arm", "set up the control arm for the hysteresis benchmark", "push the corrected record and summarise criteria 1–4"),
+      s("spark-d683", "claude", "8e2d5c1b-0a9f-4b7e-8d6c-3f2e1a0b9c8d", "/home/consulear/code/consuls", 26 * 60, "Phone dictation pieces", "cut dictation into pieces at pauses so long recordings fit in memory", "the hang-up sound plays twice, fix that"),
+      s("spark-d683", "pi", "7d1e0000-aaaa-4bbb-8ccc-dddddddddddd", "/home/consulear/Programming/games/alchemist-diorama", 3 * 24 * 60, null, "make the potion shelf wobble when you walk past it", "less wobble, and only for the top shelf"),
+      s("spark-d683", "claude", "c0ffee00-1111-4222-8333-444455556666", "/home/consulear/models", 9 * 24 * 60, "Quantize the 70B for the Spark", "which quantization fits a 70B model in 128 GB with room for context?", null),
+    ],
+    "@local": [
+      s("@local", "claude", "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d", "C:/Users/consul/code/website", 15, "Dark mode toggle", "add a dark mode toggle to the settings page", "make the toggle remember its state"),
+      s("@local", "codex", "019a2222-3d4e-7f00-8a9b-0c1d2e3f4a5b", "C:/Users/consul/code/budget", 5 * 60, null, "turn the bank CSV export into monthly totals per category", "group transfers between my own accounts out"),
+    ],
+  };
+}
+
 let mockTransferId = 1;
 const mockCancelled = new Set<number>();
 /** Ticks a pretend transfer along, until done or cancelled. */
@@ -204,6 +236,7 @@ function mockProgress(id: number, total: number, onEvent: (e: TransferEvent) => 
 export function mockBackend(): Backend {
   (window as unknown as { mockTouch?: typeof mockTouch }).mockTouch = mockTouch;
   const streaming = new Set<number>();
+  const sessions = mockSessions();
   const listeners = new Set<(ev: CoreEvent) => void>();
   const emit = (ev: CoreEvent) => listeners.forEach((l) => l(ev));
   let frameCb: ((b: Uint8Array) => void) | null = null;
@@ -225,7 +258,7 @@ export function mockBackend(): Backend {
   ];
   const panes: MockPane[] = [
     pane(1, "spark-d683", { tmux: { sessionName: "annotator-omp-1", sessionGroup: "annotator-omp", windowName: "omp" }, currentCommand: "omp", harness: "omp", labels: ["terrarium"], title: "π > Hysteresis benchmark control arm run", currentPath: "/home/consulear/Programming/terrarium-annotator", width: 120, height: 29 }, ompLines),
-    pane(2, "spark-d683", { tmux: { sessionName: "consuls", windowName: "claude" }, currentCommand: "claude", harness: "claude", notify: "delay", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22 }, claudeLines, [4, 15]),
+    pane(2, "spark-d683", { tmux: { sessionName: "consuls", windowName: "claude" }, currentCommand: "claude", harness: "claude", notify: "delay", title: "✳ Refactor supervisor", currentPath: "/home/consulear/code/consuls", width: 68, height: 22, session: "4f1c2a9e-7b3d-4e8a-9c21-5d6e7f8a9b0c" }, claudeLines, [4, 15]),
     pane(3, "spark-d683", { tmux: { sessionName: "fix-owui-3", windowName: "codex" }, currentCommand: "codex", harness: "codex", labels: ["urgent"], title: "", currentPath: "/home/consulear/Programming/open-webui", width: 66, height: 18 }, codexLines, [4, 13]),
     pane(4, "spark-d683", { tmux: { sessionName: "dual-setup-2", windowName: "bash" }, currentPath: "/home/consulear/models" }, shellLines, [21, 3]),
     pane(5, "spark-d683", { tmux: null, currentPath: "/home/consulear", chmId: "d5" }, shellLines, [21, 3]),
@@ -418,6 +451,9 @@ export function mockBackend(): Backend {
       return `${home}/.cache/consuls/pastes/paste-${Math.floor(Date.now() / 1000)}-${Math.random().toString(16).slice(2, 8)}.${ext}`;
     },
     createPane: async (spec) => {
+      const reopened = spec.resume ? Object.values(sessions).flat().find((s) => s.host === spec.host && s.resume === spec.resume) : undefined;
+      if (spec.resume && !reopened) throw new Error("no such session");
+      if (reopened?.cwd.includes("/models")) throw new Error(`tmux failed: no such directory: '${reopened.cwd}'`);
       const key = 100 + panes.length;
       const name = spec.cwd.split("/").filter(Boolean).pop() ?? "agent";
       panes.push(
@@ -430,8 +466,9 @@ export function mockBackend(): Backend {
             harness: spec.harness,
             currentPath: spec.cwd,
             chmId: `mock${key}`,
+            session: reopened?.id ?? null,
           },
-          [[["Starting " + spec.harness + "…", P(8)]]],
+          [[[(reopened ? "Resuming " : "Starting ") + spec.harness + "…", P(8)]]],
           [0, 1],
         ),
       );
@@ -558,6 +595,11 @@ export function mockBackend(): Backend {
     uninstallIntegration: async () => {
       mockIntegration = { claude: "notInstalled", codex: "notInstalled", omp: "notInstalled", pi: "notInstalled" };
       return { ...mockIntegration, notes: ["Claude Code: hooks removed."] };
+    },
+    recentSessions: async (host) => {
+      await new Promise((r) => setTimeout(r, 400));
+      if (hosts.find((h) => h.id === host)?.phase.phase !== "connected") throw new Error("not connected");
+      return sessions[host] ?? [];
     },
     listDir: async (host, path) => mockListDir(host, path),
     fsOp: async (host, op) => mockFsOp(host, op),

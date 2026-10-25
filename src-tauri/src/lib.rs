@@ -226,6 +226,7 @@ pub fn run() {
             commands::set_ui_state,
             commands::open_window,
             commands::focus_window,
+            commands::recent_sessions,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Consuls")
