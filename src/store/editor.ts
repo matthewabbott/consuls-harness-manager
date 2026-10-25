@@ -70,13 +70,12 @@ function previewOf(text: string): string {
 interface EditorStore {
   files: Record<string, OpenFile>;
   order: string[];
-  active: string | null;
 
-  open(host: string, path: string, origin?: number | null, at?: { line: number; col?: number }): Promise<void>;
+  /** Opens (or goes to) a file and shows it, beside pane `origin` when given; `show: false` only loads it. */
+  open(host: string, path: string, origin?: number | null, at?: { line: number; col?: number }, show?: boolean): Promise<void>;
   /** The editor applied `goto`. */
   wentTo(id: string): void;
   close(id: string): void;
-  setActive(id: string | null): void;
   /** The editor reports its buffer changed. */
   edited(id: string, doc: Text): void;
   save(id: string, opts?: { force?: boolean }): Promise<boolean>;
@@ -86,6 +85,12 @@ interface EditorStore {
   /** Checks open files for outside changes. */
   poll(ids?: string[]): Promise<void>;
   restoreDrafts(): Promise<void>;
+}
+
+/** Shows an opened file; the desktop's layout puts it on screen (`store/layout.ts`). */
+let fileShower: (id: string, origin: number | null) => void = () => {};
+export function setFileShower(f: (id: string, origin: number | null) => void) {
+  fileShower = f;
 }
 
 let draftTimers: Record<string, number> = {};
@@ -154,18 +159,18 @@ export const useEditor = create<EditorStore>((set, get) => {
   return {
     files: {},
     order: [],
-    active: null,
 
-    open: async (host, path, origin = null, at) => {
+    open: async (host, path, origin = null, at, show = true) => {
       const id = fileId(host, path);
       const goto = at ? { line: at.line, col: at.col ?? 1, seq: Date.now() } : undefined;
       if (get().files[id]) {
         if (goto) patch(id, { goto });
-        set({ active: id });
+        if (show) fileShower(id, origin);
         return;
       }
       const f: OpenFile = { id, host, path, name: path.split("/").pop() ?? path, origin, kind: "loading", eol: "lf", bom: false, stamp: null, dirty: false, saving: false, preview: "", gen: 0, goto };
-      set((s) => ({ files: { ...s.files, [id]: f }, order: [...s.order, id], active: id }));
+      set((s) => ({ files: { ...s.files, [id]: f }, order: [...s.order, id] }));
+      if (show) fileShower(id, origin);
       await load(id);
     },
 
@@ -175,11 +180,10 @@ export const useEditor = create<EditorStore>((set, get) => {
       set((s) => {
         const files = { ...s.files };
         delete files[id];
-        return { files, order: s.order.filter((o) => o !== id), active: s.active === id ? null : s.active };
+        return { files, order: s.order.filter((o) => o !== id) };
       });
     },
 
-    setActive: (active) => set({ active }),
     wentTo: (id) => patch(id, { goto: undefined }),
 
     edited: (id, doc) => {

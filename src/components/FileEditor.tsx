@@ -41,12 +41,14 @@ export interface FileEditorHandle {
 
 interface Props {
   id: string;
+  /** Take the keyboard when it opens (not when it's one of several splits and not focused). */
+  autoFocus?: boolean;
   onCursor?(line: number, col: number): void;
   onLanguage?(name: string | null): void;
 }
 
 /** Text editor for one open file. Its state lives in `buffers` while it's off screen. */
-const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id, onCursor, onLanguage }, ref) {
+const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id, autoFocus = true, onCursor, onLanguage }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const cb = useRef({ onCursor, onLanguage });
@@ -154,7 +156,7 @@ const FileEditor = forwardRef<FileEditorHandle, Props>(function FileEditor({ id,
       if (s.badges[file.path] !== prev.badges[file.path]) loadHead();
     });
 
-    view.focus();
+    if (autoFocus) view.focus();
     return () => {
       window.removeEventListener("focus", loadHead);
       unsubGit();

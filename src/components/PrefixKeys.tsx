@@ -37,7 +37,8 @@ function sessionPanes(pane: PaneInfo): WindowPane[] {
     .map((p) => ({ key: p.key, windowIndex: p.tmux!.windowIndex, paneIndex: p.tmux!.paneIndex, paneActive: p.tmux!.paneActive }));
 }
 
-export function usePrefixKeys(pane: PaneInfo, back: () => void) {
+/** `onZoom` maximizes the pane where that's per view (the desktop's splits); else side panels hide. */
+export function usePrefixKeys(pane: PaneInfo, back: () => void, onZoom?: () => void) {
   const [pending, setPending] = useState(false);
   const [help, setHelp] = useState(false);
   const [renaming, setRenaming] = useState<RenameWhat | null>(null);
@@ -70,7 +71,8 @@ export function usePrefixKeys(pane: PaneInfo, back: () => void) {
         useApp.getState().setTerminating(pane.key);
         break;
       case "zoom":
-        useUi.getState().setMaximized(!useUi.getState().maximized);
+        if (onZoom) onZoom();
+        else useUi.getState().setMaximized(!useUi.getState().maximized);
         break;
       case "window":
         show(windowTarget(sessionPanes(pane), me, action.which), `This session has no window ${action.which}.`);

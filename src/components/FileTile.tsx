@@ -3,7 +3,10 @@ import { memo } from "react";
 
 import { hostLabel, shortPath } from "../lib/hosts";
 import { parentPath } from "../lib/paths";
+import { fileTarget } from "../lib/layoutTree";
 import { useEditor } from "../store/editor";
+import { useLayout } from "../store/layout";
+import HotkeyBadge from "./HotkeyBadge";
 import { useRedact } from "../store/recording";
 
 /** An open file in the grid: name, where it lives, and its first lines. */
@@ -11,7 +14,7 @@ function FileTile({ id, home, showHost = false }: { id: string; home?: string | 
   const file = useEditor((s) => s.files[id]);
   const r = useRedact();
   if (!file) return null;
-  const open = () => useEditor.getState().setActive(id);
+  const open = () => useLayout.getState().show(fileTarget(id));
   return (
     <article
       data-file={file.path}
@@ -26,6 +29,7 @@ function FileTile({ id, home, showHost = false }: { id: string; home?: string | 
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[13px] leading-tight font-medium text-mist-100">{r(file.name)}</span>
             {file.dirty && <span title="Unsaved changes" className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember-400" />}
+            <HotkeyBadge target={fileTarget(id)} />
           </div>
           <div className="truncate font-mono text-[10.5px] leading-tight text-mist-500">
             {showHost && <span className="text-mist-400">{r(hostLabel(file.host))} · </span>}

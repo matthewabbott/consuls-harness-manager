@@ -5,11 +5,13 @@ import type { PaneInfo } from "../ipc/bindings/PaneInfo";
 import { useUi } from "../store/ui";
 import type { Sizing } from "../term/sizing";
 
-/** Header control: current size + how the tmux window is sized while expanded. */
-export default function SizeMenu({ pane, sizing }: { pane: PaneInfo; sizing: Sizing }) {
+/** Header control: current size + how the tmux window is sized while expanded. `zoom`: how
+ * Maximize works where it's per view (the desktop's splits). */
+export default function SizeMenu({ pane, sizing, zoom }: { pane: PaneInfo; sizing: Sizing; zoom?: { on: boolean; toggle(): void } }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const maximized = useUi((s) => s.maximized);
+  const appMaximized = useUi((s) => s.maximized);
+  const maximized = zoom ? zoom.on : appMaximized;
 
   useEffect(() => {
     if (!open) return;
@@ -64,7 +66,7 @@ export default function SizeMenu({ pane, sizing }: { pane: PaneInfo; sizing: Siz
             title={maximized ? "Restore side panels" : "Maximize"}
             hint="Hide the side panels and fit to the whole window"
             checked={maximized}
-            onClick={pick(() => useUi.getState().setMaximized(!maximized))}
+            onClick={pick(() => (zoom ? zoom.toggle() : useUi.getState().setMaximized(!maximized)))}
           />
           <Item
             icon={<Scaling className="h-3.5 w-3.5" />}

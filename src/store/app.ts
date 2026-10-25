@@ -13,6 +13,13 @@ import { renameIdentity } from "./composer";
 import { useViewPrefs } from "./viewPrefs";
 import type { TileMenuState } from "../components/TileMenu";
 
+const identityListeners: ((from: string, to: string) => void)[] = [];
+
+/** Runs `f` when a pane's identity changes (it gained a stable @chm_id). */
+export function onIdentityChange(f: (from: string, to: string) => void) {
+  identityListeners.push(f);
+}
+
 /** A pane just got a stable @chm_id: carry its drafts, history and view prefs over. */
 function migrateIdentities(before: PaneInfo[] | undefined, after: PaneInfo[]) {
   if (!before) return;
@@ -23,8 +30,15 @@ function migrateIdentities(before: PaneInfo[] | undefined, after: PaneInfo[]) {
       const to = paneIdentity(p);
       useViewPrefs.getState().rename(from, to);
       renameIdentity(from, to);
+      identityListeners.forEach((f) => f(from, to));
     }
   }
+}
+
+/** What `setExpanded` does instead of setting `expanded` (the desktop's layout). */
+let paneShower: ((key: number | null) => void) | null = null;
+export function setPaneShower(f: (key: number | null) => void) {
+  paneShower = f;
 }
 
 export interface Notice {
@@ -174,7 +188,7 @@ export const useApp = create<AppStore>((set) => ({
   setFocusHost: (focusHost) => set({ focusHost }),
   setFocusLabel: (focusLabel) => set({ focusLabel }),
   setTileMenu: (tileMenu) => set({ tileMenu }),
-  setExpanded: (expanded) => set({ expanded }),
+  setExpanded: (expanded) => (paneShower ? paneShower(expanded) : set({ expanded })),
   openNewPane: (host, cwd) => set({ newPaneFor: host, newPaneCwd: cwd ?? null }),
   closeNewPane: () => set({ newPaneFor: undefined, newPaneCwd: null }),
   setTerminating: (terminating) => set({ terminating }),

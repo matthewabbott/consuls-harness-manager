@@ -31,7 +31,7 @@ export function cellsFor(px: { width: number; height: number }, cell: CellSize):
 
 export interface Sizing {
   mode: SizeMode;
-  /** Effective mode (Maximize forces fit). */
+  /** Effective mode (Maximize forces fit; a tmux window shown twice, scale). */
   effective: SizeMode;
   /** Font size to render with; `null` = fit the text to the pane width (scale mode). */
   fontSize: number | null;
@@ -44,19 +44,32 @@ export interface Sizing {
   release(): void;
 }
 
+export interface SizingOptions {
+  /** This view is maximized (the desktop's splits: per split; otherwise the app-wide flag). */
+  zoomed?: boolean;
+  /** Another view shows this tmux window too (another split, another app window): neither
+   * resizes it, or they'd take turns. */
+  shared?: boolean;
+}
+
+/** Below this the frame is hidden or not laid out yet: no size worth asking tmux for. */
+const MIN_FRAME = { width: 100, height: 60 };
+
 export function useTerminalSizing(
   pane: PaneInfo,
   frameRef: React.RefObject<HTMLElement | null>,
   cellSize: () => CellSize | null,
+  opts: SizingOptions = {},
 ): Sizing {
   const id = paneIdentity(pane);
   const pref = useViewPrefs((s) => s.prefs[id]);
-  const maximized = useUi((s) => s.maximized);
+  const appMaximized = useUi((s) => s.maximized);
+  const maximized = opts.zoomed ?? appMaximized;
   const settled = useSettledSize(frameRef);
   const split = (pane.tmux?.windowPanes ?? 1) > 1;
   const mode: SizeMode = pref?.sizeMode ?? (split ? "scale" : "fit");
   // An ended direct pane has nothing left to resize: just show what it had.
-  const effective: SizeMode = pane.ended ? "scale" : maximized ? "fit" : mode;
+  const effective: SizeMode = pane.ended || opts.shared ? "scale" : maximized ? "fit" : mode;
   const fontSize = effective === "scale" ? (pref?.fontSize ?? null) : (pref?.fontSize ?? FONT.default);
   const lastRequest = useRef<{ cols: number; rows: number; at: number } | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -69,7 +82,7 @@ export function useTerminalSizing(
 
   // Send a resize when the layout settles, the mode/size/font changes, or the user asks (nonce).
   useEffect(() => {
-    if (!settled || effective === "scale") return;
+    if (!settled || settled.width < MIN_FRAME.width || settled.height < MIN_FRAME.height || effective === "scale") return;
     let target: { cols: number; rows: number } | null = null;
     if (effective === "fit") {
       // Wait a frame so a font change has been applied before measuring cells.

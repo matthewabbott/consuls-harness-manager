@@ -1,7 +1,7 @@
 import { MergeView } from "@codemirror/merge";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { AlertTriangle, ArrowLeft, FileText, FolderSearch, ImageIcon, Loader2, RotateCcw, Save, SquareCode, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Columns2, FileText, FolderSearch, ImageIcon, Loader2, Maximize2, Minimize2, RotateCcw, Rows2, Save, SquareCode, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
@@ -9,15 +9,22 @@ import { hostLabel, isLocal } from "../lib/hosts";
 import { canOpenInVsCode, openInVsCode, REVEAL_LABEL, revealPath, useVsCode } from "../lib/openers";
 import { parentPath } from "../lib/paths";
 import { keyLabel } from "../lib/platform";
+import { fileTarget } from "../lib/layoutTree";
 import { buffers, useEditor } from "../store/editor";
+import { isZoomed, toggleZoom, useLayout } from "../store/layout";
+import { useUi } from "../store/ui";
+import HotkeyBadge from "./HotkeyBadge";
 import { useRedact } from "../store/recording";
 import { statusOf, useFiles } from "../store/files";
 import FileEditor, { type FileEditorHandle } from "./FileEditor";
 import Modal, { Button } from "./Modal";
 
-/** An open file, full size: editor (or image / notice), with save and conflict handling. */
-export default function FileView({ id }: { id: string }) {
+/** An open file in the window's layout: editor (or image / notice), with save and conflict handling. */
+export default function FileView({ id, leaf }: { id: string; leaf: { id: string; split: boolean; focused: boolean } }) {
   const file = useEditor((s) => s.files[id]);
+  const maximized = useUi((s) => s.maximized);
+  const zoomed = useLayout((s) => isZoomed(s, leaf.id, maximized));
+  const focusSeq = useLayout((s) => s.focusSeq);
   const editor = useEditor.getState;
   const editorRef = useRef<FileEditorHandle>(null);
   const [cursor, setCursor] = useState({ line: 1, col: 1 });
@@ -35,8 +42,23 @@ export default function FileView({ id }: { id: string }) {
     return () => window.clearInterval(t);
   }, [id, editor]);
 
+  // Focus moved here (a hotkey, a jump): into the editor.
+  useEffect(() => {
+    if (leaf.focused) editorRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSeq]);
+
   if (!file) return null;
-  const back = () => editor().setActive(null);
+  const back = () => {
+    useUi.getState().setMaximized(false);
+    useLayout.getState().toGrid();
+  };
+  const split = leaf.split;
+  const icon = (title: string, onClick: () => void, child: React.ReactNode) => (
+    <button onClick={onClick} title={title} className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100">
+      {child}
+    </button>
+  );
   const close = () => {
     if (file.dirty) setClosing(true);
     else {
@@ -46,20 +68,25 @@ export default function FileView({ id }: { id: string }) {
   const status = statusOf(badges, file.path, gitRoot);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col px-5 pb-4">
-      <header className="flex h-12 shrink-0 items-center gap-3">
-        <button onClick={back} title={`Back to grid (${keyLabel("Mod+Shift+G")})`} className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100">
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        {file.kind === "image" ? <ImageIcon className="h-5 w-5 text-sky-400/80" /> : <FileText className="h-5 w-5 text-sky-400/80" />}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className={`flex shrink-0 items-center ${split ? "h-9 gap-2" : "h-12 gap-3"}`}>
+        {!split && (
+          <button onClick={back} title={`Back to grid (${keyLabel("Mod+Shift+G")})`} className="rounded-lg p-1.5 text-mist-400 transition-colors hover:bg-ink-700 hover:text-mist-100">
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+        )}
+        {file.kind === "image" ? <ImageIcon className="h-5 w-5 shrink-0 text-sky-400/80" /> : <FileText className="h-5 w-5 shrink-0 text-sky-400/80" />}
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[14.5px] font-semibold text-mist-100">
             <span className="truncate">{r(file.name)}</span>
             {file.dirty && <span title="Unsaved changes" className="h-2 w-2 shrink-0 rounded-full bg-ember-400" />}
+            <HotkeyBadge target={fileTarget(id)} />
           </div>
-          <div className="truncate font-mono text-[11px] text-mist-500" title={r(file.path)}>
-            {r(`${hostLabel(file.host)} · ${parentPath(file.path)}`)}
-          </div>
+          {!split && (
+            <div className="truncate font-mono text-[11px] text-mist-500" title={r(file.path)}>
+              {r(`${hostLabel(file.host)} · ${parentPath(file.path)}`)}
+            </div>
+          )}
         </div>
         <div className="ml-auto flex items-center gap-1">
           {isLocal(file.host) && (
@@ -98,9 +125,17 @@ export default function FileView({ id }: { id: string }) {
           >
             <RotateCcw className="h-3.5 w-3.5" /> Reload
           </button>
+          {icon("Split right", () => useLayout.getState().place(leaf.id, "right", null), <Columns2 className="h-3.5 w-3.5" />)}
+          {icon("Split down", () => useLayout.getState().place(leaf.id, "bottom", null), <Rows2 className="h-3.5 w-3.5" />)}
+          {icon(
+            zoomed ? (split ? "Restore the other splits" : "Restore side panels") : split ? "Maximize this split" : "Maximize (hide side panels)",
+            () => toggleZoom(leaf.id),
+            zoomed ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />,
+          )}
           <button onClick={close} title="Close file" className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] text-mist-300 transition-colors hover:bg-ink-700 hover:text-mist-100">
             <X className="h-3.5 w-3.5" /> Close
           </button>
+          {split && icon("Close this split (the file stays open)", () => useLayout.getState().close(leaf.id), <X className="h-3.5 w-3.5" />)}
         </div>
       </header>
 
@@ -144,7 +179,7 @@ export default function FileView({ id }: { id: string }) {
         {file.kind === "tooLarge" && <Centered>This file is {fmtSize(file.size ?? 0)}: too large to edit here (the limit is 5 MB).</Centered>}
         {file.kind === "image" && <ImageView host={file.host} path={file.path} />}
         {file.kind === "text" && (
-          <FileEditor ref={editorRef} key={`${id}:${file.gen}`} id={id} onCursor={(line, col) => setCursor({ line, col })} onLanguage={setLanguage} />
+          <FileEditor ref={editorRef} key={`${id}:${file.gen}`} id={id} autoFocus={leaf.focused} onCursor={(line, col) => setCursor({ line, col })} onLanguage={setLanguage} />
         )}
       </div>
 
