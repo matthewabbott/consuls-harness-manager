@@ -38,23 +38,25 @@ export interface UrlSpan {
 
 const URL_RE = /\bhttps?:\/\/[^\s"'<>`]*[^\s"'<>`.,;:!?)\]}]/gi;
 
-/** http(s) URLs in a run of rows, following soft wraps and hard-wrapped URLs. */
-export function findUrls(rows: RowText[], cols: number): UrlSpan[] {
-  const out: UrlSpan[] = [];
+export type Cell = { row: number; col: number };
+
+/**
+ * A run of rows read as texts: rows the terminal soft-wrapped join the one before, and so do
+ * rows `glue` says carry on a hard-wrapped token (`glue(prevRow, soFar, row)`); each text comes
+ * with every character's cell.
+ */
+export function joinRows(rows: RowText[], glue: (prev: string, soFar: string, next: string) => boolean): { text: string; at: Cell[] }[] {
+  const out: { text: string; at: Cell[] }[] = [];
   let text = "";
-  let at: { row: number; col: number }[] = [];
+  let at: Cell[] = [];
   const flush = () => {
-    for (const m of text.matchAll(URL_RE)) {
-      const a = m.index!;
-      const b = a + m[0].length - 1;
-      out.push({ url: m[0], start: at[a], end: at[b] });
-    }
+    if (text) out.push({ text, at });
     text = "";
     at = [];
   };
   rows.forEach((r, row) => {
     const prev = row > 0 ? rows[row - 1].text.trimEnd() : "";
-    const glued = row > 0 && !r.wrapped && continuesUrl(prev, text.trimEnd(), r.text, cols);
+    const glued = row > 0 && !r.wrapped && glue(prev, text.trimEnd(), r.text);
     if (row > 0 && !r.wrapped && !glued) flush();
     let col = 0;
     let body = r.text;
@@ -64,7 +66,7 @@ export function findUrls(rows: RowText[], cols: number): UrlSpan[] {
       col = r.text.length - r.text.trimStart().length;
       body = r.text.trimStart();
     }
-    // One entry per UTF-16 unit, matching the regex's indexes.
+    // One entry per UTF-16 unit, matching regexes' indexes.
     for (let i = 0; i < body.length; i++) {
       text += body[i];
       at.push({ row, col });
@@ -73,4 +75,11 @@ export function findUrls(rows: RowText[], cols: number): UrlSpan[] {
   });
   flush();
   return out;
+}
+
+/** http(s) URLs in a run of rows, following soft wraps and hard-wrapped URLs. */
+export function findUrls(rows: RowText[], cols: number): UrlSpan[] {
+  return joinRows(rows, (prev, soFar, next) => continuesUrl(prev, soFar, next, cols)).flatMap(({ text, at }) =>
+    [...text.matchAll(URL_RE)].map((m) => ({ url: m[0], start: at[m.index!], end: at[m.index! + m[0].length - 1] })),
+  );
 }

@@ -1,6 +1,8 @@
 // Finding file references in terminal output (`src/App.tsx:42`, `./lib.rs:10:5`,
 // `C:\code\main.py(3,1)`) and resolving them against the pane's working directory.
 
+import { type Cell, EDGE_SLACK, type RowText, joinRows } from "./urls";
+
 export interface PathRef {
   /** Where the reference starts in the line (0-based char index) and its length. */
   index: number;
@@ -69,4 +71,31 @@ export function resolvePath(ref: string, cwd: string, home?: string | null): str
   if (p.startsWith("/") || /^[A-Za-z]:\//.test(p)) return normalizePath(p);
   if (p.startsWith("~/") && home) return normalizePath(`${home}/${p.slice(2)}`);
   return normalizePath(`${cwd}/${p}`);
+}
+
+/**
+ * Whether `next` carries on a path that `row` (trailing spaces trimmed) ran into the right edge
+ * with: the path so far has a separator and `next`'s first word is more path (programs hard-wrap
+ * a long path at the edge, not at a space).
+ */
+export function continuesPath(row: string, next: string, cols: number): boolean {
+  if (row.length < cols - EDGE_SLACK) return false;
+  const tail = row.match(/\S+$/)?.[0] ?? "";
+  if (!/[\\/]/.test(tail) || /:\/\//.test(tail)) return false;
+  const head = next.trimStart().match(/^\S+/)?.[0] ?? "";
+  // More path: path characters only, and some that prose words lack (a separator, a dot, a digit).
+  return /^[\w@.+\-\\/~]+(?::\d+(?::\d+)?|\(\d+(?:,\s*\d+)?\))?[.,;:]?$/.test(head) && /[./\\\d]/.test(head.replace(/[.,;:]$/, ""));
+}
+
+export interface PathSpan extends Omit<PathRef, "index" | "length"> {
+  /** First and last cell (both inclusive). */
+  start: Cell;
+  end: Cell;
+}
+
+/** File references in a run of rows, whole even when wrapped onto the next row. */
+export function findPathSpans(rows: RowText[], cols: number): PathSpan[] {
+  return joinRows(rows, (prev, _soFar, next) => continuesPath(prev, next, cols)).flatMap(({ text, at }) =>
+    findPaths(text).map(({ index, length, ...ref }) => ({ ...ref, start: at[index], end: at[index + length - 1] })),
+  );
 }

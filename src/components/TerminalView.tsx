@@ -19,7 +19,9 @@ import { useViewPrefs, zoom } from "../store/viewPrefs";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { useRecording } from "../store/recording";
-import { findPaths, resolvePath } from "../term/links";
+import { findPathSpans, resolvePath } from "../term/links";
+import { useFiles } from "../store/files";
+import { useUi } from "../store/ui";
 import { linkAt, type TappedLink } from "../term/linkAt";
 import { findUrls, type RowText } from "../term/urls";
 import { StreamRedactor } from "../term/redactStream";
@@ -172,7 +174,8 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     term.unicode.activeVersion = "11";
     const search = new SearchAddon();
     term.loadAddon(search);
-    installLinks(term, () => paneRef.current);
+    // The phone taps links itself (onLink): there, xterm's links mustn't open on a plain tap.
+    installLinks(term, () => paneRef.current, () => !propsRef.current.onLink);
     term.open(el);
     let webgl: WebglAddon | null = null;
     try {
@@ -554,7 +557,10 @@ function openUrl(uri: string) {
   }
 }
 
-/** Opens `ref` (as printed in the pane) in the editor, at its line if it has one. */
+/**
+ * Opens `ref` (as printed in the pane) beside the pane: a file in the editor, at its line if it
+ * has one; a folder in the explorer.
+ */
 async function openPath(pane: PaneInfo, ref: string, line?: number, col?: number) {
   const home = useApp.getState().hosts[pane.host]?.facts?.home;
   const path = resolvePath(ref, pane.currentPath, home);
@@ -564,14 +570,24 @@ async function openPath(pane: PaneInfo, ref: string, line?: number, col?: number
     useApp.getState().notify("warning", `Couldn't find ${path} on ${pane.host === "@local" ? "this PC" : pane.host}`);
     return;
   }
+  const folder = await b.listDir(pane.host, path).then(
+    () => true,
+    () => false,
+  );
+  if (folder) {
+    useFiles.getState().setRoot({ host: pane.host, path }, { follow: false });
+    useUi.setState({ sidebarTab: "files", sidebarCollapsed: false, maximized: false });
+    return;
+  }
   await useEditor.getState().open(pane.host, path, pane.key, line ? { line, col } : undefined);
 }
 
 /**
- * Ctrl+click (⌘-click on macOS) links: URLs (and OSC 8 hyperlinks) and file references like `src/App.tsx:42`,
- * resolved against the pane's working directory and opened in the editor.
+ * Links: file references like `src/App.tsx:42` (whole even when wrapped onto the next row),
+ * resolved against the pane's working directory, open beside the pane with a click (`plain()`:
+ * the desktop); URLs (and OSC 8 hyperlinks) with Ctrl+click (⌘-click on macOS).
  */
-function installLinks(term: Terminal, pane: () => PaneInfo) {
+function installLinks(term: Terminal, pane: () => PaneInfo, plain: () => boolean) {
   const withMod = (e: MouseEvent) => appMod(e);
   // URLs, whole even when wrapped across rows (by the terminal, or by the program itself).
   term.registerLinkProvider({
@@ -600,31 +616,38 @@ function installLinks(term: Terminal, pane: () => PaneInfo) {
   term.options.linkHandler = {
     allowNonHttpProtocols: true,
     activate: (e, uri) => {
-      if (!withMod(e)) return;
       const file = uri.match(/^file:\/\/[^/]*(\/.*)$/);
-      if (file) void openPath(pane(), decodeURIComponent(file[1]));
-      else openUrl(uri);
+      if (file && (plain() || withMod(e))) void openPath(pane(), decodeURIComponent(file[1]));
+      else if (!file && withMod(e)) openUrl(uri);
     },
   };
   term.registerLinkProvider({
     provideLinks(y, callback) {
-      const text = term.buffer.active.getLine(y - 1)?.translateToString(true) ?? "";
-      const refs = findPaths(text);
-      callback(
-        refs.length
-          ? refs.map((r) => ({
-              range: { start: { x: r.index + 1, y }, end: { x: r.index + r.length, y } },
-              text: text.slice(r.index, r.index + r.length),
-              decorations: { underline: true, pointerCursor: true },
-              activate: (e: MouseEvent) => {
-                if (withMod(e)) void openPath(pane(), r.path, r.line, r.col);
-              },
-            }))
-          : undefined,
-      );
+      const buf = term.buffer.active;
+      const first = Math.max(0, y - 1 - PATH_ROWS);
+      const rows: RowText[] = [];
+      for (let i = first; i <= Math.min(buf.length - 1, y - 1 + PATH_ROWS); i++) {
+        const line = buf.getLine(i);
+        rows.push({ text: line?.translateToString(false) ?? "", wrapped: line?.isWrapped ?? false });
+      }
+      const here = y - 1 - first;
+      const links = findPathSpans(rows, term.cols)
+        .filter((r) => r.start.row <= here && r.end.row >= here)
+        .map((r) => ({
+          range: { start: { x: r.start.col + 1, y: first + r.start.row + 1 }, end: { x: r.end.col + 1, y: first + r.end.row + 1 } },
+          text: r.path,
+          decorations: { underline: true, pointerCursor: true },
+          activate: (e: MouseEvent) => {
+            if (plain() || withMod(e)) void openPath(pane(), r.path, r.line, r.col);
+          },
+        }));
+      callback(links.length ? links : undefined);
     },
   });
 }
+
+/** How many rows either side a wrapped path may span. */
+const PATH_ROWS = 3;
 
 function MenuItem({ children, hint, onClick, disabled }: { children: React.ReactNode; hint?: string; onClick(): void; disabled?: boolean }) {
   return (

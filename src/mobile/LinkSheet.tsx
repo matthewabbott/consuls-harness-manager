@@ -5,8 +5,8 @@ import { Copy, ExternalLink, FileText } from "lucide-react";
 
 import { backend, inWebApp } from "../ipc/backend";
 import type { PaneInfo } from "../ipc/bindings/PaneInfo";
-import { resolveTyped } from "../lib/paths";
 import type { TappedLink } from "../term/linkAt";
+import { resolvePath } from "../term/links";
 import { useApp } from "../store/app";
 import { openPath } from "./files";
 import { Sheet, SheetAction } from "./Sheet";
@@ -50,8 +50,8 @@ export default function LinkSheet({ link, pane, onClose }: { link: TappedLink; p
       {link.kind === "path" && pane.currentPath && (
         <SheetAction
           onClick={() => {
-            const path = resolveTyped(link.path, pane.currentPath);
-            if (path) void openPath(pane.host, path, link.line ?? undefined);
+            const home = useApp.getState().hosts[pane.host]?.facts?.home;
+            void openPath(pane.host, resolvePath(link.path, pane.currentPath, home), link.line ?? undefined);
             onClose();
           }}
         >

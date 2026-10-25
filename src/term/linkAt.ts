@@ -1,7 +1,7 @@
-// The link under a tapped cell (the phone has no hover or modifier keys): a URL, whole even
-// when wrapped across rows, or a file reference on that row.
+// The link under a tapped cell (the phone has no hover or modifier keys): a URL or a file
+// reference, whole even when wrapped across rows.
 
-import { findPaths } from "./links";
+import { findPathSpans } from "./links";
 import { findUrls, type RowText } from "./urls";
 
 export type TappedLink = { kind: "url"; url: string } | { kind: "path"; path: string; line?: number; col?: number };
@@ -25,9 +25,8 @@ export function linkAt(buffer: Buffer, cols: number, x: number, y: number): Tapp
   for (const u of findUrls(rows, cols)) {
     if (before(u.start, { row: here, col: x }) && before({ row: here, col: x }, u.end)) return { kind: "url", url: u.url };
   }
-  const text = buffer.getLine(y)?.translateToString(true) ?? "";
-  for (const r of findPaths(text)) {
-    if (x >= r.index && x < r.index + r.length) return { kind: "path", path: r.path, line: r.line, col: r.col };
+  for (const r of findPathSpans(rows, cols)) {
+    if (before(r.start, { row: here, col: x }) && before({ row: here, col: x }, r.end)) return { kind: "path", path: r.path, line: r.line, col: r.col };
   }
   return null;
 }
