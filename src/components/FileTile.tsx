@@ -6,6 +6,7 @@ import { parentPath } from "../lib/paths";
 import { fileTarget } from "../lib/layoutTree";
 import { useEditor } from "../store/editor";
 import { useLayout } from "../store/layout";
+import { beginFileDrag, consumeJustDragged } from "../store/drag";
 import HotkeyBadge from "./HotkeyBadge";
 import { useRedact } from "../store/recording";
 
@@ -14,11 +15,14 @@ function FileTile({ id, home, showHost = false }: { id: string; home?: string | 
   const file = useEditor((s) => s.files[id]);
   const r = useRedact();
   if (!file) return null;
-  const open = () => useLayout.getState().show(fileTarget(id));
+  const open = () => {
+    if (!consumeJustDragged()) useLayout.getState().show(fileTarget(id));
+  };
   return (
     <article
       data-file={file.path}
       onClick={open}
+      onPointerDown={(e) => beginFileDrag(e, file.name, fileTarget(id))}
       className={`tile group relative cursor-pointer overflow-hidden rounded-xl border ${file.conflict !== undefined ? "border-ember-400/50" : "border-sky-400/25"}`}
     >
       <header className="flex h-10 items-center gap-2.5 px-3">

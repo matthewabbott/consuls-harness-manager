@@ -5,7 +5,9 @@ import { type Divider, type Rect, leaves, rects } from "../lib/layoutTree";
 import { useApp } from "../store/app";
 import { useEditor } from "../store/editor";
 import { fileOf, paneOf, useLayout } from "../store/layout";
+import { useDrag } from "../store/drag";
 import { useWindows } from "../store/windows";
+import DropHint from "./DropHint";
 import FileView from "./FileView";
 import PaneLeaf from "./PaneLeaf";
 import PickerLeaf from "./PickerLeaf";
@@ -43,6 +45,7 @@ export default function LayoutView({ onCompose }: { onCompose(): void }) {
   const panes = useApp((s) => s.panes);
   const files = useEditor((s) => s.files);
   const views = useWindows((s) => s.views);
+  const drop = useDrag((s) => s.drop);
   const area = useRef<HTMLDivElement>(null);
   const layout = useMemo(() => rects(root), [root]);
   const all = leaves(root);
@@ -105,6 +108,7 @@ export default function LayoutView({ onCompose }: { onCompose(): void }) {
             ) : (
               <Missing leafId={id} label={file ? "Opening the file…" : "Waiting for this pane (its machine may still be connecting)…"} />
             )}
+            {drop?.leaf === id && <DropHint edge={drop.edge} />}
           </div>
         );
       })}

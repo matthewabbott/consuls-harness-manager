@@ -23,6 +23,8 @@ import { startRecordingMode } from "./store/recording";
 import { useUi } from "./store/ui";
 import { applyFrames } from "./term/tiles";
 import Workspace from "./components/Workspace";
+import DropHint from "./components/DropHint";
+import { useDrag } from "./store/drag";
 import { useEditor } from "./store/editor";
 import { hotkeyAction } from "./lib/hotkeys";
 import { fileTarget, leafOf, leaves, paneTarget } from "./lib/layoutTree";
@@ -265,6 +267,7 @@ export default function App() {
         )}
         <Banners />
         {!ready ? <div className="flex-1" /> : grid ? <Grid /> : <Workspace />}
+        {grid && <GridDrop />}
       </main>
       <Notices />
       {newPaneFor !== undefined && <NewPaneDialog />}
@@ -326,4 +329,16 @@ function jumpTo(target: string) {
   if (!pane) return useApp.getState().notify("info", "That pane isn't here right now (closed, or its machine is offline).");
   backend().then((b) => b.ackPane(pane.key));
   layout.show(paneTarget(paneIdentity(pane)));
+}
+
+/** From the grid, a dragged tile can go to an edge of the splits (or be shown alone). */
+function GridDrop() {
+  const dragging = useDrag((s) => s.dragging);
+  const drop = useDrag((s) => s.drop);
+  if (!dragging) return null;
+  return (
+    <div data-layout-drop className="absolute inset-x-6 top-16 bottom-4 z-30 rounded-2xl ring-1 ring-sky-400/25 ring-dashed">
+      {drop?.leaf === null && <DropHint edge={drop.edge} />}
+    </div>
+  );
 }

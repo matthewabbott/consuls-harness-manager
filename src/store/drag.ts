@@ -1,7 +1,18 @@
-// Pointer-based dragging of tiles onto sidebar labels. (HTML5 drag-and-drop is swallowed by
-// the WebView's native file-drop handling on Windows, so we track pointers ourselves.)
+// Pointer-based dragging of tiles: panes onto sidebar labels, and panes and files into the
+// window's splits (an edge of a split, or of the whole area from the grid). (HTML5 drag-and-drop
+// is swallowed by the WebView's native file-drop handling on Windows, so we track pointers
+// ourselves.)
 
 import { create } from "zustand";
+
+import { type Edge, type Target, MAX_LEAVES, edgeAt, leaves } from "../lib/layoutTree";
+import { useLayout } from "./layout";
+
+/** Where a drag would land in the layout: an edge of leaf `leaf`, or of the whole area (null). */
+export interface LayoutDrop {
+  leaf: string | null;
+  edge: Edge;
+}
 
 interface DragState {
   /** Pane key being dragged (after the pointer moved far enough to count as a drag). */
@@ -11,6 +22,10 @@ interface DragState {
   y: number;
   /** Label id under the pointer, if any (drop targets carry `data-label-drop`). */
   over: string | null;
+  /** Something is being dragged (a pane or a file). */
+  dragging: boolean;
+  /** Where it would go in the layout (`data-leaf` / `data-layout-drop` targets). */
+  drop: LayoutDrop | null;
 }
 
 export const useDrag = create<DragState>(() => ({
@@ -19,6 +34,8 @@ export const useDrag = create<DragState>(() => ({
   x: 0,
   y: 0,
   over: null,
+  dragging: false,
+  drop: null,
 }));
 
 const THRESHOLD = 6;
@@ -33,9 +50,27 @@ export function consumeJustDragged(): boolean {
 
 /**
  * Starts tracking a potential drag of pane `key`. `onDrop(labelId)` runs if it's released over
- * a label drop target.
+ * a label drop target; over the layout, `target` goes where it was dropped.
  */
-export function beginTileDrag(e: React.PointerEvent, key: number, title: string, onDrop: (labelId: string) => void) {
+export function beginTileDrag(e: React.PointerEvent, key: number, title: string, onDrop: (labelId: string) => void, target?: Target) {
+  begin(e, key, title, onDrop, target);
+}
+
+/** Starts tracking a potential drag of an open file (into the layout only). */
+export function beginFileDrag(e: React.PointerEvent, title: string, target: Target) {
+  begin(e, null, title, () => {}, target);
+}
+
+function layoutDropAt(x: number, y: number, el: Element | null): LayoutDrop | null {
+  // With four splits already, a drop replaces what's there.
+  const full = leaves(useLayout.getState().root).length >= MAX_LEAVES;
+  const leaf = el?.closest<HTMLElement>("[data-leaf]");
+  if (leaf) return { leaf: leaf.dataset.leaf!, edge: full ? "center" : edgeAt(leaf.getBoundingClientRect(), x, y) };
+  const area = el?.closest<HTMLElement>("[data-layout-drop]");
+  return area ? { leaf: null, edge: full ? "center" : edgeAt(area.getBoundingClientRect(), x, y) } : null;
+}
+
+function begin(e: React.PointerEvent, key: number | null, title: string, onDrop: (labelId: string) => void, target?: Target) {
   if (e.button !== 0) return;
   const sx = e.clientX;
   const sy = e.clientY;
@@ -44,8 +79,10 @@ export function beginTileDrag(e: React.PointerEvent, key: number, title: string,
     if (!dragging && Math.hypot(ev.clientX - sx, ev.clientY - sy) < THRESHOLD) return;
     if (!dragging) document.body.style.userSelect = "none";
     dragging = true;
-    const target = document.elementFromPoint(ev.clientX, ev.clientY)?.closest<HTMLElement>("[data-label-drop]");
-    useDrag.setState({ key, title, x: ev.clientX, y: ev.clientY, over: target?.dataset.labelDrop ?? null });
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const label = key === null ? null : el?.closest<HTMLElement>("[data-label-drop]");
+    const drop = target && !label ? layoutDropAt(ev.clientX, ev.clientY, el) : null;
+    useDrag.setState({ key, title, x: ev.clientX, y: ev.clientY, over: label?.dataset.labelDrop ?? null, dragging: true, drop });
   };
   const up = () => {
     window.removeEventListener("pointermove", move);
@@ -53,11 +90,17 @@ export function beginTileDrag(e: React.PointerEvent, key: number, title: string,
     if (dragging) {
       document.body.style.userSelect = "";
       justDragged = true;
-      const over = useDrag.getState().over;
+      const { over, drop } = useDrag.getState();
       if (over) onDrop(over);
+      else if (drop && target) {
+        const layout = useLayout.getState();
+        // The whole area's center from the grid: show it alone (the splits it replaces can come back).
+        if (drop.leaf === null && drop.edge === "center") layout.show(target);
+        else layout.place(drop.leaf, drop.edge, target);
+      }
       setTimeout(() => (justDragged = false), 0);
     }
-    useDrag.setState({ key: null, over: null });
+    useDrag.setState({ key: null, over: null, dragging: false, drop: null });
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);

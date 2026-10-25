@@ -1,26 +1,30 @@
-import { Tag } from "lucide-react";
+import { Columns2, Tag } from "lucide-react";
 
 import { useApp } from "../store/app";
 import { useDrag } from "../store/drag";
 
-/** Floating chip that follows the pointer while a tile is dragged onto a label. */
+const PLACES = { left: "Split left", right: "Split right", top: "Split above", bottom: "Split below", center: "Show here" };
+
+/** Floating chip that follows the pointer while a tile is dragged onto a label or into the layout. */
 export default function DragGhost() {
-  const key = useDrag((s) => s.key);
+  const dragging = useDrag((s) => s.dragging);
   const title = useDrag((s) => s.title);
   const x = useDrag((s) => s.x);
   const y = useDrag((s) => s.y);
   const over = useDrag((s) => s.over);
+  const drop = useDrag((s) => s.drop);
   const overName = useApp((s) => s.config.labels.find((l) => l.id === over)?.name);
-  if (key === null) return null;
+  if (!dragging) return null;
+  const where = drop && (drop.leaf === null && drop.edge === "center" ? "Show alone" : PLACES[drop.edge]);
   return (
     <div
       className={`pointer-events-none fixed z-[60] flex max-w-60 items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium shadow-2xl ring-1 ${
-        over ? "bg-sky-400/90 text-ink-950 ring-sky-300" : "bg-ink-700/95 text-mist-100 ring-ink-500"
+        over || drop ? "bg-sky-400/90 text-ink-950 ring-sky-300" : "bg-ink-700/95 text-mist-100 ring-ink-500"
       }`}
       style={{ left: x + 12, top: y + 8 }}
     >
-      <Tag className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">{overName ? `Tag as ${overName}` : title}</span>
+      {where ? <Columns2 className="h-3.5 w-3.5 shrink-0" /> : <Tag className="h-3.5 w-3.5 shrink-0" />}
+      <span className="truncate">{overName ? `Tag as ${overName}` : where ? `${where}: ${title}` : title}</span>
     </div>
   );
 }

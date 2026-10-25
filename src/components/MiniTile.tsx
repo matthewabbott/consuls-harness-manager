@@ -9,7 +9,8 @@ import { useApp } from "../store/app";
 import { beginTileDrag, consumeJustDragged } from "../store/drag";
 import { useRecording, useRedact } from "../store/recording";
 import { resolveLabels } from "../lib/labels";
-import { displayTitle, isDirect, paneWhere } from "../lib/panes";
+import { displayTitle, isDirect, paneIdentity, paneWhere } from "../lib/panes";
+import { paneTarget } from "../lib/layoutTree";
 import { paintTile } from "../term/tilePainter";
 import { getTile, subscribeTile } from "../term/tiles";
 import HarnessBadge from "./HarnessBadge";
@@ -86,9 +87,15 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
       data-pane={pane.key}
       onClick={open}
       onPointerDown={(e) =>
-        beginTileDrag(e, pane.key, title, (labelId) => {
-          if (!pane.labels.includes(labelId)) backend().then((b) => b.setPaneLabels(pane.key, [...pane.labels, labelId]));
-        })
+        beginTileDrag(
+          e,
+          pane.key,
+          title,
+          (labelId) => {
+            if (!pane.labels.includes(labelId)) backend().then((b) => b.setPaneLabels(pane.key, [...pane.labels, labelId]));
+          },
+          paneTarget(paneIdentity(pane)),
+        )
       }
       onContextMenu={(e) => {
         e.preventDefault();
