@@ -455,6 +455,17 @@ shell built as an iPhone app. See README.md.
   `harness::bell_pings(@chm_bell, current_command)`; attention rate-limits to one per 15 s and
   never marks the pane as hooked.
 
+## Chimes
+
+- Chimes never queue up (`alerts.rs` `Schedule`): at most two of each kind per pane are waiting
+  or playing, and more are dropped. A pane's chimes play back to back; different panes' overlap,
+  with starts at least 150 ms apart. Alerts without a pane (summaries, Settings' tests) are a
+  pane of their own.
+- The audio thread opens the default device for a burst and mixes each chime in with a leading
+  delay, rendered at the device's rate (rodio resamples in pieces of ≤ 32768 samples, and a seam
+  inside a chime can click). The device closes 5 s after the last chime ends, or reopens when its
+  stream fails.
+
 ## Testing
 
 - Core end-to-end: `cargo run -p chm-core --example selftest -- <host> <user>` (private tmux
