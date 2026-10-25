@@ -108,6 +108,8 @@ export interface Backend {
   createLabel(name: string, color: string): Promise<LabelDef>;
   updateLabel(label: LabelDef): Promise<void>;
   deleteLabel(id: string): Promise<void>;
+  /** Puts the labels in this order (shared with every device, like the labels themselves). */
+  reorderLabels(ids: string[]): Promise<void>;
   setPaneLabels(key: number, labels: string[]): Promise<void>;
   /** Name a pane (shown in Consuls only); null (or blank) clears it. */
   renamePane(key: number, name: string | null): Promise<void>;
@@ -235,6 +237,7 @@ export function commands(call: Call) {
     createLabel: (name: string, color: string) => call<LabelDef>("create_label", { name, color }),
     updateLabel: (label: LabelDef) => call<void>("update_label", { label }),
     deleteLabel: (id: string) => call<void>("delete_label", { id }),
+    reorderLabels: (ids: string[]) => call<void>("reorder_labels", { ids }),
     setPaneLabels: (key: number, labels: string[]) => call<void>("set_pane_labels", { key, labels }),
     renamePane: (key: number, name: string | null) => call<void>("rename_pane", { key, name }),
     tmuxOp: (key: number, op: TmuxOp) => call<number | null>("tmux_op", { key, op }),

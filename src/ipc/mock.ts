@@ -481,6 +481,11 @@ export function mockBackend(): Backend {
       for (const p of panes) if (p.info.labels.includes(id)) p.info = { ...p.info, labels: p.info.labels.filter((l) => l !== id) };
       new Set(panes.map((p) => p.info.host)).forEach(emitPanes);
     },
+    reorderLabels: async (ids) => {
+      const rank = (id: string) => (ids.includes(id) ? ids.indexOf(id) : ids.length + config.labels.findIndex((l) => l.id === id));
+      config.labels = [...config.labels].sort((a, b) => rank(a.id) - rank(b.id));
+      emitConfig();
+    },
     setPaneBell: async (key, bell) => {
       const p = panes.find((p) => p.info.key === key);
       if (!p) return;

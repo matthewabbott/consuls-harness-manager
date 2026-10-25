@@ -1,23 +1,42 @@
 import { Check, Pencil, Plus, Tag, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { backend } from "../ipc/backend";
 import type { LabelDef } from "../ipc/bindings/LabelDef";
 import { LABEL_COLORS, nextColor } from "../lib/labels";
+import { movesIt, moveToGap } from "../lib/reorder";
+import { useLabelOrder } from "../lib/useLabelOrder";
 import { useApp } from "../store/app";
-import { useDrag } from "../store/drag";
+import { beginReorderDrag, consumeJustDragged, useDrag } from "../store/drag";
 
-/** Sidebar section: labels like folders, with counts; click to filter, drop a tile to tag it. */
+/** Sidebar section: labels like folders, with counts; click to filter, drop a tile to tag it,
+ * drag a label to move it in the order (shared with every device, like the labels). */
 export default function LabelsPanel() {
-  const labels = useApp((s) => s.config.labels);
+  const [labels, reorder] = useLabelOrder();
   const panes = useApp((s) => s.panes);
   const focusLabel = useApp((s) => s.focusLabel);
   const [creating, setCreating] = useState(false);
+  const ids = labels.map((l) => l.id);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{ id: string; gap: number } | null>(null);
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const p of Object.values(panes).flat()) for (const l of p.labels) c[l] = (c[l] ?? 0) + 1;
     return c;
   }, [panes]);
+
+  const startDrag = (e: React.PointerEvent, id: string) => {
+    if ((e.target as HTMLElement).closest("button, input, form")) return;
+    beginReorderDrag(
+      e,
+      listRef.current,
+      (gap) => setDrag(gap === null ? null : { id, gap }),
+      (gap) => {
+        if (movesIt(ids, id, gap)) reorder(moveToGap(ids, id, gap));
+      },
+    );
+  };
+  const line = (gap: number) => drag !== null && drag.gap === gap && movesIt(ids, drag.id, gap);
 
   return (
     <div>
@@ -27,9 +46,13 @@ export default function LabelsPanel() {
           <Plus className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="space-y-0.5">
-        {labels.map((l) => (
-          <LabelRow key={l.id} label={l} count={counts[l.id] ?? 0} active={focusLabel === l.id} />
+      <div ref={listRef} className="space-y-0.5">
+        {labels.map((l, i) => (
+          <div key={l.id} data-reorder={l.id} className="relative">
+            {line(i) && <InsertLine at="top" />}
+            <LabelRow label={l} count={counts[l.id] ?? 0} active={focusLabel === l.id} dragging={drag?.id === l.id} onPointerDown={(e) => startDrag(e, l.id)} />
+            {i === labels.length - 1 && line(labels.length) && <InsertLine at="bottom" />}
+          </div>
         ))}
         {creating && <LabelEditor onDone={() => setCreating(false)} />}
         {labels.length === 0 && !creating && (
@@ -42,7 +65,24 @@ export default function LabelsPanel() {
   );
 }
 
-function LabelRow({ label, count, active }: { label: LabelDef; count: number; active: boolean }) {
+/** Where a dragged label would land. */
+function InsertLine({ at }: { at: "top" | "bottom" }) {
+  return <div className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-sky-400 ${at === "top" ? "-top-[2px]" : "-bottom-[2px]"}`} />;
+}
+
+function LabelRow({
+  label,
+  count,
+  active,
+  dragging,
+  onPointerDown,
+}: {
+  label: LabelDef;
+  count: number;
+  active: boolean;
+  dragging: boolean;
+  onPointerDown(e: React.PointerEvent): void;
+}) {
   const [editing, setEditing] = useState(false);
   const over = useDrag((s) => s.over === label.id);
 
@@ -50,9 +90,14 @@ function LabelRow({ label, count, active }: { label: LabelDef; count: number; ac
   return (
     <div
       data-label-drop={label.id}
-      onClick={() => useApp.getState().setFocusLabel(active ? null : label.id)}
+      title="Click to show only these panes; drag to reorder"
+      onPointerDown={onPointerDown}
+      onClick={() => {
+        if (consumeJustDragged()) return;
+        useApp.getState().setFocusLabel(active ? null : label.id);
+      }}
       className={`group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 transition-colors ${
-        over ? "bg-sky-400/15 ring-1 ring-sky-400/50" : active ? "bg-ink-700/80" : "hover:bg-ink-750"
+        over ? "bg-sky-400/15 ring-1 ring-sky-400/50" : dragging ? "bg-ink-750 opacity-60" : active ? "bg-ink-700/80" : "hover:bg-ink-750"
       }`}
     >
       <Tag className="h-3.5 w-3.5 shrink-0" style={{ color: label.color }} />

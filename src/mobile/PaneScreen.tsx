@@ -1,4 +1,4 @@
-import { ALargeSmall, ArrowUpDown, Bell, ChevronLeft, Copy, Eye, EyeOff, FolderOpen, Minus, MoreHorizontal, Pencil, Plus, Power, Search, X } from "lucide-react";
+import { ALargeSmall, ArrowUpDown, Bell, ChevronLeft, Copy, Eye, EyeOff, FolderOpen, Minus, MoreHorizontal, Pencil, Plus, Power, Search, Tag, X } from "lucide-react";
 import type { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 
@@ -20,6 +20,8 @@ import CopySheet from "./CopySheet";
 import { useFilesScreen } from "./files";
 import FindBar, { type FindResult } from "./FindBar";
 import PaneTitle, { type TitleMode } from "./PaneTitle";
+import LabelChips from "./LabelChips";
+import LabelSheet from "./LabelSheet";
 import LinkSheet from "./LinkSheet";
 import ScrollSheet, { LINE_KEYS, scrollsByLines, setScrollsByLines } from "./ScrollSheet";
 import { MATCH_DECORATIONS } from "../term/find";
@@ -69,7 +71,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
   const [sizeBar, setSizeBar] = useState(false);
   const [holds, setHolds] = useState<Holds>(NO_HOLDS);
   const [typing, setTyping] = useState(false);
-  const [menu, setMenu] = useState<"actions" | "scrolling" | null>(null);
+  const [menu, setMenu] = useState<"actions" | "scrolling" | "labels" | null>(null);
   // How a drag scrolls a full-screen program here: pages, or lines (irssi with bindings).
   const [lineScroll, setLineScroll] = useState(() => scrollsByLines(id));
   const lineScrollRef = useRef(lineScroll);
@@ -515,6 +517,10 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           >
             <Pencil className="h-5 w-5 text-mist-400" /> Rename
           </SheetAction>
+          <SheetAction onClick={() => setMenu("labels")}>
+            <Tag className="h-5 w-5 text-mist-400" /> Labels…
+            <LabelChips ids={pane.labels} className="ml-auto min-w-0 justify-end" />
+          </SheetAction>
           {pane.currentPath && (
             <SheetAction
               onClick={() => {
@@ -575,6 +581,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
           )}
         </Sheet>
       )}
+      {menu === "labels" && <LabelSheet pane={pane} onClose={() => setMenu(null)} />}
       {copying && termRef.current?.term && (
         <CopySheet term={termRef.current.term} pane={pane} query={finding ? query : ""} onClose={() => setCopying(false)} />
       )}

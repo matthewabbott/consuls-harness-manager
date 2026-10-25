@@ -77,8 +77,11 @@ const SEP_STR: &str = crate::tmux::formats::SEP;
 /// per pane, named `chm-<pane id>`. Never `%*` (all panes): in tmux <= 3.6 its timer
 /// dereferences the client's session, which is NULL for a moment after that session is
 /// destroyed (e.g. its last pane closed), and the whole server crashes (fixed in 3.7).
+///
+/// They also carry the stamp of the server's shared label definitions (a global option, the
+/// same in every pane's): another device changing them shows up here within a second.
 const SUB_PREFIX: &str = "chm-";
-const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{@chm_notify}|~|#{@chm_seen}|~|#{pane_title}";
+const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hidden}|~|#{@chm_labels}|~|#{@chm_bell}|~|#{@chm_name}|~|#{@chm_notify}|~|#{@chm_seen}|~|#{=16:@chm_label_defs}|~|#{pane_title}";
 
 /// `@chm_seen` is written at most this often per pane.
 const SEEN_EVERY: Duration = Duration::from_secs(5);
@@ -142,6 +145,12 @@ pub(crate) struct TmuxManager {
     assets: Option<Assets>,
     /// Last hook event per pane, to drop duplicates (per-launch + global hooks both firing).
     last_hook: HashMap<PaneId, (String, u64)>,
+    /// The server's `@chm_label_defs` as last read or written (`None`: not read yet).
+    labels_seen: Option<String>,
+    /// The shared labels' revision this server was last brought up to.
+    labels_rev: u64,
+    /// A subscription showed `@chm_label_defs` changed: read it on the next tick.
+    labels_due: bool,
 }
 
 impl TmuxManager {
@@ -171,6 +180,9 @@ impl TmuxManager {
             home: None,
             assets: None,
             last_hook: HashMap::new(),
+            labels_seen: None,
+            labels_rev: 0,
+            labels_due: false,
         };
         (mgr, events_rx)
     }
@@ -259,6 +271,41 @@ impl TmuxManager {
             }
         }
         self.relist().await;
+        // (Re)attached, maybe to a server that restarted.
+        self.sync_labels().await;
+    }
+
+    /// Shares label definitions with this server: merges in what it holds (read afresh, so a
+    /// change another device made a moment ago isn't written over), then gives it ours if it
+    /// holds anything less.
+    async fn sync_labels(&mut self) {
+        let Some(client) = self.any_client() else { return };
+        // Tried once per change; after a failure, the next change or discovery tries again.
+        self.labels_rev = self.ctx.labels.lock().unwrap().rev;
+        match client.command(&format!("show-options -gqv {}", crate::labels::OPTION)).await {
+            Ok(reply) => {
+                let raw = reply.text().trim().to_string();
+                self.ctx.absorb_labels(&raw);
+                self.labels_seen = Some(raw);
+            }
+            Err(e) => {
+                debug!(host = %self.host, "couldn't read the shared labels: {e}");
+                return;
+            }
+        }
+        let (set, encoded) = {
+            let shared = self.ctx.labels.lock().unwrap();
+            self.labels_rev = shared.rev;
+            (shared.set.clone(), shared.encoded.clone())
+        };
+        let seen = self.labels_seen.clone().unwrap_or_default();
+        if crate::labels::needs_write(&seen, &set, crate::labels::now_ms()) {
+            let line = format!("set-option -g {} {}", crate::labels::OPTION, quote(&encoded));
+            match client.command(&line).await {
+                Ok(_) => self.labels_seen = Some(encoded),
+                Err(e) => warn!(host = %self.host, "couldn't share labels: {e}"),
+            }
+        }
     }
 
     /// Re-reads every pane from tmux and reconciles our registry.
@@ -535,7 +582,7 @@ impl TmuxManager {
                 self.seed(pane).await;
             }
             ClientEvent::Tmux(Event::SubscriptionChanged { name, pane: Some(pane), value }) if name.starts_with(SUB_PREFIX) => {
-                let mut parts = value.splitn(9, crate::tmux::formats::SEP);
+                let mut parts = value.splitn(10, crate::tmux::formats::SEP);
                 let cmd = parts.next().unwrap_or_default().to_string();
                 let alt = parts.next() == Some("1");
                 let hidden = parts.next() == Some("1");
@@ -544,6 +591,10 @@ impl TmuxManager {
                 let name = parts.next().filter(|n| !n.is_empty()).map(str::to_string);
                 let notify = NotifyMode::parse(parts.next().unwrap_or_default());
                 let seen = parts.next().and_then(|s| s.trim().parse().ok());
+                let label_stamp = parts.next().unwrap_or_default();
+                if self.labels_seen.as_deref().map(crate::labels::stamp) != Some(label_stamp) {
+                    self.labels_due = true;
+                }
                 let title = parts.next().unwrap_or_default().to_string();
                 let mut reseed = false;
                 if let Some(p) = self.panes.get_mut(&pane)
@@ -616,6 +667,10 @@ impl TmuxManager {
             self.relist().await;
         }
         self.write_seen().await;
+        if self.labels_due || self.labels_rev != self.ctx.labels.lock().unwrap().rev {
+            self.labels_due = false;
+            self.sync_labels().await;
+        }
         if self.publish_due {
             self.publish();
         }
@@ -1349,6 +1404,15 @@ mod tests {
         }
     }
     use super::{chunk_str, sanitize_name};
+
+    #[test]
+    fn subscriptions_carry_the_label_stamp() {
+        let field = format!("#{{={}:{}}}", crate::labels::STAMP_LEN, crate::labels::OPTION);
+        assert!(super::SUB_FORMAT.contains(&field), "{field}");
+        // Ten fields, the title last (it's the only one that may contain the separator).
+        assert_eq!(super::SUB_FORMAT.split(crate::tmux::formats::SEP).count(), 10);
+        assert!(super::SUB_FORMAT.ends_with("#{pane_title}"));
+    }
 
     #[test]
     fn names_are_sanitized() {

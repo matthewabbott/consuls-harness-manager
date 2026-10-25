@@ -343,6 +343,11 @@ pub fn delete_label(state: State<'_, AppState>, id: String) {
 }
 
 #[tauri::command]
+pub fn reorder_labels(state: State<'_, AppState>, ids: Vec<String>) {
+    state.core.reorder_labels(ids);
+}
+
+#[tauri::command]
 pub fn set_pane_labels(state: State<'_, AppState>, key: u32, labels: Vec<String>) {
     state.core.set_pane_labels(key, labels);
 }

@@ -1,11 +1,12 @@
-// Pointer-based dragging of tiles: panes onto sidebar labels, and panes and files into the
-// window's splits (an edge of a split, or of the whole area from the grid). (HTML5 drag-and-drop
-// is swallowed by the WebView's native file-drop handling on Windows, so we track pointers
-// ourselves.)
+// Pointer-based dragging: tiles onto sidebar labels, panes and files into the window's splits
+// (an edge of a split, or of the whole area from the grid), and rows within a list (labels).
+// (HTML5 drag-and-drop is swallowed by the WebView's native file-drop handling on Windows, so we
+// track pointers ourselves.)
 
 import { create } from "zustand";
 
 import { type Edge, type Target, MAX_LEAVES, edgeAt, leaves } from "../lib/layoutTree";
+import { dropGap } from "../lib/reorder";
 import { useLayout } from "./layout";
 
 /** Where a drag would land in the layout: an edge of leaf `leaf`, or of the whole area (null). */
@@ -104,4 +105,69 @@ function begin(e: React.PointerEvent, key: number | null, title: string, onDrop:
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
+}
+
+/**
+ * Starts tracking a potential drag of a row to another place in its list. The rows are the
+ * elements inside `list` carrying `data-reorder`, top to bottom. `onGap` follows the pointer
+ * with the gap the row would land in (0 = before the first row), and gets `null` when the drag
+ * ends; `onDrop(gap)` runs on release. Escape cancels, and the click that follows a drag is
+ * swallowed (`consumeJustDragged`). A drag handle (touch) passes a small `threshold`.
+ */
+export function beginReorderDrag(
+  e: React.PointerEvent,
+  list: HTMLElement | null,
+  onGap: (gap: number | null) => void,
+  onDrop: (gap: number) => void,
+  threshold = THRESHOLD,
+) {
+  if (e.button !== 0 || !list) return;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  const pointer = e.pointerId;
+  let dragging = false;
+  let cancelled = false;
+  let gap: number | null = null;
+  const rows = () => [...list.querySelectorAll<HTMLElement>("[data-reorder]")].map((el) => el.getBoundingClientRect());
+  const move = (ev: PointerEvent) => {
+    if (ev.pointerId !== pointer || cancelled) return;
+    if (!dragging && Math.hypot(ev.clientX - sx, ev.clientY - sy) < threshold) return;
+    if (!dragging) {
+      document.body.style.userSelect = "none";
+      document.body.style.cursor = "grabbing";
+    }
+    dragging = true;
+    gap = dropGap(ev.clientY, rows());
+    onGap(gap);
+  };
+  const stop = () => {
+    document.body.style.userSelect = "";
+    document.body.style.cursor = "";
+    onGap(null);
+  };
+  const finish = (drop: boolean) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancel);
+    window.removeEventListener("keydown", key, true);
+    if (!dragging) return;
+    if (!cancelled) stop();
+    justDragged = true;
+    setTimeout(() => (justDragged = false), 0);
+    if (drop && !cancelled && gap !== null) onDrop(gap);
+  };
+  const up = (ev: PointerEvent) => ev.pointerId === pointer && finish(true);
+  const cancel = (ev: PointerEvent) => ev.pointerId === pointer && finish(false);
+  // Escape drops nothing; the button's release (and its click) are still ours.
+  const key = (ev: KeyboardEvent) => {
+    if (ev.key !== "Escape" || !dragging || cancelled) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    cancelled = true;
+    stop();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+  window.addEventListener("pointercancel", cancel);
+  window.addEventListener("keydown", key, true);
 }

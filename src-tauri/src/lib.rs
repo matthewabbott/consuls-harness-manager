@@ -214,6 +214,7 @@ pub fn run() {
             commands::create_label,
             commands::update_label,
             commands::delete_label,
+            commands::reorder_labels,
             commands::set_pane_labels,
             commands::rename_pane,
             commands::resize_pane,

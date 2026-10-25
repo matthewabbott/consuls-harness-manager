@@ -7,7 +7,8 @@ import type { UiPrefs } from "./UiPrefs";
 
 export type AppConfig = { hosts: Array<HostConfig>, sound: SoundPrefs, 
 /**
- * Label definitions; panes reference them by `id` (stored in tmux as `@chm_labels`).
+ * Label definitions in the user's order; panes reference them by `id` (stored in tmux as
+ * `@chm_labels`). Shared with other devices through the machines (see `crate::labels`).
  */
 labels: Array<LabelDef>, ui: UiPrefs, 
 /**

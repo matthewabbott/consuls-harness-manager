@@ -27,7 +27,7 @@ use crate::harness::Harness;
 use crate::local::{self, LOCAL_HOST, LocalShell};
 use crate::model::{
     AppConfig, CoreEvent, CoreSnapshot, DirListing, FocusState, HostConfig, HostId, HostPhase, LabelDef, NewPaneSpec, NoticeLevel,
-    ResizeOutcome, SoundPrefs, TailnetStatus, TerminateOutcome, UiPrefs, label_slug,
+    ResizeOutcome, SoundPrefs, TailnetStatus, TerminateOutcome, UiPrefs,
 };
 
 /// Loads config.json. A file that exists but can't be parsed is set aside (never silently
@@ -119,7 +119,7 @@ impl Core {
             .and_then(|b| serde_json::from_slice(&b).map_err(|e| warn!("ui-state.json is unreadable ({e}); starting afresh")).ok())
             .unwrap_or_default();
         Arc::new(Self {
-            ctx: Arc::new(Ctx::new(sink, known_hosts)),
+            ctx: Arc::new(Ctx::new(sink, known_hosts, crate::labels::LabelSet::from_config(&config.labels, &config.label_sync))),
             opts,
             git_inflight: Mutex::new(HashMap::new()),
             data_dir,
@@ -146,6 +146,15 @@ impl Core {
         if self.opts.local {
             self.start_local(&rt);
         }
+
+        // Label changes another device left on a machine go into our config.
+        let core = self.clone();
+        rt.spawn(async move {
+            loop {
+                core.ctx.labels_changed.notified().await;
+                core.save_labels();
+            }
+        });
 
         // Tailnet first, so host actors can resolve addresses and pinned keys. Learned from a
         // machine instead, it's there once one connects: asked every 5 s until then.
@@ -541,42 +550,48 @@ impl Core {
         self.save_config();
     }
 
-    /// Creates a label (id derived from the name, made unique) and returns it.
-    pub fn create_label(&self, name: &str, color: &str) -> LabelDef {
-        let label = {
+    /// The shared labels into the config (saved, and emitted as Config), if they differ.
+    fn save_labels(&self) {
+        let (labels, sync) = self.ctx.labels.lock().unwrap().set.to_config();
+        {
             let mut config = self.config.lock().unwrap();
-            let base = label_slug(name);
-            let mut id = base.clone();
-            let mut n = 2;
-            while config.labels.iter().any(|l| l.id == id) {
-                id = format!("{base}-{n}");
-                n += 1;
+            if config.labels == labels && config.label_sync == sync {
+                return;
             }
-            let label = LabelDef { id, name: name.trim().to_string(), color: color.to_string() };
-            config.labels.push(label.clone());
-            label
-        };
+            config.labels = labels;
+            config.label_sync = sync;
+        }
         self.save_config();
+    }
+
+    /// Creates a label (id derived from the name, unique among live labels), last in the
+    /// order, and returns it. Every connected machine gets it, and from there other devices.
+    pub fn create_label(&self, name: &str, color: &str) -> LabelDef {
+        let (label, _) = self.ctx.edit_labels(|set, now| set.create(name, color, now));
+        self.save_labels();
         label
     }
 
     /// Renames/recolours a label (its id never changes).
     pub fn update_label(&self, label: LabelDef) {
-        {
-            let mut config = self.config.lock().unwrap();
-            match config.labels.iter_mut().find(|l| l.id == label.id) {
-                Some(l) => *l = label,
-                None => return,
-            }
+        if self.ctx.edit_labels(|set, now| set.update(&label.id, &label.name, &label.color, now)).1 {
+            self.save_labels();
         }
-        self.save_config();
+    }
+
+    /// Puts the labels in this order (ids it leaves out keep their places after).
+    pub fn reorder_labels(&self, ids: Vec<String>) {
+        if self.ctx.edit_labels(|set, now| set.reorder(&ids, now)).1 {
+            self.save_labels();
+        }
     }
 
     /// Deletes a label definition and removes it from every pane that has it (panes on
     /// offline hosts keep the stale id; the UI shows unknown ids muted).
     pub fn delete_label(&self, id: &str) {
-        self.config.lock().unwrap().labels.retain(|l| l.id != id);
-        self.save_config();
+        if self.ctx.edit_labels(|set, now| set.delete(id, now)).1 {
+            self.save_labels();
+        }
         let affected: Vec<(u32, Vec<String>)> = self
             .ctx
             .panes

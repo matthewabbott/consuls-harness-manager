@@ -169,8 +169,12 @@ pub struct HostState {
 pub struct AppConfig {
     pub hosts: Vec<HostConfig>,
     pub sound: SoundPrefs,
-    /// Label definitions; panes reference them by `id` (stored in tmux as `@chm_labels`).
+    /// Label definitions in the user's order; panes reference them by `id` (stored in tmux as
+    /// `@chm_labels`). Shared with other devices through the machines (see `crate::labels`).
     pub labels: Vec<LabelDef>,
+    /// The rest of what label sharing needs: tombstones and the order's time.
+    #[ts(skip)]
+    pub label_sync: LabelSync,
     pub ui: UiPrefs,
     /// Phone pushes (used by the Consuls server's core, which sends them).
     pub notify: NotifyPrefs,
@@ -238,6 +242,22 @@ pub struct LabelDef {
     pub name: String,
     /// CSS colour, e.g. `#f5a25d`.
     pub color: String,
+    /// When it was created, renamed or recoloured (unix ms; 0 for labels from before they
+    /// were shared). The newest version wins when devices' definitions meet.
+    #[serde(default)]
+    #[ts(skip)]
+    pub updated: u64,
+}
+
+/// Label sharing's bookkeeping, kept with the labels in config.json (see `crate::labels`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LabelSync {
+    /// Deleted label id → when (unix ms), so other devices learn of the delete.
+    pub deleted: std::collections::BTreeMap<String, u64>,
+    /// The order the user put the labels in (ids), and when (unix ms).
+    pub order: Vec<String>,
+    pub order_updated: u64,
 }
 
 /// Turns a label name into a stable id: lowercase ASCII letters/digits and dashes.

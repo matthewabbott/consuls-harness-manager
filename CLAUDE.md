@@ -483,6 +483,32 @@ shell built as an iPhone app. See README.md.
   `C:/…` literally, spaces and all) and is shell-quoted otherwise if it has spaces (Codex
   splits those like a shell): `harness::pasted_path`, `pastedPath` in the UI.
 
+## Labels
+
+- Panes carry label ids in `@chm_labels` (tmux) or in memory (plain shells). The definitions
+  (id = slug fixed at creation, name, colour) and their order are shared by every device through
+  the machines: `crate::labels` (pure; unit tests for the merge).
+  - Each core keeps its copy in config.json: `AppConfig.labels` (live labels in order; what the
+    UI reads, so everything listing labels follows the order) and `label_sync` (tombstones,
+    the order and its time; not in the TS type). The working set is `Ctx::labels`.
+  - Every connected tmux server holds the merged set in the global user option
+    `@chm_label_defs`: `<16 hex FNV stamp><base64url JSON>`. Each pane's subscription carries
+    `#{=16:@chm_label_defs}` (not a session-wide subscription: its timer reads the client's
+    session, like `%*`'s), so a change shows up within a second; the manager then reads it (`show-options -gqv`), merges
+    (`Ctx::absorb_labels` → the core saves its config), and writes the merge back where a
+    server holds less (`TmuxManager::sync_labels`, also on every discover and after local edits).
+  - Merge: per label newest `updated` (ms) wins, a delete is a tombstone (kept 30 days); the
+    order is one value with its own time, newest wins, labels it doesn't list follow by id.
+    Ties go by content, so devices converge; edits are timed after what they replace. A
+    tombstone near expiry doesn't count as a difference (clock skew can't ping-pong writes).
+  - Machines without tmux (direct panes only) take no part; config.json alone keeps labels.
+- Desktop: drag a label in the sidebar's Labels to reorder (`beginReorderDrag` in
+  `store/drag.ts`, `lib/reorder.ts`, `lib/useLabelOrder.ts` shows the order until the Config
+  event confirms it).
+- Phone: chips on each row, a chip bar on the list (By label grouping; a label shown alone),
+  kept per device in `uiStorage`; ⋯ → Labels… on a pane (`LabelSheet`); Settings → Labels
+  (`LabelSettings`: create, rename, recolour, delete asking in place, drag handles to reorder).
+
 ## Bells
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
@@ -511,6 +537,8 @@ shell built as an iPhone app. See README.md.
 - This PC tmux: `cargo run -p chm-core --example localtmux` (Cygwin, or the native tmux on
   macOS/Linux; private socket, scratch state dir). For the real app, start it with
   `CHM_TMUX_SOCKET=<private>` (and, on Windows, run `scripts/e2e/local-tmux.mjs`).
+- Label sharing: `cargo run -p chm-core --example labelsync` (macOS/Linux: two cores with
+  scratch configs on one private tmux server; edits both ways, a third device, a server restart).
 - Real UI end-to-end (Windows only: WebView2's DevTools protocol): start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,

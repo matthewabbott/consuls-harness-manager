@@ -204,6 +204,10 @@ pub async fn call(d: &Daemon, method: &str, p: Value) -> Result<Value, Value> {
             core.delete_label(&arg::<String>(&p, "id")?);
             DONE
         }
+        "reorder_labels" => {
+            core.reorder_labels(arg(&p, "ids")?);
+            DONE
+        }
         "set_pane_labels" => {
             core.set_pane_labels(key()?, arg(&p, "labels")?);
             DONE

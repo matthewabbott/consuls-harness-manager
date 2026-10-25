@@ -7,6 +7,7 @@ pub mod fs;
 pub mod harness;
 pub mod hub;
 pub mod integration;
+pub mod labels;
 pub mod link;
 pub mod local;
 pub mod model;

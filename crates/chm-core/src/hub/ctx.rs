@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::attention::{AttentionBook, PaneLabel, Signal};
+use crate::labels::{self, LabelSet};
 use crate::model::{Alert, CoreEvent, FocusState, HostFacts, HostId, HostPhase, HostState, NoticeLevel, PaneInfo, TailnetStatus};
 use crate::ssh::hostkeys::KnownHosts;
 
@@ -18,6 +19,15 @@ pub trait Sink: Send + Sync + 'static {
 
 /// (host, tmux server start time, tmux pane id) → app-wide pane key, plus the next key.
 type PaneKeys = (HashMap<(HostId, u64, u32), u32>, u32);
+
+/// The label definitions shared through the machines (see [`crate::labels`]).
+pub(crate) struct SharedLabels {
+    pub set: LabelSet,
+    /// `set` as the tmux option holds it.
+    pub encoded: String,
+    /// Bumped on every change: each tmux manager then makes sure its server has it.
+    pub rev: u64,
+}
 
 pub(crate) struct Ctx {
     pub sink: Arc<dyn Sink>,
@@ -36,10 +46,14 @@ pub(crate) struct Ctx {
     pub attention: Mutex<AttentionBook>,
     /// Panes the UI has expanded; survives reconnects so the expanded view resumes.
     pub streaming: Mutex<HashSet<u32>>,
+    pub labels: Mutex<SharedLabels>,
+    /// A machine brought label changes: the core saves them to its config.
+    pub labels_changed: tokio::sync::Notify,
 }
 
 impl Ctx {
-    pub fn new(sink: Arc<dyn Sink>, known_hosts: Arc<KnownHosts>) -> Self {
+    pub fn new(sink: Arc<dyn Sink>, known_hosts: Arc<KnownHosts>, labels: LabelSet) -> Self {
+        let labels = labels.pruned(labels::now_ms());
         Self {
             sink,
             known_hosts,
@@ -52,6 +66,33 @@ impl Ctx {
             pane_keys: Mutex::new((HashMap::new(), 1)),
             attention: Mutex::new(AttentionBook::default()),
             streaming: Mutex::new(HashSet::new()),
+            labels: Mutex::new(SharedLabels { encoded: labels.encode(), set: labels, rev: 0 }),
+            labels_changed: tokio::sync::Notify::new(),
+        }
+    }
+
+    /// Changes the shared labels; returns `f`'s result and whether anything changed.
+    pub fn edit_labels<R>(&self, f: impl FnOnce(&mut LabelSet, u64) -> R) -> (R, bool) {
+        let now = labels::now_ms();
+        let mut shared = self.labels.lock().unwrap();
+        let mut set = shared.set.clone();
+        let out = f(&mut set, now);
+        let set = set.pruned(now);
+        let changed = set != shared.set;
+        if changed {
+            shared.encoded = set.encode();
+            shared.set = set;
+            shared.rev += 1;
+        }
+        (out, changed)
+    }
+
+    /// Merges in what a machine's tmux holds (`@chm_label_defs`, raw).
+    pub fn absorb_labels(&self, raw: &str) {
+        let Ok(theirs) = labels::decode(raw) else { return };
+        let ((), changed) = self.edit_labels(|set, _| *set = set.merge(&theirs));
+        if changed {
+            self.labels_changed.notify_one();
         }
     }
 

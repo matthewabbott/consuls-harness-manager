@@ -5,6 +5,7 @@ import { backend, inWebApp } from "../ipc/backend";
 import { phaseText } from "../lib/agents";
 import { useApp } from "../store/app";
 import DictationSettings from "./DictationSettings";
+import LabelSettings from "./LabelSettings";
 import NotificationSettings, { PushPrefs } from "./NotificationSettings";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -70,6 +71,10 @@ export default function SettingsScreen({ onBack, onAdd }: { onBack(): void; onAd
           <button onClick={onAdd} className="flex w-full items-center gap-2 px-4 py-3 text-[15px] text-ember-400 active:bg-ink-700">
             <Plus className="h-4 w-4" /> Add a machine
           </button>
+        </Section>
+
+        <Section title="Labels">
+          <LabelSettings />
         </Section>
 
         <Section title="Tailnet">
