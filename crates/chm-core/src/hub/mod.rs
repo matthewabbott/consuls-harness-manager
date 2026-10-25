@@ -519,9 +519,17 @@ impl Core {
         self.pane(key, PaneCmd::Paste { key, text });
     }
 
-    /// Raw terminal input in the terminal's own encoding (direct panes).
+    /// Raw terminal input in the terminal's own encoding, delivered byte for byte (direct panes'
+    /// keys; mouse wheel reports for any pane).
     pub fn send_input(&self, key: u32, data: Vec<u8>) {
         self.pane(key, PaneCmd::Input { key, data });
+    }
+
+    /// [`Core::send_input`] as the UI sends it: text, or with `binary` one byte per character
+    /// (how xterm hands over legacy mouse reports, which can hold bytes above 0x7f).
+    pub fn send_input_text(&self, key: u32, data: String, binary: bool) {
+        let bytes = if binary { data.chars().map(|c| c as u8).collect() } else { data.into_bytes() };
+        self.send_input(key, bytes);
     }
 
     pub fn sound_prefs(&self) -> SoundPrefs {

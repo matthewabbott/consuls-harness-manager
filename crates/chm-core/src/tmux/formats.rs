@@ -150,8 +150,22 @@ pub fn parse_session_row(line: &str) -> Option<SessionRow> {
     })
 }
 
-/// Cursor and terminal-mode state needed to reproduce a pane's screen exactly.
-pub const MODES_FORMAT: &str = "#{cursor_x},#{cursor_y},#{cursor_flag},#{alternate_on},#{scroll_region_upper},#{scroll_region_lower},#{insert_flag},#{origin_flag},#{wrap_flag},#{keypad_cursor_flag},#{keypad_flag},#{pane_width},#{pane_height},#{history_size}";
+/// Cursor and terminal-mode state needed to reproduce a pane's screen exactly (and the mouse
+/// reporting the program asked for, so the expanded terminal sends it wheel reports).
+pub const MODES_FORMAT: &str = "#{cursor_x},#{cursor_y},#{cursor_flag},#{alternate_on},#{scroll_region_upper},#{scroll_region_lower},#{insert_flag},#{origin_flag},#{wrap_flag},#{keypad_cursor_flag},#{keypad_flag},#{pane_width},#{pane_height},#{history_size},#{mouse_standard_flag},#{mouse_button_flag},#{mouse_all_flag},#{mouse_sgr_flag},#{mouse_utf8_flag}";
+
+/// Which mouse events the program in a pane asked for (DECSET 1000/1002/1003; tmux keeps one).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MouseTracking {
+    #[default]
+    Off,
+    /// 1000: presses, releases and the wheel.
+    Standard,
+    /// 1002: also motion while a button is held.
+    Button,
+    /// 1003: all motion.
+    All,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PaneModes {
@@ -169,6 +183,11 @@ pub struct PaneModes {
     pub width: u16,
     pub height: u16,
     pub history_size: u32,
+    pub mouse: MouseTracking,
+    /// 1006: SGR-encoded mouse reports.
+    pub mouse_sgr: bool,
+    /// 1005: UTF-8-encoded mouse reports.
+    pub mouse_utf8: bool,
 }
 
 pub fn parse_modes(line: &str) -> Option<PaneModes> {
@@ -177,7 +196,7 @@ pub fn parse_modes(line: &str) -> Option<PaneModes> {
         return None;
     }
     let n = |i: usize| f[i].parse::<u16>().ok();
-    let b = |i: usize| f[i] == "1";
+    let b = |i: usize| f.get(i).is_some_and(|v| *v == "1");
     Some(PaneModes {
         cursor_x: n(0)?,
         cursor_y: n(1)?,
@@ -193,6 +212,14 @@ pub fn parse_modes(line: &str) -> Option<PaneModes> {
         width: n(11)?,
         height: n(12)?,
         history_size: f.get(13).and_then(|v| v.parse().ok()).unwrap_or(0),
+        mouse: match (b(14), b(15), b(16)) {
+            (_, _, true) => MouseTracking::All,
+            (_, true, _) => MouseTracking::Button,
+            (true, ..) => MouseTracking::Standard,
+            _ => MouseTracking::Off,
+        },
+        mouse_sgr: b(17),
+        mouse_utf8: b(18),
     })
 }
 
@@ -244,5 +271,10 @@ mod tests {
         assert_eq!((m.cursor_x, m.cursor_y, m.width, m.height), (5, 23, 80, 24));
         assert!(m.cursor_visible && m.wrap && m.keypad_cursor && !m.alternate_on);
         assert_eq!(m.history_size, 1500);
+        assert_eq!((m.mouse, m.mouse_sgr), (MouseTracking::Off, false), "an older reply without the mouse fields");
+        let m = parse_modes("0,0,1,1,0,23,0,0,1,0,0,80,24,0,0,1,0,1,0").unwrap();
+        assert_eq!((m.mouse, m.mouse_sgr, m.mouse_utf8), (MouseTracking::Button, true, false));
+        let m = parse_modes("0,0,1,1,0,23,0,0,1,0,0,80,24,0,1,0,0,0,1").unwrap();
+        assert_eq!((m.mouse, m.mouse_sgr, m.mouse_utf8), (MouseTracking::Standard, false, true));
     }
 }

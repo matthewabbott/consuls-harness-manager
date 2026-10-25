@@ -4,6 +4,7 @@
 //! - Codex: sets `notify` in `~/.codex/config.toml` — only if the user has no notify of
 //!   their own (Codex allows just one; we never overwrite theirs).
 //! - omp: drops `~/.omp/agent/hooks/post/consuls.ts`, which omp auto-discovers.
+//! - pi: drops `~/.pi/agent/extensions/consuls.ts`, which pi auto-discovers.
 //!
 //! Everything we add references `~/.local/share/consuls/chm-hook.sh`, which is how we find
 //! (and remove) our entries again. The hook is a no-op outside tmux.
@@ -37,6 +38,7 @@ pub struct IntegrationStatus {
     pub claude: ToolStatus,
     pub codex: ToolStatus,
     pub omp: ToolStatus,
+    pub pi: ToolStatus,
     /// Human-readable notes (what was changed, backups, caveats).
     pub notes: Vec<String>,
 }
@@ -144,6 +146,8 @@ struct Paths {
     codex_config: String,
     omp_dir: String,
     omp_hook: String,
+    pi_dir: String,
+    pi_extension: String,
 }
 
 fn paths(home: &str) -> Paths {
@@ -155,6 +159,8 @@ fn paths(home: &str) -> Paths {
         codex_config: format!("{h}/.codex/config.toml"),
         omp_dir: format!("{h}/.omp/agent"),
         omp_hook: format!("{h}/.omp/agent/hooks/post/consuls.ts"),
+        pi_dir: format!("{h}/.pi/agent"),
+        pi_extension: format!("{h}/.pi/agent/extensions/consuls.ts"),
     }
 }
 
@@ -232,14 +238,18 @@ async fn status_in(f: &impl ConfigFiles, home: &str) -> IntegrationStatus {
     } else {
         codex_status(&f.read_text(&p.codex_config).await.unwrap_or_default())
     };
-    let omp = if !f.exists(&p.omp_dir).await {
-        ToolStatus::Absent
-    } else if f.exists(&p.omp_hook).await {
-        ToolStatus::Installed
-    } else {
-        ToolStatus::NotInstalled
+    let file_status = async |dir: &str, file: &str| {
+        if !f.exists(dir).await {
+            ToolStatus::Absent
+        } else if f.exists(file).await {
+            ToolStatus::Installed
+        } else {
+            ToolStatus::NotInstalled
+        }
     };
-    IntegrationStatus { claude, codex, omp, notes: Vec::new() }
+    let omp = file_status(&p.omp_dir, &p.omp_hook).await;
+    let pi = file_status(&p.pi_dir, &p.pi_extension).await;
+    IntegrationStatus { claude, codex, omp, pi, notes: Vec::new() }
 }
 
 /// Adds our hooks wherever a harness is set up; returns notes on what changed.
@@ -285,6 +295,12 @@ async fn install_in(f: &impl ConfigFiles, home: &str, assets: &Assets) -> Result
         f.write_text(&p.omp_hook, &super::assets::omp_extension(assets)).await?;
         notes.push("omp: extension installed (new omp sessions load it automatically).".into());
     }
+
+    if f.exists(&p.pi_dir).await && !f.exists(&p.pi_extension).await {
+        f.mkdir(&format!("{}/extensions", p.pi_dir)).await;
+        f.write_text(&p.pi_extension, &super::assets::pi_extension(assets)).await?;
+        notes.push("pi: extension installed (new pi sessions load it automatically; /reload for running ones).".into());
+    }
     Ok(notes)
 }
 
@@ -310,6 +326,10 @@ async fn uninstall_in(f: &impl ConfigFiles, home: &str) -> Result<Vec<String>, S
     if f.exists(&p.omp_hook).await {
         f.remove(&p.omp_hook).await?;
         notes.push("omp: extension removed.".into());
+    }
+    if f.exists(&p.pi_extension).await {
+        f.remove(&p.pi_extension).await?;
+        notes.push("pi: extension removed.".into());
     }
     Ok(notes)
 }
@@ -397,7 +417,7 @@ mod tests {
         use ToolStatus::*;
         let home = std::env::temp_dir().join(format!("chm-install-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        for d in [".claude", ".codex", ".omp/agent"] {
+        for d in [".claude", ".codex", ".omp/agent", ".pi/agent"] {
             std::fs::create_dir_all(home.join(d)).unwrap();
         }
         let settings = "{ \"theme\": \"dark\" }";
@@ -406,27 +426,31 @@ mod tests {
         std::fs::write(home.join(".codex/config.toml"), codex).unwrap();
         let h = crate::local::to_slash(&home);
         let assets = Assets::with_sh(&h, "D:/Program Files/Git/usr/bin/sh.exe");
-        let tools = |st: &IntegrationStatus| (st.claude, st.codex, st.omp);
+        let tools = |st: &IntegrationStatus| (st.claude, st.codex, st.omp, st.pi);
 
-        assert_eq!(tools(&local_status(&h).await), (NotInstalled, NotInstalled, NotInstalled));
+        assert_eq!(tools(&local_status(&h).await), (NotInstalled, NotInstalled, NotInstalled, NotInstalled));
         let st = local_install(&h, &assets).await.unwrap();
-        assert_eq!(tools(&st), (Installed, Installed, Installed));
+        assert_eq!(tools(&st), (Installed, Installed, Installed, Installed));
         assert_eq!(st.notes.iter().filter(|n| n.starts_with("Backed up")).count(), 2, "{:?}", st.notes);
         let written = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
         assert!(written.contains("\\\"D:/Program Files/Git/usr/bin/sh.exe\\\""), "hooks run through Git's sh: {written}");
         assert!(std::fs::read_to_string(home.join(".omp/agent/hooks/post/consuls.ts")).unwrap().contains("chm-hook.sh"));
+        let pi = std::fs::read_to_string(home.join(".pi/agent/extensions/consuls.ts")).unwrap();
+        assert!(pi.contains("chm-hook.sh") && pi.contains("\"pi\", event"), "{pi}");
         assert!(local_install(&h, &assets).await.unwrap().notes.is_empty(), "installing again changes nothing");
 
         let st = local_uninstall(&h).await.unwrap();
-        assert_eq!(tools(&st), (NotInstalled, NotInstalled, NotInstalled));
+        assert_eq!(tools(&st), (NotInstalled, NotInstalled, NotInstalled, NotInstalled));
         let back: Value = serde_json::from_str(&std::fs::read_to_string(home.join(".claude/settings.json")).unwrap()).unwrap();
         assert_eq!(back, serde_json::from_str::<Value>(settings).unwrap());
         assert_eq!(std::fs::read_to_string(home.join(".codex/config.toml")).unwrap(), codex);
 
         // A harness that isn't set up is left alone.
         std::fs::remove_dir_all(home.join(".omp")).unwrap();
-        assert_eq!(local_install(&h, &assets).await.unwrap().omp, Absent);
-        assert!(!home.join(".omp").exists());
+        std::fs::remove_dir_all(home.join(".pi")).unwrap();
+        let st = local_install(&h, &assets).await.unwrap();
+        assert_eq!((st.omp, st.pi), (Absent, Absent));
+        assert!(!home.join(".omp").exists() && !home.join(".pi").exists());
         let _ = std::fs::remove_dir_all(&home);
     }
 

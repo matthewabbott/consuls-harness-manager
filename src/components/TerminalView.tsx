@@ -24,6 +24,7 @@ import { useFiles } from "../store/files";
 import { useUi } from "../store/ui";
 import { linkAt, type TappedLink } from "../term/linkAt";
 import { findUrls, type RowText } from "../term/urls";
+import { MouseModes, WheelSteps, type WheelMods, wheelReport } from "../term/mouse";
 import { StreamRedactor } from "../term/redactStream";
 import { imageFiles, pasteImagesInto } from "../store/attachments";
 import type React from "react";
@@ -43,6 +44,13 @@ export interface TerminalHandle {
   sendKey(name: string): void;
   /** Keys as they are (no held modifiers, no prefix), in one batch: one message, one burst. */
   press(names: string[]): void;
+  /** Whether the program takes the mouse (scrolls by wheel reports, not keys). */
+  mouseReporting(): boolean;
+  /**
+   * Wheel reports for `steps` lines (negative: towards older output) at the middle of the
+   * screen, in one batch. False when the program doesn't take the mouse.
+   */
+  wheel(steps: number): boolean;
 }
 
 interface Props {
@@ -112,6 +120,8 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
   propsRef.current = { prefix, onPrefixKey, onPrefixPending, heldMods, onModsUsed, onLink };
   const routeRef = useRef<(name: string) => void>(() => {});
   const pressRef = useRef<(names: string[]) => void>(() => {});
+  const mouseRef = useRef(new MouseModes());
+  const wheelRef = useRef<(steps: number) => boolean>(() => false);
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const searchRef = useRef<SearchAddon | null>(null);
@@ -139,6 +149,8 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     cellSize: () => (termRef.current ? cellSizeOf(termRef.current) : null),
     sendKey: (name) => routeRef.current(name),
     press: (names) => pressRef.current(names),
+    mouseReporting: () => mouseRef.current.tracking !== 0,
+    wheel: (steps) => wheelRef.current(steps),
   }));
 
   useEffect(() => {
@@ -157,6 +169,8 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       cursorStyle: "block",
       drawBoldTextInBrightColors: false,
       macOptionIsMeta: true,
+      // A program that takes the mouse gets clicks (direct panes); Option+drag still selects.
+      macOptionClickForcesSelection: true,
       theme: {
         background: theme.background,
         foreground: theme.foreground,
@@ -194,6 +208,24 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     // Direct panes: the core answers terminal queries, so xterm must not answer them too.
     const swallowed = raw ? swallowQueries(term) : [];
 
+    // The mouse reporting the program asked for (the seed restores it). The wheel sends it wheel
+    // reports (below). tmux panes keep xterm out of it: clicks would become reports nobody
+    // receives, and plain drags would stop selecting text. Direct panes get xterm's clicks too.
+    const mouse = new MouseModes();
+    mouseRef.current = mouse;
+    const modeList = (params: (number | number[])[]) => params.map((p) => (typeof p === "number" ? p : p[0]));
+    const mouseHooks = [
+      term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => mouse.apply(modeList(params), true) && !raw),
+      term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+        mouse.apply(modeList(params), false);
+        return false; // xterm turns its own off too
+      }),
+      term.parser.registerEscHandler({ final: "c" }, () => {
+        mouse.reset(); // RIS
+        return false;
+      }),
+    ];
+
     // The user's zoom if they set one; otherwise fit the font so the pane's columns fill the
     // available width (a zoomed-in terminal wider than the view scrolls horizontally).
     const fit = () => {
@@ -206,15 +238,6 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
     };
     fitRef.current = fit;
     const zoomBy = (dir: 1 | -1) => zoom(id, term.options.fontSize ?? 13, dir);
-
-    // Ctrl+wheel zooms the terminal (never the page); on macOS a pinch (which arrives as
-    // Ctrl+wheel) or ⌘+wheel.
-    term.attachCustomWheelEventHandler((ev) => {
-      if (!ev.ctrlKey && !(isMac && ev.metaKey)) return true;
-      ev.preventDefault();
-      zoomBy(ev.deltaY < 0 ? 1 : -1);
-      return false;
-    });
     const ro = new ResizeObserver(fit);
     ro.observe(el.parentElement!);
     fit();
@@ -228,6 +251,7 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       reset(cols, rows, bytes) {
         sizeRef.current = { cols, rows };
         term.reset();
+        mouse.reset();
         term.resize(cols, rows);
         fit();
         term.write(redactor.all(bytes), () => term.scrollToBottom());
@@ -308,6 +332,45 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
         sendKeys(names);
       }
     };
+
+    // Wheel reports go to the program byte for byte, tmux panes included.
+    const sendWheel = (steps: number, col: number, row: number, mods?: WheelMods): boolean => {
+      const clamp = (v: number, max: number) => Math.max(0, Math.min(max - 1, v));
+      const report = wheelReport(mouse, steps < 0, clamp(col, term.cols), clamp(row, term.rows), mods);
+      if (!report) return false;
+      flushText();
+      b?.sendInput(key, report.data.repeat(Math.abs(steps)), report.binary);
+      return true;
+    };
+    wheelRef.current = (steps) => steps !== 0 && sendWheel(steps, Math.floor(term.cols / 2), Math.floor(term.rows / 2));
+
+    // Ctrl+wheel zooms the terminal (never the page); on macOS a pinch (which arrives as
+    // Ctrl+wheel) or ⌘+wheel. On the normal screen xterm scrolls its own history (direct panes
+    // whose program takes the mouse: xterm reports it). A full-screen program gets wheel reports
+    // if it takes the mouse, else PgUp / PgDn for every half screen (xterm would send arrow keys,
+    // which recall typed lines in shells and irssi).
+    const wheelSteps = new WheelSteps();
+    term.attachCustomWheelEventHandler((ev) => {
+      if (ev.ctrlKey || (isMac && ev.metaKey)) {
+        ev.preventDefault();
+        zoomBy(ev.deltaY < 0 ? 1 : -1);
+        return false;
+      }
+      if (term.buffer.active.type !== "alternate") return true;
+      ev.preventDefault();
+      const cell = cellSizeOf(term);
+      if (mouse.tracking) {
+        // A report per line scrolled (Codex and pi move a line for each), at most 3 per event, at
+        // the cell under the pointer.
+        const n = Math.max(-3, Math.min(3, wheelSteps.lines(ev, cell.height, term.rows)));
+        const screen = el.querySelector(".xterm-screen")?.getBoundingClientRect();
+        if (n && screen) sendWheel(n, Math.floor((ev.clientX - screen.left) / cell.width), Math.floor((ev.clientY - screen.top) / cell.height), ev);
+      } else {
+        const n = wheelSteps.pages(ev, cell.height, term.rows);
+        if (n) pressRef.current(Array(Math.abs(n)).fill(n < 0 ? "PPage" : "NPage"));
+      }
+      return false;
+    });
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return !e.ctrlKey && !e.altKey; // let keypress produce text
       // tmux panes: the server's prefix (Ctrl+B) and the key after it (see term/tmuxPrefix.ts).
@@ -382,6 +445,13 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       return true;
     });
 
+    // Legacy mouse reports arrive as bytes, not text (direct panes; see sendWheel for tmux panes).
+    const binarySub = term.onBinary((data) => {
+      if (!raw || !b) return;
+      flushText();
+      b.sendInput(key, data, true);
+    });
+
     const dataSub = term.onData((data) => {
       // tmux panes: anything starting with ESC is xterm answering a terminal query, which tmux
       // already did. Direct panes: keys, mouse and focus reports all go out as-is.
@@ -444,7 +514,9 @@ const TerminalView = forwardRef<TerminalHandle, Props>(function TerminalView(
       el.removeEventListener("pointerdown", onDown, true);
       el.removeEventListener("pointerup", onUp, true);
       dataSub.dispose();
+      binarySub.dispose();
       swallowed.forEach((d) => d.dispose());
+      mouseHooks.forEach((d) => d.dispose());
       if (textTimer) window.clearTimeout(textTimer);
       flushText();
       detach();

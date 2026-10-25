@@ -28,6 +28,11 @@ const PER_HARNESS: Partial<Record<Harness, Key[]>> = {
   ],
   codex: [{ label: "^T", keys: ["C-t"], title: "Ctrl+T — transcript" }],
   omp: [{ label: "⇧Tab", keys: ["BTab"], title: "Shift+Tab — cycle mode" }],
+  pi: [
+    { label: "⇧Tab", keys: ["BTab"], title: "Shift+Tab — cycle thinking level" },
+    { label: "^O", keys: ["C-o"], title: "Ctrl+O — expand/collapse tool output" },
+    { label: "^T", keys: ["C-t"], title: "Ctrl+T — show/hide thinking" },
+  ],
 };
 
 /** The keys for an agent: the common ones, then its own (the phone's key row uses them too). */

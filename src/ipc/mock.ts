@@ -264,7 +264,7 @@ export function mockBackend(): Backend {
   const emitConfig = () => emit({ type: "config", config: fullConfig() });
   const emitPanes = (host: string) => emit({ type: "panes", host, panes: panes.filter((p) => p.info.host === host).map((p) => p.info) });
 
-  let mockIntegration: Omit<IntegrationStatus, "notes"> = { claude: "notInstalled", codex: "absent", omp: "notInstalled" };
+  let mockIntegration: Omit<IntegrationStatus, "notes"> = { claude: "notInstalled", codex: "absent", omp: "notInstalled", pi: "notInstalled" };
   let mockSound: SoundPrefs = { enabled: true, volume: 0.7, finished: true, needsInput: true, subtask: true, bell: true, toasts: true };
   let mockUi: UiPrefs = { defaultFolders: {}, recording: false, hideMachineNames: false };
   const attention = new Map<number, PaneAttention>();
@@ -552,11 +552,11 @@ export function mockBackend(): Backend {
     integrationStatus: async () => ({ ...mockIntegration, notes: [] }),
     installIntegration: async () => {
       await new Promise((r) => setTimeout(r, 700));
-      mockIntegration = { claude: "installed", codex: "installed", omp: "installed" };
+      mockIntegration = { claude: "installed", codex: "installed", omp: "installed", pi: "installed" };
       return { ...mockIntegration, notes: ["Backed up Claude settings to ~/.claude/settings.json.chm-bak-1790000000", "Claude Code: hooks added. Sessions already running pick them up after a restart."] };
     },
     uninstallIntegration: async () => {
-      mockIntegration = { claude: "notInstalled", codex: "notInstalled", omp: "notInstalled" };
+      mockIntegration = { claude: "notInstalled", codex: "notInstalled", omp: "notInstalled", pi: "notInstalled" };
       return { ...mockIntegration, notes: ["Claude Code: hooks removed."] };
     },
     listDir: async (host, path) => mockListDir(host, path),

@@ -49,6 +49,8 @@ fn classify(event: &str, detail: &str, current: Activity) -> Effect {
         "SessionStart" => Effect::State(Activity::Idle, None, "Ready".into()),
         "Stop" => Effect::State(Activity::Idle, Some(AlertKind::Finished), "Finished — your turn".into()),
         "StopFailure" => Effect::State(Activity::Idle, Some(AlertKind::Finished), "Stopped with an error".into()),
+        // You stopped it (pi's Escape): your turn, but you know that already.
+        "Interrupted" => Effect::State(Activity::Idle, None, "Interrupted".into()),
         "PermissionRequest" => {
             let reason = if detail.is_empty() { "Needs permission".to_string() } else { format!("Needs permission: {detail}") };
             Effect::State(Activity::NeedsInput, Some(AlertKind::NeedsInput), reason)
@@ -271,6 +273,16 @@ mod tests {
         let a = out.alert.unwrap();
         assert!(a.sound && a.toast && a.flash, "app unfocused: ping + toast + flash");
         assert_eq!(a.kind, AlertKind::NeedsInput);
+    }
+
+    #[test]
+    fn interrupting_is_quiet() {
+        let mut b = AttentionBook::default();
+        b.apply(1, &sig("UserPromptSubmit"), &label(), 1.0, false);
+        let out = b.apply(1, &sig("Interrupted"), &label(), 2.0, false);
+        let st = out.changed.unwrap();
+        assert_eq!((st.activity, st.attention), (Activity::Idle, AttentionLevel::None));
+        assert!(out.alert.is_none());
     }
 
     #[test]

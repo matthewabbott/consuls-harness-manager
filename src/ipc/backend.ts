@@ -97,8 +97,11 @@ export interface Backend {
   sendKeys(key: number, keys: string[]): Promise<void>;
   sendText(key: number, text: string): Promise<void>;
   pasteText(key: number, text: string): Promise<void>;
-  /** Raw terminal input in xterm's own encoding (direct panes). */
-  sendInput(key: number, data: string): Promise<void>;
+  /**
+   * Raw terminal input in xterm's own encoding, byte for byte: direct panes' keys and mouse, and
+   * wheel reports for tmux panes. `binary`: one byte per character (xterm's legacy mouse reports).
+   */
+  sendInput(key: number, data: string, binary?: boolean): Promise<void>;
   /** `images`: paths on the pane's machine (from savePaste), pasted before the text. */
   submitPrompt(key: number, text: string, images?: string[]): Promise<void>;
   /** Saves a pasted image on the machine (a week-long cache) and returns its path. */
@@ -228,7 +231,7 @@ export function commands(call: Call) {
     sendKeys: (key: number, keys: string[]) => call<void>("send_keys", { key, keys }),
     sendText: (key: number, text: string) => call<void>("send_text", { key, text }),
     pasteText: (key: number, text: string) => call<void>("paste_text", { key, text }),
-    sendInput: (key: number, data: string) => call<void>("send_input", { key, data }),
+    sendInput: (key: number, data: string, binary?: boolean) => call<void>("send_input", { key, data, binary: binary ?? false }),
     submitPrompt: (key: number, text: string, images?: string[]) => call<void>("submit_prompt", { key, text, images: images ?? [] }),
     getUiState: () => call<Record<string, string>>("get_ui_state"),
     setUiState: (key: string, value: string | null) => call<void>("set_ui_state", { key, value }),

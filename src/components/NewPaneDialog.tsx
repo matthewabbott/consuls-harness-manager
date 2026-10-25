@@ -21,8 +21,16 @@ const HARNESSES: { id: Harness; label: string; hint: string }[] = [
   { id: "claude", label: "Claude Code", hint: "claude" },
   { id: "codex", label: "Codex", hint: "codex" },
   { id: "omp", label: "omp", hint: "oh-my-pi" },
+  { id: "pi", label: "pi", hint: "pi.dev" },
   { id: "shell", label: "Shell", hint: "just a terminal" },
 ];
+
+/** Examples for the extra arguments. */
+const PLACEHOLDERS: Partial<Record<Harness, string>> = {
+  claude: "--model opus  or  --resume",
+  codex: "--model gpt-5.6-sol",
+  pi: "--continue  or  --model sonnet:high",
+};
 
 const LAST_HARNESS = "consuls.newPane.harness";
 const LAST_SHELL = "consuls.newPane.localShell";
@@ -306,7 +314,7 @@ export default function NewPaneDialog() {
               <input
                 value={args}
                 onChange={(e) => setArgs(e.target.value)}
-                placeholder={harness === "claude" ? "--model opus  or  --resume" : harness === "codex" ? "--model gpt-5.6-sol" : ""}
+                placeholder={PLACEHOLDERS[harness] ?? ""}
                 spellCheck={false}
                 className="w-full rounded-lg bg-ink-900 px-2.5 py-1.5 font-mono text-[12px] text-mist-100 ring-1 ring-ink-600 outline-none placeholder:text-mist-500 focus:ring-sky-400/60"
               />

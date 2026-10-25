@@ -135,11 +135,11 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
     const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
 
     /**
-     * A full-screen program (irssi, less, vim) is on the alternate screen, which has no
-     * scrollback here: a drag pages through its own instead. The frame goes first; then a key
-     * per line for irssi set up for it (ScrollSheet), wheel events if the program takes the
-     * mouse, else PgUp / PgDn for every half screen (irssi's own step). Not arrow keys: those
-     * recall typed lines in irssi and shells.
+     * A full-screen program (irssi, less, vim, Codex, pi) is on the alternate screen, which has
+     * no scrollback here: a drag pages through its own instead. The frame goes first; then a key
+     * per line for irssi set up for it (ScrollSheet), a wheel report per line if the program
+     * takes the mouse, else PgUp / PgDn for every half screen (irssi's own step). Not arrow keys:
+     * those recall typed lines in irssi and shells.
      *
      * Every key comes back as a redraw the phone has to receive and draw, all of it (a control
      * client gets each byte, where a terminal attached to tmux sees only where it ended up). So
@@ -157,15 +157,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
       const count = Math.abs(n);
       if (lineScrollRef.current) {
         termRef.current?.press(Array(count).fill(n < 0 ? LINE_KEYS.up : LINE_KEYS.down));
-      } else if (term.modes.mouseTrackingMode !== "none") {
-        const screen = term.element?.querySelector(".xterm-screen");
-        const r = screen?.getBoundingClientRect();
-        for (let i = 0; i < count; i++) {
-          screen?.dispatchEvent(
-            new WheelEvent("wheel", { deltaY: Math.sign(n), deltaMode: WheelEvent.DOM_DELTA_LINE, clientX: r ? r.x + r.width / 2 : 0, clientY: r ? r.y + r.height / 2 : 0, bubbles: true, cancelable: true }),
-          );
-        }
-      } else {
+      } else if (!termRef.current?.wheel(n)) {
         termRef.current?.press(Array(count).fill(n < 0 ? "PPage" : "NPage"));
       }
       // Its output settles it; a batch that redraws nothing (the end of the history) times out.
@@ -190,7 +182,7 @@ export default function PaneScreen({ pane, onBack }: { pane: PaneInfo; onBack():
         px -= take;
       }
       if (px === 0) return true;
-      if (lineScrollRef.current || term.modes.mouseTrackingMode !== "none") {
+      if (lineScrollRef.current || termRef.current?.mouseReporting()) {
         lines += px / cell.height;
         const n = Math.trunc(lines);
         lines -= n;

@@ -1,13 +1,15 @@
 # Consuls
 
 A desktop dashboard for the coding agents you run in tmux across your Tailscale tailnet —
-Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
+Claude Code, Codex, pi, omp (oh-my-pi) and plain shells, on every machine at once.
 
 - **Live grid** of every tmux pane on every connected machine, each a small live view of the terminal.
 - **Expanded view** with a full terminal (type straight into it), Ctrl+F search through the
   scrollback, and *smart copy* that undoes the CLI's line wrapping and gutters. Ctrl+click opens
   links: https URLs in the browser (other schemes are copied), and file references like
   `src/App.tsx:42` in the editor at that line, on the pane's machine and relative to its folder.
+  The wheel scrolls full-screen programs too: Codex and pi (which take the mouse) get wheel
+  events, others PgUp / PgDn.
 - **Composer**: a mouse-friendly prompt box — click to place the cursor, select, cut/paste,
   undo/redo, Shift+Enter for new lines, ↑ for prompt history, drafts kept per pane.
 - **Image paste**: paste a screenshot into the composer (or straight into the terminal) and
@@ -43,7 +45,7 @@ Claude Code, Codex, omp (oh-my-pi) and plain shells, on every machine at once.
   `/set beep_when_window_active ON` to hear it for the window you're in); weechat's built-in
   `beep` trigger rings on highlights and private messages.
 - **This PC**: the machine Harness Manager runs on is always listed first. Start PowerShell,
-  Git Bash, cmd (or WSL) there, optionally with Claude Code / Codex / omp launched in it, with the
+  Git Bash, cmd (or WSL) there, optionally with Claude Code / Codex / pi / omp launched in it, with the
   same tiles, notifications and composer as remote panes. Local shells end when the app quits
   (it asks first); closing the window keeps them running in the tray. With
   [Cygwin](https://cygwin.com)'s `tmux` package installed, This PC gets tmux sessions too —
@@ -101,7 +103,7 @@ remote host: tmux ≥ 3.2, and (uploaded on demand) ~/.local/share/consuls/{chm-
   tmux decide). Split windows default to *Don't resize*, since resizing redraws the neighbours —
   and Claude Code redraws its whole transcript on every width change. Pinned windows show a lock.
 - **Turn detection** comes from the harnesses' own hooks. Agents started from Consuls get them
-  injected at launch (`claude --settings`, `codex -c notify=…`, `omp --hook`). For agents you
+  injected at launch (`claude --settings`, `codex -c notify=…`, `pi -e`, `omp --hook`). For agents you
   start by hand, the bell icon on a machine installs the same hooks globally (opt-in,
   reversible, backed up) — on This PC too, where they cover agents you type into Consuls' own
   shells. Without hooks, Consuls falls back to guessing from output activity.

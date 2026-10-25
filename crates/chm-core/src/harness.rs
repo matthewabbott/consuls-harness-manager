@@ -36,10 +36,13 @@ impl Harness {
     /// Best guess from what tmux tells us. An explicit `@chm_harness` tag (set when the app
     /// launched the pane) wins while its program runs; otherwise the pane's foreground process
     /// name. A shell the app launched counts as whatever agent runs in it now. Claude Code names
-    /// its process after its version (`2.1.284`), which counts as Claude.
-    pub fn detect(current_command: &str, tagged: Option<&str>) -> Option<Self> {
+    /// its process after its version (`2.1.284`), which counts as Claude. pi renames its process
+    /// `pi`, but macOS still reports `node`: there its window title (`π - <folder>`) tells.
+    pub fn detect(current_command: &str, tagged: Option<&str>, title: &str) -> Option<Self> {
         let name = current_command.trim_start_matches('-');
-        let running = Self::from_name(name).or_else(|| is_version_title(name).then_some(Harness::Claude));
+        let running = Self::from_name(name)
+            .or_else(|| is_version_title(name).then_some(Harness::Claude))
+            .or_else(|| (name == "node" && is_pi_title(title)).then_some(Harness::Pi));
         match tagged.and_then(Self::from_name) {
             Some(Harness::Shell) => Some(running.unwrap_or(Harness::Shell)),
             Some(h) if !Self::is_shell(current_command) => Some(h),
@@ -81,6 +84,7 @@ impl Harness {
                 format!("codex -c {}", q(&notify))
             }
             (Harness::Omp, Some(a)) => format!("omp --hook {}", q(&a.omp_extension)),
+            (Harness::Pi, Some(a)) => format!("pi -e {}", q(&a.pi_extension)),
             (h, _) => h.name().to_string(),
         };
         let extra = extra_args.trim();
@@ -185,6 +189,12 @@ pub(crate) fn prompt_steps(text: &str, images: &[String], harness: Option<Harnes
     steps
 }
 
+/// pi's window title: `π - <folder>` or `π - <session> - <folder>` (`_` where tmux's output
+/// isn't UTF-8).
+fn is_pi_title(title: &str) -> bool {
+    title.starts_with("π - ") || title.starts_with("_ - ")
+}
+
 /// A process named like a version: `2.1.284`, `2.1.284-beta.1` (three numeric parts, then an
 /// optional `-suffix`). Claude Code sets its process title that way.
 fn is_version_title(cmd: &str) -> bool {
@@ -218,24 +228,32 @@ mod tests {
 
     #[test]
     fn detection() {
-        assert_eq!(Harness::detect("omp", None), Some(Harness::Omp));
-        assert_eq!(Harness::detect("-bash", None), Some(Harness::Shell));
-        assert_eq!(Harness::detect("node", None), None);
+        let detect = |cmd: &str, tag: Option<&str>| Harness::detect(cmd, tag, "");
+        assert_eq!(detect("omp", None), Some(Harness::Omp));
+        assert_eq!(detect("-bash", None), Some(Harness::Shell));
+        assert_eq!(detect("node", None), None);
         // An app-launched claude pane whose harness exited back to the shell reads as a shell.
-        assert_eq!(Harness::detect("bash", Some("claude")), Some(Harness::Shell));
-        assert_eq!(Harness::detect("node", Some("codex")), Some(Harness::Codex));
+        assert_eq!(detect("bash", Some("claude")), Some(Harness::Shell));
+        assert_eq!(detect("node", Some("codex")), Some(Harness::Codex));
         // Claude Code's process title is its version.
-        assert_eq!(Harness::detect("2.1.284", None), Some(Harness::Claude));
-        assert_eq!(Harness::detect("2.1.284-beta.1", None), Some(Harness::Claude));
-        assert_eq!(Harness::detect("1.2", None), None);
-        assert_eq!(Harness::detect("python3.12", None), None);
-        assert_eq!(Harness::detect("1.2.x", None), None);
-        assert_eq!(Harness::detect("2.1.284", Some("codex")), Some(Harness::Codex), "a tag still wins");
+        assert_eq!(detect("2.1.284", None), Some(Harness::Claude));
+        assert_eq!(detect("2.1.284-beta.1", None), Some(Harness::Claude));
+        assert_eq!(detect("1.2", None), None);
+        assert_eq!(detect("python3.12", None), None);
+        assert_eq!(detect("1.2.x", None), None);
+        assert_eq!(detect("2.1.284", Some("codex")), Some(Harness::Codex), "a tag still wins");
         // A shell the app launched, with an agent started in it by hand.
-        assert_eq!(Harness::detect("omp", Some("shell")), Some(Harness::Omp));
-        assert_eq!(Harness::detect("2.1.284", Some("shell")), Some(Harness::Claude));
-        assert_eq!(Harness::detect("vim", Some("shell")), Some(Harness::Shell));
-        assert_eq!(Harness::detect("bash", Some("shell")), Some(Harness::Shell));
+        assert_eq!(detect("omp", Some("shell")), Some(Harness::Omp));
+        assert_eq!(detect("2.1.284", Some("shell")), Some(Harness::Claude));
+        assert_eq!(detect("vim", Some("shell")), Some(Harness::Shell));
+        assert_eq!(detect("bash", Some("shell")), Some(Harness::Shell));
+        // pi: its process on Linux, its title where the process stays `node` (macOS).
+        assert_eq!(detect("pi", None), Some(Harness::Pi));
+        assert_eq!(detect("node", Some("pi")), Some(Harness::Pi));
+        assert_eq!(Harness::detect("node", None, "π - consuls"), Some(Harness::Pi));
+        assert_eq!(Harness::detect("node", Some("shell"), "_ - fix the build - consuls"), Some(Harness::Pi));
+        assert_eq!(Harness::detect("node", None, "π > omp's title"), None);
+        assert_eq!(Harness::detect("vim", None, "π - consuls"), None);
     }
 
     #[test]
@@ -250,6 +268,11 @@ mod tests {
             "codex -c 'notify=[\"sh\",\"/home/u/.local/share/consuls/chm-hook.sh\",\"codex\",\"Stop\"]'"
         );
         assert_eq!(Harness::Omp.launch_command(None, "").unwrap(), "omp");
+        assert_eq!(
+            Harness::Pi.launch_command(Some(&a), "--continue").unwrap(),
+            "pi -e '/home/u/.local/share/consuls/pi-extension.ts' --continue"
+        );
+        assert_eq!(Harness::Pi.quit_command(), Some("/quit"));
         assert_eq!(Harness::Shell.launch_command(Some(&a), ""), None);
         assert_eq!(Harness::Codex.quit_command(), Some("/quit"));
         let w = Assets::with_sh("C:/Users/A B", "D:/Git/usr/bin/sh.exe");

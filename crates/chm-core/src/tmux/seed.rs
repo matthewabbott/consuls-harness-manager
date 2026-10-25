@@ -10,7 +10,7 @@
 //! `pause` discards the queue first. Its `%pause`/`%continue` lines arrive inside the
 //! commands' own reply blocks, so they aren't mistaken for tmux pausing a slow client.
 
-use super::formats::{MODES_FORMAT, PaneModes, parse_modes};
+use super::formats::{MODES_FORMAT, MouseTracking, PaneModes, parse_modes};
 use super::parser::{PaneId, Reply};
 use super::quote::quote;
 
@@ -109,6 +109,19 @@ impl Seed {
         if !m.cursor_visible {
             out.extend_from_slice(b"\x1b[?25l");
         }
+        // The program's mouse reporting, so the terminal sends it wheel reports as it expects.
+        match m.mouse {
+            MouseTracking::Off => {}
+            MouseTracking::Standard => out.extend_from_slice(b"\x1b[?1000h"),
+            MouseTracking::Button => out.extend_from_slice(b"\x1b[?1002h"),
+            MouseTracking::All => out.extend_from_slice(b"\x1b[?1003h"),
+        }
+        if m.mouse_utf8 {
+            out.extend_from_slice(b"\x1b[?1005h");
+        }
+        if m.mouse_sgr {
+            out.extend_from_slice(b"\x1b[?1006h");
+        }
         out
     }
 
@@ -132,5 +145,15 @@ mod tests {
         assert_eq!(n, 5);
         assert!(cmd.contains("capture-pane -p -e -J -t '%3' -S -500 -E -1 ; capture-pane -p -e -t '%3' ;"));
         assert!(cmd.ends_with("'%3:continue'"));
+    }
+
+    #[test]
+    fn restores_mouse_reporting() {
+        let modes = PaneModes { width: 10, height: 2, scroll_lower: 1, wrap: true, cursor_visible: true, alternate_on: true, ..Default::default() };
+        let text = |modes| String::from_utf8(Seed { history: Vec::new(), visible: vec![b"hi".to_vec()], modes }.to_terminal_bytes()).unwrap();
+        assert!(!text(modes).contains("\x1b[?100"));
+        let out = text(PaneModes { mouse: MouseTracking::Button, mouse_sgr: true, ..modes });
+        assert!(out.contains("\x1b[?1049h") && out.ends_with("\x1b[?1002h\x1b[?1006h"), "{out:?}");
+        assert!(text(PaneModes { mouse: MouseTracking::All, ..modes }).ends_with("\x1b[?1003h"));
     }
 }

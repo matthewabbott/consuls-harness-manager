@@ -27,7 +27,7 @@ shell built as an iPhone app. See README.md.
 - **Never type into, resize, or kill the user's real tmux sessions when testing.** Use a
   private socket: `CHM_TMUX_SOCKET=<name>` for the whole core, `tmux -L chm-test-…` in tests,
   or `cargo run -p chm-core --example selftest`. Attaching read-only to real sessions is fine.
-- Don't install the global integration (edits the user's Claude/Codex/omp configs) yourself —
+- Don't install the global integration (edits the user's Claude/Codex/omp/pi configs) yourself —
   on This PC either (`install::local_install`); tests use a scratch home.
 - Ask before committing. The branch is `master`.
 
@@ -45,7 +45,8 @@ shell built as an iPhone app. See README.md.
 - **Never use `refresh-client -A %N:off` / `:on`.** In tmux ≤ 3.6 `off` keeps the client's
   queued output while `on` jumps to "now", and the server dies with `fatal: not enough data`.
   Seeding uses `:pause` / `:continue` (pause discards the queue); their `%pause`/`%continue`
-  lines arrive inside those commands' reply blocks. Stress test:
+  lines arrive inside those commands' reply blocks (tmux 3.8: right after them, so a `%pause`
+  for a pane being seeded is ignored). Stress test:
   `cargo run -p chm-core --example crashhunt` (private server, see its header).
 - **Never subscribe to all panes (`refresh-client -B name:%*:…`).** In tmux ≤ 3.6 its timer
   reads the client's session, which is NULL once that session is destroyed (its last pane
@@ -56,6 +57,20 @@ shell built as an iPhone app. See README.md.
 - Panes (and plain shells) start the user's login shell: rc files may start daemons (e.g.
   `ssh-agent`) that outlive the pane. Tests use bare shells or clean up after themselves.
 - Claude Code only runs hooks in folders it trusts (the trust prompt blocks them).
+- Raw bytes reach a pane's program with `send-keys -H 1b 5b …` (`PaneCmd::Input`): literal
+  bytes skip key encoding (`extended-keys`), tmux's `mouse` option doesn't touch them, and one
+  command reaches the program in one write (`-l` text goes through key encoding). Verified on
+  3.4's source and 3.8 (`examples/localtmux`).
+
+## Harnesses
+
+- Detection: `@chm_harness` (set at launch), else the process name: Claude Code's is its
+  version, pi's is `pi` on Linux but `node` on macOS, where its title (`π - <folder>`) tells.
+- pi (pi.dev, `@earendil-works/pi-coding-agent`) is launched as `pi -e pi-extension.ts`; the
+  global install drops `~/.pi/agent/extensions/consuls.ts`. Events: `agent_start` → working,
+  `agent_settled` → Stop (or `Interrupted` after Escape: idle, no alert), `ui_prompt_start`
+  mid-run → needs input. pi < 0.80 has no `agent_settled`: `agent_end` + idle stands in.
+- Both copies (launch + global) may load: the core drops a repeated event within a second.
 
 ## Direct panes (no tmux)
 
@@ -260,10 +275,11 @@ shell built as an iPhone app. See README.md.
   view within its sheet (`useVisibleHeight`).
 - Touch in `PaneScreen` (web app too): xterm doesn't scroll by touch, so one finger up/down is
   ours — the frame first, then the scrollback (`term.scrollLines`, with momentum);
-  `.terminal-frame` is `touch-action: pan-x`. On the alternate screen (irssi, less, vim: the
-  seed switches xterm to it too, so `buffer.active.type` tells) there's no scrollback: a drag
-  sends PgUp/PgDn per half screen, or wheel events (synthetic, so xterm encodes them) when the
-  program has mouse reporting on. Never arrows: they recall typed lines in irssi and shells.
+  `.terminal-frame` is `touch-action: pan-x`. On the alternate screen (irssi, less, vim, Codex,
+  pi: the seed switches xterm to it too, so `buffer.active.type` tells) there's no scrollback: a
+  drag sends PgUp/PgDn per half screen, or a wheel report per line (`TerminalHandle.wheel`, see
+  "Scrolling full-screen programs") when the program takes the mouse. Never arrows: they
+  recall typed lines in irssi and shells.
   irssi has no line-scroll key, only `/scrollback goto ±N`: with two `/bind`s (shown in
   `ScrollSheet`, ⋯ → Scrolling…) a pane set to "lines" (per pane, per device) gets Ctrl+Alt+↑/↓
   per line instead. Each key comes back as a redraw, and a control client gets every byte of
@@ -508,6 +524,18 @@ shell built as an iPhone app. See README.md.
 - Phone: chips on each row, a chip bar on the list (By label grouping; a label shown alone),
   kept per device in `uiStorage`; ⋯ → Labels… on a pane (`LabelSheet`); Settings → Labels
   (`LabelSettings`: create, rename, recolour, delete asking in place, drag handles to reorder).
+
+## Scrolling full-screen programs
+
+- The seed restores the program's mouse reporting (`MODES_FORMAT`'s `mouse_*_flag`s → DECSET
+  1000/1002/1003, 1005/1006), and `term/mouse.ts` `MouseModes` follows it in the stream.
+- tmux panes keep xterm out of mouse mode (`TerminalView` swallows those DECSETs): plain drags
+  still select, clicks aren't forwarded. Direct panes give xterm the mouse (Option+drag selects).
+- Wheel on the alternate screen: wheel reports at the pointer's cell (one per line scrolled, as
+  xterm counts lines, at most 3 per event; Codex and pi move a line per report) when the program
+  takes the mouse, else PgUp/PgDn per half screen. Normal screen: xterm's own scrollback.
+  Reports go out byte for byte (`sendInput`, `binary` for legacy bytes > 0x7f), as
+  `send-keys -H` for tmux panes.
 
 ## Bells
 

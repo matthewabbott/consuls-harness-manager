@@ -242,10 +242,11 @@ pub fn quit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// Raw terminal input (direct panes): xterm's own encoding of keys, mouse and replies.
+/// Raw terminal input, byte for byte: xterm's own encoding of keys and mouse (direct panes), and
+/// wheel reports (tmux panes). `binary`: one byte per character (legacy mouse reports).
 #[tauri::command]
-pub fn send_input(state: State<'_, AppState>, key: u32, data: String) {
-    state.core.send_input(key, data.into_bytes());
+pub fn send_input(state: State<'_, AppState>, key: u32, data: String, binary: Option<bool>) {
+    state.core.send_input_text(key, data, binary.unwrap_or(false));
 }
 
 #[tauri::command]

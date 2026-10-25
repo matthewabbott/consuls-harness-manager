@@ -39,7 +39,7 @@ pub(crate) enum PaneCmd {
     Keys { key: u32, keys: Vec<String> },
     /// Literal text typed by the user.
     Text { key: u32, text: String },
-    /// Raw terminal input (xterm's own encoding; direct panes).
+    /// Raw terminal input (xterm's own encoding): direct panes' keys, and mouse wheel reports.
     Input { key: u32, data: Vec<u8> },
     /// Paste text (bracketed if the app asked for it).
     Paste { key: u32, text: String },
@@ -486,7 +486,7 @@ impl TmuxManager {
             current_path: self.path_map.as_ref().map_or_else(|| r.current_path.clone(), |m| m.to_windows(&r.current_path)),
             title: r.title.clone(),
             name: r.name.clone(),
-            harness: Harness::detect(&r.current_command, r.chm_harness.as_deref()),
+            harness: Harness::detect(&r.current_command, r.chm_harness.as_deref(), &r.title),
             alternate_on: r.alternate_on,
             chm_id: r.chm_id.clone(),
             hidden: r.chm_hidden,
@@ -577,6 +577,9 @@ impl TmuxManager {
                     }
                 }
             }
+            // tmux 3.8 reports a seed's own pause after its reply block, not inside it; the seed
+            // continues the pane when it's done.
+            ClientEvent::Tmux(Event::Pause { pane }) if self.panes.get(&pane).is_some_and(|p| p.seeding.is_some()) => {}
             ClientEvent::Tmux(Event::Pause { pane }) => {
                 debug!(host = %self.host, "pane %{pane} paused (client fell behind); re-seeding");
                 self.seed(pane).await;
@@ -764,7 +767,7 @@ impl TmuxManager {
 
     fn label(&self, p: &Pane) -> PaneLabel {
         let r = &p.row;
-        let detected = Harness::detect(&r.current_command, r.chm_harness.as_deref());
+        let detected = Harness::detect(&r.current_command, r.chm_harness.as_deref(), &r.title);
         let cleaned = r.title.trim_start_matches(|c: char| !c.is_alphanumeric()).trim();
         // Shells title themselves with the hostname or user@host:path, and a program that sets
         // no title leaves tmux's default, the hostname (`<name>.local` on macOS): not useful labels.
@@ -814,7 +817,7 @@ impl TmuxManager {
         let mut signals = Vec::new();
         for p in self.panes.values_mut() {
             let agent = matches!(
-                Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref()),
+                Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref(), &p.row.title),
                 Some(h) if h != Harness::Shell
             );
             if !agent || self.ctx.attention.lock().unwrap().has_hooks(p.key) {
@@ -1127,8 +1130,13 @@ impl TmuxManager {
                 }
             }
             PaneCmd::Input { key, data } => {
-                // tmux panes take keys, not raw bytes; this is only reached for plain text.
-                Box::pin(self.pane_cmd(PaneCmd::Text { key, text: String::from_utf8_lossy(&data).into_owned() })).await;
+                let Some((id, client)) = self.pane_by_key(key) else { return };
+                for line in raw_input_lines(id, &data) {
+                    if let Err(e) = client.command(&line).await {
+                        debug!(host = %self.host, "send-keys -H to %{id} failed: {e}");
+                        return;
+                    }
+                }
             }
             PaneCmd::Paste { key, text } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };
@@ -1138,7 +1146,7 @@ impl TmuxManager {
             }
             PaneCmd::Submit { key, text, images } => {
                 let Some((id, client)) = self.pane_by_key(key) else { return };
-                let harness = self.panes.get(&id).and_then(|p| Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref()));
+                let harness = self.panes.get(&id).and_then(|p| Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref(), &p.row.title));
                 let ctx = self.ctx.clone();
                 let host = self.host.clone();
                 tokio::spawn(async move {
@@ -1253,7 +1261,7 @@ impl TmuxManager {
                     let _ = reply.send(Ok(TerminateOutcome::Closed));
                     return;
                 };
-                let harness = self.panes.get(&id).and_then(|p| Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref()));
+                let harness = self.panes.get(&id).and_then(|p| Harness::detect(&p.row.current_command, p.row.chm_harness.as_deref(), &p.row.title));
                 // Quitting can take seconds; don't block tile updates while it runs.
                 tokio::spawn(async move {
                     let _ = reply.send(terminate(&client, id, harness, force).await);
@@ -1344,6 +1352,18 @@ async fn terminate(
     }
 }
 
+/// `send-keys -H` lines that hand `data` to the pane's program byte for byte: literal bytes skip
+/// tmux's key encoding (`extended-keys`), and tmux's `mouse` option is about clients' mice, not
+/// these. Each line reaches the program in one write.
+fn raw_input_lines(id: PaneId, data: &[u8]) -> Vec<String> {
+    data.chunks(512)
+        .map(|chunk| {
+            let hex: Vec<String> = chunk.iter().map(|b| format!("{b:02x}")).collect();
+            format!("send-keys -t {} -H {}", quote(&format!("%{id}")), hex.join(" "))
+        })
+        .collect()
+}
+
 /// Splits `s` into chunks of at most `max` bytes on char boundaries.
 fn chunk_str(s: &str, max: usize) -> Vec<&str> {
     let mut out = Vec::new();
@@ -1427,5 +1447,14 @@ mod tests {
         let chunks = chunk_str(s, 3);
         assert_eq!(chunks.concat(), s);
         assert!(chunks.iter().all(|c| c.len() <= 4));
+    }
+
+    #[test]
+    fn raw_input_as_hex() {
+        assert_eq!(super::raw_input_lines(3, b"\x1b[<64;10;5M"), ["send-keys -t '%3' -H 1b 5b 3c 36 34 3b 31 30 3b 35 4d"]);
+        assert_eq!(super::raw_input_lines(3, b"\x1b[M`\xaa%")[0], "send-keys -t '%3' -H 1b 5b 4d 60 aa 25");
+        let lines = super::raw_input_lines(1, &[b'x'; 1000]);
+        assert_eq!(lines.len(), 2);
+        assert!(super::raw_input_lines(1, b"").is_empty());
     }
 }

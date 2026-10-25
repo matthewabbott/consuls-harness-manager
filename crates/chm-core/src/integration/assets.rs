@@ -10,6 +10,7 @@ use crate::ssh::{SshConnection, exec};
 const HOOK: &str = include_str!("../../../../remote-assets/chm-hook.sh");
 const CLAUDE_SETTINGS: &str = include_str!("../../../../remote-assets/claude-settings.json");
 const OMP_EXTENSION: &str = include_str!("../../../../remote-assets/omp-extension.ts");
+const PI_EXTENSION: &str = include_str!("../../../../remote-assets/pi-extension.ts");
 /// Shell integration for plain shells (reports the working directory at each prompt).
 const SHELL_FILES: [(&str, &str); 4] = [
     ("bash-init.sh", include_str!("../../../../remote-assets/shell/bash-init.sh")),
@@ -25,6 +26,7 @@ pub struct Assets {
     pub hook: String,
     pub claude_settings: String,
     pub omp_extension: String,
+    pub pi_extension: String,
     /// Shell integration: `bash-init.sh` and a `zsh/` ZDOTDIR.
     pub shell: String,
     /// The POSIX shell that runs the hook: `sh` on Unix hosts, Git's `sh.exe` on Windows.
@@ -42,6 +44,7 @@ impl Assets {
             hook: format!("{dir}/chm-hook.sh"),
             claude_settings: format!("{dir}/claude-settings.json"),
             omp_extension: format!("{dir}/omp-extension.ts"),
+            pi_extension: format!("{dir}/pi-extension.ts"),
             shell: format!("{dir}/shell"),
             dir,
             sh: sh.to_string(),
@@ -74,14 +77,23 @@ pub fn claude_settings(assets: &Assets) -> String {
 
 /// The omp extension for these assets.
 pub fn omp_extension(assets: &Assets) -> String {
+    extension(OMP_EXTENSION, assets)
+}
+
+/// The pi extension for these assets.
+pub fn pi_extension(assets: &Assets) -> String {
+    extension(PI_EXTENSION, assets)
+}
+
+fn extension(template: &str, assets: &Assets) -> String {
     let js = |s: &str| serde_json::to_string(s).expect("string");
-    OMP_EXTENSION.replace("\"__SH__\"", &js(&assets.sh)).replace("\"__HOOK__\"", &js(&assets.hook))
+    template.replace("\"__SH__\"", &js(&assets.sh)).replace("\"__HOOK__\"", &js(&assets.hook))
 }
 
 /// FNV-1a over every asset, so any change triggers a redeploy.
 pub fn version() -> String {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for part in [HOOK, CLAUDE_SETTINGS, OMP_EXTENSION].into_iter().chain(SHELL_FILES.map(|(_, f)| f)) {
+    for part in [HOOK, CLAUDE_SETTINGS, OMP_EXTENSION, PI_EXTENSION].into_iter().chain(SHELL_FILES.map(|(_, f)| f)) {
         for b in part.bytes().chain([0u8]) {
             h ^= b as u64;
             h = h.wrapping_mul(0x0100_0000_01b3);
@@ -106,6 +118,7 @@ pub(crate) fn files(assets: &Assets, tmux: &str) -> Vec<(String, String, u32)> {
         (assets.hook.clone(), render(HOOK, assets, tmux), 0o755),
         (assets.claude_settings.clone(), claude_settings(assets), 0o644),
         (assets.omp_extension.clone(), omp_extension(assets), 0o644),
+        (assets.pi_extension.clone(), pi_extension(assets), 0o644),
     ];
     files.extend(SHELL_FILES.map(|(name, content)| (format!("{}/{name}", assets.shell), content.to_string(), 0o644)));
     // Last: its presence says the rest is complete.
@@ -174,6 +187,10 @@ mod tests {
         assert_eq!(cmd, "sh '/home/u/.local/share/consuls/chm-hook.sh' claude Stop");
         let omp = omp_extension(&a);
         assert!(omp.contains("const SH = \"sh\";") && omp.contains("\"/home/u/.local/share/consuls/chm-hook.sh\""));
+        let pi = pi_extension(&a);
+        assert!(pi.contains("const SH = \"sh\";") && pi.contains("const HOOK = \"/home/u/.local/share/consuls/chm-hook.sh\";"));
+        assert!(pi.contains("[HOOK, \"pi\", event, payload]"), "reports as pi");
+        assert!(!pi.contains("__"));
         assert_eq!(version().len(), 16);
     }
 
@@ -187,5 +204,6 @@ mod tests {
             "\"D:/Program Files/Git/usr/bin/sh.exe\" \"C:/Users/Matthew Abbott/.local/share/consuls/chm-hook.sh\" claude Stop"
         );
         assert!(omp_extension(&a).contains("const SH = \"D:/Program Files/Git/usr/bin/sh.exe\";"));
+        assert!(pi_extension(&a).contains("const SH = \"D:/Program Files/Git/usr/bin/sh.exe\";"));
     }
 }

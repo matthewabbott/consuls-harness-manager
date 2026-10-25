@@ -4,7 +4,8 @@
 //!   cargo run -p chm-core --example localtmux
 //!
 //! Creates a tmux pane under `@local` in a given folder (on Windows: Windows path in, Windows path
-//! out), types into it through the control client, resizes it, fires the hook from inside it
+//! out), types into it through the control client, sends a full-screen program wheel reports
+//! (and checks the seed restores its mouse reporting), resizes it, fires the hook from inside it
 //! (routed through the local events file to the tmux pane), closes it, and kills the private
 //! server. Hook events go to a scratch state folder, never the real one.
 
@@ -23,6 +24,8 @@ struct Recorder {
     panes: Mutex<Vec<PaneInfo>>,
     facts: Mutex<Option<HostFacts>>,
     raw: Mutex<HashMap<u32, Vec<u8>>>,
+    /// The last RESET (seed) per pane.
+    reset: Mutex<HashMap<u32, Vec<u8>>>,
     attention: Mutex<HashMap<u32, PaneAttention>>,
 }
 
@@ -44,6 +47,7 @@ impl Sink for Recorder {
             2 => self.raw.lock().unwrap().entry(key).or_default().extend_from_slice(&frame[9..]),
             3 => {
                 self.raw.lock().unwrap().insert(key, frame[13..].to_vec());
+                self.reset.lock().unwrap().insert(key, frame[13..].to_vec());
             }
             _ => {}
         }
@@ -155,6 +159,29 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
         })
         .await?;
     }
+
+    // A full-screen program that takes the mouse: a re-seed restores its mouse reporting, and
+    // wheel reports reach it byte for byte, also with tmux's own mouse support on.
+    let wheel = b"\x1b[<64;10;5M\x1b[<65;10;5M";
+    core.send_text(
+        key,
+        format!(
+            "printf '\\033[?1049h\\033[?1002h\\033[?1006h'; stty raw -echo; dd bs=1 count={} 2>/dev/null | od -An -tx1 | tr -d ' \\n' > mouse.hex; stty sane; printf '\\033[?1006l\\033[?1002l\\033[?1049l'",
+            wheel.len()
+        ),
+    );
+    core.send_keys(key, vec!["Enter".into()]);
+    wait_for("a full-screen program", Duration::from_secs(10), || pane(key).is_some_and(|p| p.alternate_on)).await?;
+    rec.reset.lock().unwrap().remove(&key);
+    core.stream_pane(key, true);
+    let seeded = |k: u32| String::from_utf8_lossy(rec.reset.lock().unwrap().get(&k).map(Vec::as_slice).unwrap_or(&[])).into_owned();
+    wait_for("the seed restores its mouse reporting", Duration::from_secs(10), || seeded(key).ends_with("\x1b[?1002h\x1b[?1006h")).await?;
+    sh.exec(&format!("{tmux} set-option -g mouse on"), Duration::from_secs(10)).await?;
+    core.send_input(key, wheel.to_vec());
+    let hex: String = wheel.iter().map(|b| format!("{b:02x}")).collect();
+    let got = || std::fs::read_to_string(std::path::Path::new(folder).join("mouse.hex")).unwrap_or_default();
+    wait_for("wheel reports reach it as they are", Duration::from_secs(10), || got() == hex).await?;
+    wait_for("back to the shell", Duration::from_secs(10), || pane(key).is_some_and(|p| !p.alternate_on)).await?;
 
     core.resize_pane(key, 100, 30).await.map_err(anyhow::Error::msg)?;
     wait_for("resized to 100x30", Duration::from_secs(10), || pane(key).is_some_and(|p| (p.width, p.height) == (100, 30))).await?;

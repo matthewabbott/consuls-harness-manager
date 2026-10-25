@@ -10,10 +10,11 @@ import { useRedact } from "../store/recording";
 import HarnessBadge from "./HarnessBadge";
 import Modal, { Button } from "./Modal";
 
-const TOOLS: { id: "claude" | "codex" | "omp"; label: string; what: string }[] = [
+const TOOLS: { id: "claude" | "codex" | "omp" | "pi"; label: string; what: string }[] = [
   { id: "claude", label: "Claude Code", what: "Adds hook entries to ~/.claude/settings.json (backed up first)." },
   { id: "codex", label: "Codex", what: "Sets notify in ~/.codex/config.toml, unless you already use one." },
   { id: "omp", label: "omp", what: "Adds ~/.omp/agent/hooks/post/consuls.ts, which omp loads automatically." },
+  { id: "pi", label: "pi", what: "Adds ~/.pi/agent/extensions/consuls.ts, which pi loads automatically." },
 ];
 
 function StatusPill({ status }: { status: ToolStatus }) {
@@ -79,8 +80,8 @@ export default function IntegrationDialog({ host }: { host: string }) {
       {isLocal(host) ? (
         <p className="text-[13px] leading-relaxed text-mist-300">
           Agents you launch from Consuls always report when they finish or need you. To get the same when you type{" "}
-          <span className="font-mono text-mist-100">claude</span>, <span className="font-mono text-mist-100">codex</span> or{" "}
-          <span className="font-mono text-mist-100">omp</span> yourself in one of Consuls' shells on this PC, Consuls can add a tiny hook
+          <span className="font-mono text-mist-100">claude</span>, <span className="font-mono text-mist-100">codex</span>,{" "}
+          <span className="font-mono text-mist-100">omp</span> or <span className="font-mono text-mist-100">pi</span> yourself in one of Consuls' shells on this PC, Consuls can add a tiny hook
           to each harness's config here (in your user folder, backed up first). The hook only records an event inside a Consuls shell —
           agents started in Windows Terminal or VS Code are unaffected — never prints anything, and can be removed here at any time.
         </p>

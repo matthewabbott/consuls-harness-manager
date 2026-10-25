@@ -126,7 +126,7 @@ pub async fn call(d: &Daemon, method: &str, p: Value) -> Result<Value, Value> {
             DONE
         }
         "send_input" => {
-            core.send_input(key()?, arg::<String>(&p, "data")?.into_bytes());
+            core.send_input_text(key()?, arg(&p, "data")?, arg::<Option<bool>>(&p, "binary")?.unwrap_or(false));
             DONE
         }
         "submit_prompt" => {

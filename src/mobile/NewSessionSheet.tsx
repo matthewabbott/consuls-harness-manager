@@ -20,6 +20,7 @@ const HARNESSES: { id: Harness; label: string }[] = [
   { id: "claude", label: "Claude Code" },
   { id: "codex", label: "Codex" },
   { id: "omp", label: "omp" },
+  { id: "pi", label: "pi" },
   { id: "shell", label: "Shell" },
 ];
 
