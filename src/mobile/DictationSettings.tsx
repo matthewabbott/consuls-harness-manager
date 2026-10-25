@@ -1,10 +1,11 @@
 // Settings → Dictation: the server's speech engine (Fluid Speech Mini) and how much memory it has
-// right now, whether to use it (off: Safari's recognizer), and the sound when recording stops.
+// right now, whether to use it (off: Safari's recognizer), live drafts, and the sound when
+// recording stops (on or off, and how loud).
 
 import { useEffect, useState } from "react";
 
-import { onServerPref, setOnServerPref, useStt } from "../lib/dictation";
-import { hangUpSound, setHangUpSound } from "../lib/sounds";
+import { livePref, onServerPref, setLivePref, setOnServerPref, useStt } from "../lib/dictation";
+import { hangUpSound, hangUpVolume, previewHangUp, setHangUpSound, setHangUpVolume } from "../lib/sounds";
 
 function Switch({ on, label, onChange }: { on: boolean; label: string; onChange(on: boolean): void }) {
   return (
@@ -35,7 +36,9 @@ function Row({ title, hint, children }: { title: string; hint?: React.ReactNode;
 export default function DictationSettings() {
   const status = useStt((s) => s.status);
   const [server, setServer] = useState(onServerPref);
+  const [live, setLive] = useState(livePref);
   const [sound, setSound] = useState(hangUpSound);
+  const [volume, setVolume] = useState(hangUpVolume);
   useEffect(() => useStt.getState().refresh(), []);
 
   const memory = !status ? (
@@ -66,6 +69,21 @@ export default function DictationSettings() {
           }}
         />
       </Row>
+      {server && (
+        <Row
+          title="Live text"
+          hint={live ? "A draft of what you're saying, about once a second, while the server has memory to spare." : "Off: the text comes at each pause."}
+        >
+          <Switch
+            on={live}
+            label="Live text"
+            onChange={(on) => {
+              setLivePref(on);
+              setLive(on);
+            }}
+          />
+        </Row>
+      )}
       <Row title="Sound when recording stops" hint="At the phone's volume; the silent switch mutes it.">
         <Switch
           on={sound}
@@ -76,6 +94,26 @@ export default function DictationSettings() {
           }}
         />
       </Row>
+      {sound && (
+        <Row title="Volume" hint="Plays when you let go.">
+          <input
+            type="range"
+            aria-label="Volume of the sound when recording stops"
+            min={0.1}
+            max={1}
+            step={0.05}
+            value={volume}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setHangUpVolume(v);
+              setVolume(v);
+            }}
+            onPointerUp={previewHangUp}
+            onKeyUp={previewHangUp}
+            className="w-36 accent-jade-400"
+          />
+        </Row>
+      )}
     </>
   );
 }

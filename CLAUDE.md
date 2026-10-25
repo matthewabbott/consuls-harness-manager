@@ -206,12 +206,18 @@ shell built as an iPhone app. See README.md.
   no npm).
 - Dictation (`stt.rs`): Fluid Speech Mini (FluidVoice, CC BY 4.0, Parakeet v3-based; punctuates)
   through parakeet.cpp's CLI, both in `<install>/stt/`. `GET /api/stt` → memory level;
-  `POST /api/stt` (16 kHz mono WAV, `X-Consuls`) → text. Each piece starts the engine and it
-  exits (the model is read into memory, ~350 MB, not mapped); one piece at a time; the engine runs
-  with `oom_score_adj` 1000 (killed first) and nice 10. Memory grows with piece length (Spark:
-  364 MB at 1 s, 507 MB at 20 s, 1.5 GB at 2 min), so `level` sets the longest piece from
-  `MemAvailable` (≥1 GB: 30 s; ≥600 MB: 15 s; ≥450 MB: 8 s; else none). Whisper tiny/base were
-  lighter but dropped whole paragraphs on long clips.
+  `POST /api/stt` (`X-Consuls`): a whole 16 kHz mono WAV → text, or a streamed piece
+  (`?piece=&at=`, 16-bit PCM from sample `at`; sending from an earlier `at` replaces the rest, 409
+  if the server has less) with `ask=draft` (its text so far, only with the engine free and memory
+  green, else 204) or `ask=end` (final text; the piece is forgotten). Each run starts the engine
+  and it exits (the model is read into memory, ~350 MB, not mapped; a run costs ~0.25 s plus
+  ~0.07 s per second of audio); one at a time; the engine runs with `oom_score_adj` 1000 (killed
+  first) and nice 10. Memory grows with piece length (Spark: 364 MB at 1 s, 507 MB at 20 s,
+  1.5 GB at 2 min), so `level` sets the longest piece from `MemAvailable` (≥1 GB: 30 s; ≥600 MB:
+  15 s; ≥450 MB: 8 s; else none). Whisper tiny/base were lighter but dropped whole paragraphs on
+  long clips; Underdog Bark 3.0 (Parakeet v3 fine-tune) recognised words as well but often
+  dropped all punctuation and capitals (noise especially), and broke at Fluid Speech Mini's Q2_K
+  mix.
   - `scripts/stt-build.sh` cross-compiles the engine on the Mac with zig (pinned commit):
     zig's clang crashes on ggml's ARM kernels tuned for cortex-a725, so it targets a generic
     Armv8.6 with dotprod/i8mm/bf16/fp16, and the wrappers drop `-march` (zig reads it as a CPU).
@@ -275,8 +281,10 @@ shell built as an iPhone app. See README.md.
 - Dictation (the phone's composer, `dictation` prop), on the server by default:
   - `lib/dictation.ts` records (`recorder.ts`: an AudioWorklet file, `captureWorklet.js`; the
     CSP allows same-origin scripts only), cuts at pauses (`pieces.ts` `Segmenter`, piece length
-    and pause from the server's memory level) and posts each piece as a WAV to `/api/stt`; text
-    comes back in order while you keep talking. Recording never stops for a cut.
+    and pause from the server's memory level) and streams each piece to `/api/stt`
+    (`PieceSender`: one request at a time, a cut piece's final text first). With memory green and
+    Settings' "Live text" on it asks for a draft after every 0.8 s of new audio; the final text
+    replaces the drafts. Recording never stops for a cut.
   - Fallback: Safari's recognizer (`lib/speech.ts`, `webkitSpeechRecognition`, continuous), when
     the server's engine isn't installed, memory is `out`, or Settings → Dictation says off. It
     gives no punctuation and capitalizes every utterance: `spoken` turns "comma"/"new line"
@@ -286,7 +294,7 @@ shell built as an iPhone app. See README.md.
     only what may still change (dimmed; "…" while the server transcribes). An edit inside it
     ends dictation. Carrying on where the last one stopped starts a new paragraph
     (`lastDictated`). Send while dictating waits for the last words. A "hang-up" plays when
-    recording stops (`lib/sounds.ts`, Web Audio, media volume).
+    recording stops (`lib/sounds.ts`, Web Audio, media volume; on/off and volume in Settings).
 - Simulator: `npx tauri ios dev "iPhone 17"`. Its data folder is
   `$(xcrun simctl get_app_container booted dev.consuls.harness-manager data)/Library/Application Support/dev.consuls.harness-manager`
   (a `config.json` can be seeded there); `SIMCTL_CHILD_CHM_TMUX_SOCKET=<private> xcrun simctl launch

@@ -116,8 +116,12 @@ export interface Backend {
   fileUrl(host: string, path: string): Promise<string>;
   /** Dictation on the server (the web app): whether it's there and how much memory it has; null elsewhere. */
   sttStatus(): Promise<SttStatus | null>;
-  /** One piece of speech (16 kHz mono WAV) as text. */
-  transcribe(wav: Blob): Promise<Transcription>;
+  /**
+   * Dictation audio for `piece` (16 kHz mono 16-bit PCM from sample `at`): `ask` "end" gets the
+   * whole piece's text, "draft" its text so far (null when the server skips it). Rejects with an
+   * error named "SttGap" when the server doesn't have the piece up to `at`.
+   */
+  sttSend(piece: string, at: number, pcm: Blob, ask: "draft" | "end" | null): Promise<Transcription | null>;
   /**
    * Desktop: sends files or folders from this computer into `dir` on another machine: `paths`
    * (dropped on the explorer), or picked in a dialog when null (`folder`: pick folders).
@@ -254,7 +258,7 @@ async function tauriBackend(): Promise<Backend> {
     uploadFile: () => Promise.reject("the desktop app sends files from disk (uploadPaths)"),
     fileUrl: () => Promise.reject("the desktop app saves files itself (downloadTo)"),
     sttStatus: async () => null,
-    transcribe: () => Promise.reject("dictation runs on the Consuls server"),
+    sttSend: () => Promise.reject("dictation runs on the Consuls server"),
     uploadPaths: async (host, dir, paths, folder, onEvent) => {
       await invoke("upload_paths", { host, dir, paths, folder, onEvent: new Channel<TransferEvent>(onEvent) });
     },

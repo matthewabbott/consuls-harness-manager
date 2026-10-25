@@ -194,15 +194,40 @@ async fn stt_status(State(d): State<Arc<Daemon>>) -> Json<SttStatus> {
     Json(d.stt.status())
 }
 
-/// One piece of speech (16 kHz mono WAV) as text.
-async fn transcribe(State(d): State<Arc<Daemon>>, body: bytes::Bytes) -> Response {
-    match d.stt.transcribe(body.to_vec()).await {
-        Ok(t) => Json(t).into_response(),
+#[derive(Deserialize)]
+struct SttQuery {
+    piece: Option<String>,
+    #[serde(default)]
+    at: usize,
+    /// "draft": the piece's text so far (if the engine is free); "end": its final text.
+    ask: Option<String>,
+}
+
+/// Dictation. Without `piece`, the body is a whole piece of speech (16 kHz mono WAV) and the
+/// reply its text. With it, the body is more of that piece's audio (16-bit PCM from sample `at`),
+/// and the reply is text only when `ask` asks for some: no content for audio alone or a skipped
+/// draft, 409 when the server doesn't have the piece up to `at`.
+async fn transcribe(State(d): State<Arc<Daemon>>, Query(q): Query<SttQuery>, body: bytes::Bytes) -> Response {
+    let heard = match q.piece {
+        None => d.stt.transcribe(body.to_vec()).await.map(Some),
+        Some(id) => match d.stt.append(&id, q.at, &body) {
+            Err(e) => Err(e),
+            Ok(()) => match q.ask.as_deref() {
+                Some("end") => d.stt.finish(&id).await.map(Some),
+                Some("draft") => d.stt.draft(&id).await,
+                _ => Ok(None),
+            },
+        },
+    };
+    match heard {
+        Ok(Some(t)) => Json(t).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             let status = match e {
                 SttError::NotInstalled => StatusCode::NOT_IMPLEMENTED,
                 SttError::BadAudio(_) => StatusCode::BAD_REQUEST,
                 SttError::NoMemory { .. } => StatusCode::SERVICE_UNAVAILABLE,
+                SttError::Gap { .. } => StatusCode::CONFLICT,
                 SttError::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
             };
             reject(status, &e.to_string())

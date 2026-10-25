@@ -580,11 +580,20 @@ export function mockBackend(): Backend {
       }),
     fileUrl: async (_host, path) => URL.createObjectURL(new Blob([`mock contents of ${path}\n`], { type: "text/plain" })),
     // Pretend dictation: free memory from `window.mockSttFree` (MB; set it in the console), and
-    // text that says how long each piece was.
+    // text that says how long each piece (or its draft) was.
     sttStatus: async () => mockSttStatus(),
-    transcribe: async (audio) => {
-      await new Promise((r) => setTimeout(r, 700));
-      return { text: `(a ${((audio.size - 44) / 32_000).toFixed(1)} s piece.)`, status: mockSttStatus() };
+    sttSend: async (piece, at, pcm, ask) => {
+      const have = mockPieces.get(piece) ?? 0;
+      if (at > have) throw Object.assign(new Error("the piece isn't all here"), { name: "SttGap" });
+      const secs = ((at + pcm.size / 2) / 16_000).toFixed(1);
+      mockPieces.set(piece, at + pcm.size / 2);
+      if (ask === "draft" && mockSttStatus().level !== "green") return null;
+      if (!ask) return null;
+      await new Promise((r) => setTimeout(r, ask === "end" ? 500 : 300));
+      if (ask === "end") mockPieces.delete(piece);
+      const words = "one two three four five six seven eight nine ten eleven twelve".split(" ");
+      const said = words.slice(0, Math.max(1, Math.round(Number(secs) * 2))).join(" ");
+      return { text: ask === "end" ? `(${secs} s: ${said}.)` : `(${secs} s: ${said}`, status: mockSttStatus() };
     },
     // Pretend dialogs and transfers: a couple of files, a second or two each.
     uploadPaths: async (host, dir, paths, folder, onEvent) => {
@@ -630,6 +639,9 @@ export function mockBackend(): Backend {
     },
   };
 }
+
+/** Pretend dictation: samples of each piece the pretend server has. */
+const mockPieces = new Map<string, number>();
 
 /** What the server would say about dictation, with `window.mockSttFree` MB free (default 8 GB). */
 function mockSttStatus(): SttStatus {

@@ -234,10 +234,16 @@ export async function webBackend(): Promise<Backend> {
       const res = await fetch("/api/stt");
       return res.ok ? res.json() : null;
     },
-    transcribe: async (audio) => {
-      const res = await fetch("/api/stt", { method: "POST", headers: { "X-Consuls": "1", "Content-Type": "audio/wav" }, body: audio });
+    sttSend: async (piece, at, pcm, ask) => {
+      const q = new URLSearchParams({ piece, at: String(at), ...(ask ? { ask } : {}) });
+      const res = await fetch(`/api/stt?${q}`, {
+        method: "POST",
+        headers: { "X-Consuls": "1", "Content-Type": "application/octet-stream" },
+        body: pcm,
+      });
+      if (res.status === 409) throw Object.assign(new Error(await res.text()), { name: "SttGap" });
       if (!res.ok) throw (await res.text()) || res.statusText;
-      return res.json();
+      return res.status === 204 ? null : res.json();
     },
     uploadPaths: notHere("Sending files from disk"),
     downloadTo: notHere("Saving to a folder"),

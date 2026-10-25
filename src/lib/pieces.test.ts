@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { RATE, Resampler, Segmenter, wav } from "./pieces";
+import type { SttStatus } from "../ipc/bindings/SttStatus";
+import { type Ask, PieceSender, RATE, Resampler, Segmenter, pcm16 } from "./pieces";
 
 /** Speech-like sound (a buzz that wavers in loudness) or quiet room noise, `secs` long. */
 function sound(secs: number, speech: boolean): Float32Array {
@@ -72,11 +73,98 @@ describe("Resampler", () => {
   });
 });
 
-describe("wav", () => {
-  it("writes a 16 kHz mono 16-bit file", async () => {
-    const b = new DataView(await wav(Float32Array.from([0, 1, -1, 2])).arrayBuffer());
-    expect(b.byteLength).toBe(44 + 8);
-    expect([b.getUint16(22, true), b.getUint32(24, true), b.getUint16(34, true)]).toEqual([1, 16_000, 16]);
-    expect([b.getInt16(44, true), b.getInt16(46, true), b.getInt16(48, true), b.getInt16(50, true)]).toEqual([0, 32767, -32768, 32767]);
+describe("pcm16", () => {
+  it("writes 16-bit little-endian samples", async () => {
+    const b = new DataView(await pcm16(Float32Array.from([0, 1, -1, 2])).arrayBuffer());
+    expect([b.getInt16(0, true), b.getInt16(2, true), b.getInt16(4, true), b.getInt16(6, true)]).toEqual([0, 32767, -32768, 32767]);
+  });
+});
+
+const status: SttStatus = { installed: true, availableMb: 8000, level: "green", maxPieceSecs: 30, pauseMs: 700 };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+/** A pretend server: keeps each piece's samples, answers drafts and ends; `fail` breaks one ask. */
+function server(fail?: { ask: Ask; error: Error | string; once?: boolean }) {
+  const pieces = new Map<string, number>();
+  const calls: { piece: string; at: number; n: number; ask: Ask }[] = [];
+  const send = async (piece: string, at: number, pcm: Blob, ask: Ask) => {
+    const n = pcm.size / 2;
+    calls.push({ piece, at, n, ask });
+    if (fail && fail.ask === ask) {
+      const e = fail.error;
+      if (fail.once) fail = undefined;
+      throw e;
+    }
+    if (at > (pieces.get(piece) ?? 0)) throw Object.assign(new Error("gap"), { name: "SttGap" });
+    pieces.set(piece, at + n);
+    if (!ask) return null;
+    const secs = ((at + n) / RATE).toFixed(1);
+    return { text: ask === "end" ? `Piece of ${secs} s.` : `draft of ${secs}`, status };
+  };
+  return { calls, send };
+}
+
+/** Feeds `parts` in 100 ms blocks, letting requests finish between them; then stops. */
+async function dictate(parts: [number, boolean][], send: ReturnType<typeof server>["send"], drafts = true) {
+  const texts: [string, number][] = [];
+  const events: string[] = [];
+  const s = new PieceSender({ maxSecs: 30, pauseMs: 700, drafts }, send, {
+    onText: (t, f) => texts.push([t, f]),
+    onStatus: () => {},
+    onError: (e) => events.push(`error: ${e}`),
+    onDone: () => events.push("done"),
+  });
+  for (const [secs, speech] of parts) {
+    const audio = sound(secs, speech);
+    for (let i = 0; i < audio.length; i += RATE / 10) {
+      s.push(audio.subarray(i, i + RATE / 10));
+      await tick();
+    }
+  }
+  s.stop();
+  for (let i = 0; i < 20; i++) await tick();
+  return { texts, events, last: texts.at(-1) };
+}
+
+describe("PieceSender", () => {
+  it("streams a piece while it's spoken, with drafts, then its final text", async () => {
+    const srv = server();
+    const { texts, events, last } = await dictate([[5, true], [1.2, false], [3, true]], srv.send);
+    const first = srv.calls.filter((c) => c.piece.endsWith("-0"));
+    // The audio goes in order, each part from where the last one ended.
+    for (let i = 1; i < first.length; i++) expect(first[i].at).toBeLessThanOrEqual(first[i - 1].at + first[i - 1].n);
+    expect(first.filter((c) => c.ask === "draft").length).toBeGreaterThan(3);
+    expect(first.at(-1)!.ask).toBe("end");
+    // The final part is small: the rest of the piece after what was streamed.
+    expect(first.at(-1)!.n).toBeLessThan(RATE);
+    // Drafts showed while talking, as tentative text.
+    expect(texts.some(([t, f]) => t.startsWith("draft of") && f === 0)).toBe(true);
+    // The second piece keeps 0.3 s from before the speech.
+    expect(last).toEqual(["Piece of 5.7 s. Piece of 3.3 s.", 31]);
+    expect(events).toEqual(["done"]);
+  });
+
+  it("without drafts, sends the audio a couple of seconds at a time", async () => {
+    const srv = server();
+    const { last } = await dictate([[5, true], [1, false]], srv.send, false);
+    expect(srv.calls.map((c) => c.ask)).toEqual([null, null, "end"]);
+    expect(last![0]).toMatch(/^Piece of 5\.\d s\.$/);
+  });
+
+  it("sends a piece whole when the server lost its audio", async () => {
+    const srv = server({ ask: "end", error: Object.assign(new Error("gap"), { name: "SttGap" }), once: true });
+    const { last, events } = await dictate([[3, true], [1, false]], srv.send);
+    const ends = srv.calls.filter((c) => c.ask === "end");
+    expect(ends.map((c) => c.at)).toEqual([expect.any(Number), 0]);
+    expect(ends[1].n).toBeGreaterThan(3 * RATE);
+    expect(last![0]).toMatch(/^Piece of/);
+    expect(events).toEqual(["done"]);
+  });
+
+  it("stops at a piece that fails, keeping the drafts as text", async () => {
+    const srv = server({ ask: "end", error: "no memory" });
+    const { last, events } = await dictate([[3, true], [1, false]], srv.send);
+    expect(events).toEqual(["error: no memory", "done"]);
+    expect(last![0]).toMatch(/^draft of \d/);
   });
 });

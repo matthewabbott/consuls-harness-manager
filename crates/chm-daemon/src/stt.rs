@@ -2,17 +2,22 @@
 //! NVIDIA's Parakeet v3; CC BY 4.0) through parakeet.cpp's command-line tool, both in `stt/` in
 //! the install folder (`scripts/server.sh` builds the tool on the Mac and fetches the model).
 //!
-//! The phone sends what you say in pieces cut at your pauses. Each piece starts the engine, which
-//! reads the whole model into memory, transcribes, and exits: nothing stays loaded between pieces.
+//! The phone sends what you say in pieces cut at your pauses, streaming each piece's audio while
+//! you talk (`append`); with memory to spare it asks for a draft of the piece so far about once a
+//! second (`draft`), and the piece's final text when it ends (`finish`). Each run starts the
+//! engine, which reads the whole model into memory, transcribes, and exits: nothing stays loaded
+//! between runs (a run costs ~0.25 s more than its audio's share).
 //! Memory grows with a piece's length (on a Spark: 364 MB for 1 s, 507 MB for 20 s, 1.5 GB for two
 //! minutes in one go), so how long pieces may be follows how much memory the machine has free
 //! (`level`). The engine is the first thing the kernel kills when memory runs out
 //! (`oom_score_adj` 1000), runs at a lower priority than everything else of yours (nice 10), and
 //! one piece is transcribed at a time.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
@@ -20,6 +25,11 @@ use ts_rs::TS;
 
 pub const ENGINE: &str = "parakeet-cli";
 pub const MODEL: &str = "fluid-speech-mini-q2k-q4k.gguf";
+/// The longest piece taken, in seconds.
+const MAX_SECS: f64 = 180.0;
+/// Pieces being streamed that are kept at once, and for how long one is kept untouched.
+const MAX_PIECES: usize = 8;
+const PIECE_TTL: Duration = Duration::from_secs(120);
 
 /// How much memory the machine has for dictation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -66,6 +76,8 @@ pub enum SttError {
     NotInstalled,
     BadAudio(String),
     NoMemory { need_mb: u64, available_mb: u64 },
+    /// The piece's audio doesn't reach where the new audio goes (lost, or the server restarted).
+    Gap { have: usize },
     Failed(String),
 }
 
@@ -77,6 +89,7 @@ impl std::fmt::Display for SttError {
             SttError::NoMemory { need_mb, available_mb } => {
                 write!(f, "not enough memory for dictation: this piece needs about {need_mb} MB, {available_mb} MB is free")
             }
+            SttError::Gap { have } => write!(f, "this piece's audio isn't all here (the server has {have} samples of it)"),
             SttError::Failed(why) => write!(f, "transcribing failed: {why}"),
         }
     }
@@ -139,14 +152,40 @@ pub fn wav_secs(b: &[u8]) -> Result<f64, String> {
     Err("no audio in the WAV file".into())
 }
 
+/// 16 kHz mono 16-bit PCM (little-endian) in a WAV file.
+pub fn wav(pcm: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(44 + pcm.len());
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + pcm.len() as u32).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    b.extend_from_slice(&1u16.to_le_bytes()); // mono
+    b.extend_from_slice(&16_000u32.to_le_bytes());
+    b.extend_from_slice(&32_000u32.to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(pcm.len() as u32).to_le_bytes());
+    b.extend_from_slice(pcm);
+    b
+}
+
+/// A piece whose audio is arriving: its PCM so far.
+struct Piece {
+    pcm: Vec<u8>,
+    touched: Instant,
+}
+
 pub struct Stt {
     dir: PathBuf,
     turn: tokio::sync::Mutex<()>,
+    pieces: Mutex<HashMap<String, Piece>>,
 }
 
 impl Stt {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir, turn: Default::default() }
+        Self { dir, turn: Default::default(), pieces: Default::default() }
     }
 
     fn installed(&self) -> bool {
@@ -159,16 +198,74 @@ impl Stt {
         SttStatus { installed: self.installed(), available_mb, level, max_piece_secs, pause_ms }
     }
 
+    /// Adds audio (16 kHz mono 16-bit PCM) to the piece `id` at sample `at`. Audio already there
+    /// from `at` on is replaced: the phone may cut a piece before the end of what it sent, and
+    /// sending the same audio again changes nothing.
+    pub fn append(&self, id: &str, at: usize, pcm: &[u8]) -> Result<(), SttError> {
+        if id.is_empty() || id.len() > 64 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+            return Err(SttError::BadAudio("a piece needs a short name of letters, digits, - and _".into()));
+        }
+        if !pcm.len().is_multiple_of(2) {
+            return Err(SttError::BadAudio("the audio must be 16-bit samples".into()));
+        }
+        if (at * 2 + pcm.len()) as f64 / 32_000.0 > MAX_SECS {
+            return Err(SttError::BadAudio("pieces are limited to three minutes".into()));
+        }
+        let mut pieces = self.pieces.lock().unwrap();
+        pieces.retain(|_, p| p.touched.elapsed() < PIECE_TTL);
+        if !pieces.contains_key(id) && pieces.len() >= MAX_PIECES
+            && let Some(oldest) = pieces.iter().min_by_key(|(_, p)| p.touched).map(|(k, _)| k.clone())
+        {
+            pieces.remove(&oldest);
+        }
+        let p = pieces.entry(id.to_string()).or_insert_with(|| Piece { pcm: Vec::new(), touched: Instant::now() });
+        let have = p.pcm.len() / 2;
+        if at > have {
+            return Err(SttError::Gap { have });
+        }
+        p.pcm.truncate(at * 2);
+        p.pcm.extend_from_slice(pcm);
+        p.touched = Instant::now();
+        Ok(())
+    }
+
+    /// The text of the piece `id` so far, if the engine is free and memory is plentiful (a draft
+    /// must never hold up a piece's final text, nor take memory that's short); None otherwise.
+    pub async fn draft(&self, id: &str) -> Result<Option<Transcription>, SttError> {
+        if !self.installed() {
+            return Err(SttError::NotInstalled);
+        }
+        let Ok(_turn) = self.turn.try_lock() else { return Ok(None) };
+        let Some(pcm) = self.pieces.lock().unwrap().get(id).map(|p| p.pcm.clone()) else { return Ok(None) };
+        let secs = pcm.len() as f64 / 32_000.0;
+        let available = available_mb();
+        if level(available).0 != MemLevel::Green || available.is_some_and(|a| a < need_mb(secs).max(1024)) {
+            return Ok(None);
+        }
+        self.run(wav(&pcm), secs).await.map(Some)
+    }
+
+    /// The piece `id`'s text, once all its audio is here; the piece is then forgotten.
+    pub async fn finish(&self, id: &str) -> Result<Transcription, SttError> {
+        let pcm = self.pieces.lock().unwrap().remove(id).map(|p| p.pcm).ok_or(SttError::Gap { have: 0 })?;
+        self.transcribe(wav(&pcm)).await
+    }
+
     /// One piece of speech (a WAV file, as `wav_secs` takes) as text.
     pub async fn transcribe(&self, wav: Vec<u8>) -> Result<Transcription, SttError> {
         if !self.installed() {
             return Err(SttError::NotInstalled);
         }
         let secs = wav_secs(&wav).map_err(SttError::BadAudio)?;
-        if secs > 180.0 {
+        if secs > MAX_SECS {
             return Err(SttError::BadAudio("pieces are limited to three minutes".into()));
         }
         let _turn = self.turn.lock().await;
+        self.run(wav, secs).await
+    }
+
+    /// Runs the engine on `wav`, with the turn held.
+    async fn run(&self, wav: Vec<u8>, secs: f64) -> Result<Transcription, SttError> {
         // Checked once it's this piece's turn: the one before has given its memory back.
         let need_mb = need_mb(secs);
         if let Some(available_mb) = available_mb()
@@ -218,30 +315,15 @@ mod tests {
 
     use super::*;
 
-    fn wav(secs: f64) -> Vec<u8> {
-        let data = (secs * 32_000.0) as u32;
-        let mut b = Vec::new();
-        b.extend_from_slice(b"RIFF");
-        b.extend_from_slice(&(36 + data).to_le_bytes());
-        b.extend_from_slice(b"WAVEfmt ");
-        b.extend_from_slice(&16u32.to_le_bytes());
-        b.extend_from_slice(&1u16.to_le_bytes()); // PCM
-        b.extend_from_slice(&1u16.to_le_bytes()); // mono
-        b.extend_from_slice(&16_000u32.to_le_bytes());
-        b.extend_from_slice(&32_000u32.to_le_bytes());
-        b.extend_from_slice(&2u16.to_le_bytes());
-        b.extend_from_slice(&16u16.to_le_bytes());
-        b.extend_from_slice(b"data");
-        b.extend_from_slice(&data.to_le_bytes());
-        b.resize(b.len() + data as usize, 0);
-        b
+    fn silence(secs: f64) -> Vec<u8> {
+        wav(&vec![0; (secs * 32_000.0) as usize])
     }
 
     #[test]
     fn reads_wav_length() {
-        assert_eq!(wav_secs(&wav(2.5)), Ok(2.5));
+        assert_eq!(wav_secs(&silence(2.5)), Ok(2.5));
         assert!(wav_secs(b"RIFF....WAVE").is_err());
-        let mut stereo = wav(1.0);
+        let mut stereo = silence(1.0);
         stereo[22] = 2;
         assert_eq!(wav_secs(&stereo), Err("the audio must be 16 kHz mono 16-bit PCM".into()));
         assert!(wav_secs(b"not a wav at all").is_err());
@@ -268,14 +350,11 @@ mod tests {
         assert_eq!(parse_available("MemTotal: 1 kB\n"), None);
     }
 
-    #[tokio::test]
-    async fn runs_the_engine() {
-        let dir = std::env::temp_dir().join(format!("chm-stt-{}", std::process::id()));
+    /// A stand-in engine in a scratch folder: checks its arguments, reads the audio from stdin,
+    /// and prints how many bytes it got.
+    fn fake_engine(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("chm-stt-{name}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let stt = Stt::new(dir.clone());
-        assert!(matches!(stt.transcribe(wav(1.0)).await, Err(SttError::NotInstalled)));
-
-        // A stand-in engine: checks its arguments, reads the audio from stdin, prints text.
         let engine = dir.join(ENGINE);
         std::fs::write(
             &engine,
@@ -285,13 +364,57 @@ mod tests {
         .unwrap();
         std::fs::set_permissions(&engine, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::write(dir.join(MODEL), b"").unwrap();
-        let t = stt.transcribe(wav(1.0)).await.unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn runs_the_engine() {
+        let empty = std::env::temp_dir().join(format!("chm-stt-none-{}", std::process::id()));
+        assert!(matches!(Stt::new(empty).transcribe(silence(1.0)).await, Err(SttError::NotInstalled)));
+
+        let dir = fake_engine("run");
+        let stt = Stt::new(dir.clone());
+        let t = stt.transcribe(silence(1.0)).await.unwrap();
         assert_eq!(t.text, format!("heard {} bytes", 44 + 32_000));
         assert!(t.status.installed);
 
-        std::fs::write(&engine, "#!/bin/sh\necho 'model not found' >&2\nexit 1\n").unwrap();
-        assert!(matches!(stt.transcribe(wav(1.0)).await, Err(SttError::Failed(why)) if why == "model not found"));
+        std::fs::write(dir.join(ENGINE), "#!/bin/sh\necho 'model not found' >&2\nexit 1\n").unwrap();
+        assert!(matches!(stt.transcribe(silence(1.0)).await, Err(SttError::Failed(why)) if why == "model not found"));
         assert!(matches!(stt.transcribe(b"nope".to_vec()).await, Err(SttError::BadAudio(_))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // Drafts need plenty of free memory: true on a Mac (no /proc) and on any machine fit to run this.
+    #[tokio::test]
+    async fn streams_pieces() {
+        let dir = fake_engine("stream");
+        let stt = Stt::new(dir.clone());
+        // Audio arrives in parts; what's sent again from an earlier sample replaces what was there.
+        stt.append("p1", 0, &[0; 3200]).unwrap();
+        stt.append("p1", 1600, &[0; 3200]).unwrap();
+        assert!(matches!(stt.append("p1", 5000, &[0; 2]), Err(SttError::Gap { have: 3200 })));
+        let d = stt.draft("p1").await.unwrap().expect("a draft");
+        assert_eq!(d.text, format!("heard {} bytes", 44 + 6400));
+        // Cut before the end of what was sent: the piece ends there.
+        stt.append("p1", 1000, &[]).unwrap();
+        assert_eq!(stt.finish("p1").await.unwrap().text, format!("heard {} bytes", 44 + 2000));
+        assert!(matches!(stt.finish("p1").await, Err(SttError::Gap { have: 0 })));
+        assert!(stt.draft("p1").await.unwrap().is_none());
+
+        // A draft never waits for the engine.
+        stt.append("p2", 0, &[0; 2]).unwrap();
+        let turn = stt.turn.lock().await;
+        assert!(stt.draft("p2").await.unwrap().is_none());
+        drop(turn);
+
+        assert!(matches!(stt.append("not ok!", 0, &[]), Err(SttError::BadAudio(_))));
+        assert!(matches!(stt.append("p3", 0, &[0; 3]), Err(SttError::BadAudio(_))));
+        assert!(matches!(stt.append("p3", 180 * 16_000, &[0; 2]), Err(SttError::BadAudio(_))));
+        // Only so many pieces are kept: the oldest goes.
+        for i in 0..MAX_PIECES {
+            stt.append(&format!("q{i}"), 0, &[0; 2]).unwrap();
+        }
+        assert!(matches!(stt.append("p2", 1, &[]), Err(SttError::Gap { have: 0 })));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

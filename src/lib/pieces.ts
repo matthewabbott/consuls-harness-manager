@@ -1,6 +1,12 @@
 // Cutting dictation into pieces for the server's speech engine: at your pauses, and never longer
 // than the server's memory allows (it reports the longest piece and the pause that ends one).
 // Recording never stops for a cut; pieces only decide where the audio is split for transcribing.
+// Each piece's audio streams to the server while you talk (`PieceSender`), which sends back a
+// draft of it about once a second when it has memory to spare, and its final text once it ends.
+
+import type { SttStatus } from "../ipc/bindings/SttStatus";
+import type { Transcription } from "../ipc/bindings/Transcription";
+import { join } from "./speech";
 
 export const RATE = 16_000;
 const FRAME = 320; // 20 ms
@@ -16,6 +22,8 @@ const WINDOW = 5;
 export interface PiecePolicy {
   maxSecs: number;
   pauseMs: number;
+  /** Ask for drafts while a piece is being spoken. */
+  drafts?: boolean;
 }
 
 /** Audio at `from` Hz to 16 kHz: each output sample is the mean of the input it spans. */
@@ -71,10 +79,30 @@ export class Segmenter {
   constructor(
     private policy: PiecePolicy,
     private onPiece: (samples: Float32Array) => void,
+    /** A piece was cut with too little speech in it, and dropped. */
+    private onDrop: () => void = () => {},
   ) {}
 
   setPolicy(p: PiecePolicy) {
     this.policy = p;
+  }
+
+  /** Whether the piece in progress has enough speech to be sent (from then on it only grows). */
+  speaking(): boolean {
+    return this.voiced >= MIN_VOICED;
+  }
+
+  /** The piece in progress so far, in samples. */
+  length(): number {
+    return this.frames.length * FRAME;
+  }
+
+  /** The piece in progress from sample `from` (a multiple of 320) on. */
+  audio(from = 0): Float32Array {
+    const frames = this.frames.slice(Math.floor(from / FRAME));
+    const out = new Float32Array(frames.length * FRAME);
+    frames.forEach((f, i) => out.set(f, i * FRAME));
+    return out;
   }
 
   push(x: Float32Array) {
@@ -146,7 +174,7 @@ export class Segmenter {
     this.voice = this.voice.slice(at);
     this.voiced = this.voice.filter(Boolean).length;
     this.silent = this.voice.length - (this.voice.lastIndexOf(true) + 1);
-    if (voiced < MIN_VOICED) return;
+    if (voiced < MIN_VOICED) return this.onDrop();
     const out = new Float32Array(piece.reduce((n, f) => n + f.length, 0));
     let o = 0;
     for (const f of piece) {
@@ -157,25 +185,198 @@ export class Segmenter {
   }
 }
 
-/** 16 kHz mono 16-bit PCM in a WAV file, as the server takes it. */
-export function wav(samples: Float32Array): Blob {
-  const b = new DataView(new ArrayBuffer(44 + samples.length * 2));
-  const text = (at: number, s: string) => [...s].forEach((c, i) => b.setUint8(at + i, c.charCodeAt(0)));
-  text(0, "RIFF");
-  b.setUint32(4, 36 + samples.length * 2, true);
-  text(8, "WAVEfmt ");
-  b.setUint32(16, 16, true);
-  b.setUint16(20, 1, true); // PCM
-  b.setUint16(22, 1, true); // mono
-  b.setUint32(24, RATE, true);
-  b.setUint32(28, RATE * 2, true);
-  b.setUint16(32, 2, true);
-  b.setUint16(34, 16, true);
-  text(36, "data");
-  b.setUint32(40, samples.length * 2, true);
+/** Samples as 16-bit PCM (little-endian), as the server takes them. */
+export function pcm16(samples: Float32Array): Blob {
+  const b = new DataView(new ArrayBuffer(samples.length * 2));
   for (let i = 0; i < samples.length; i++) {
     const s = Math.max(-1, Math.min(1, samples[i]));
-    b.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    b.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
-  return new Blob([b.buffer], { type: "audio/wav" });
+  return new Blob([b.buffer], { type: "application/octet-stream" });
+}
+
+/** What a piece's audio is sent for: a draft of it so far, its final text, or nothing yet. */
+export type Ask = "draft" | "end" | null;
+
+/**
+ * Sends audio of `piece` from sample `at` to the server, with text back when asked for (null:
+ * none asked for, or a draft it skipped). Rejects with an error named "SttGap" when the server
+ * doesn't have the piece up to `at`.
+ */
+export type Send = (piece: string, at: number, pcm: Blob, ask: Ask) => Promise<Transcription | null>;
+
+export interface SenderEvents {
+  /** All the text so far: its first `final` characters are final, the rest drafts (and "…"). */
+  onText(text: string, final: number): void;
+  onStatus(s: SttStatus): void;
+  /** A piece's text couldn't be had: sending stops (`onDone` follows). */
+  onError(e: unknown): void;
+  /** Stopped, and every piece is back. */
+  onDone(): void;
+}
+
+/** A draft is asked for after this much more audio; without drafts, audio goes in this much at a time. */
+const DRAFT_EVERY = 0.8 * RATE;
+const SEND_EVERY = 2 * RATE;
+/** After audio didn't get there, before trying again. */
+const REST_MS = 1000;
+
+interface Piece {
+  id: string;
+  /** Audio the server has (samples). */
+  sent: number;
+  /** Where the last draft was asked for. */
+  drafted: number;
+  draft: string;
+  /** Its audio, once it's been cut. */
+  audio?: Float32Array;
+}
+
+/**
+ * Audio in (`push`), text out: cuts the audio into pieces (`Segmenter`) and streams each to the
+ * server, one request at a time, in order: a cut piece's final text first, then more of the piece
+ * being spoken (with a draft asked for when the policy says so).
+ */
+export class PieceSender {
+  private segmenter: Segmenter;
+  private session = Math.random().toString(36).slice(2, 10);
+  private count = 0;
+  private cur: Piece;
+  private cut: Piece[] = [];
+  private text = "";
+  private busy = false;
+  private resting = false;
+  private stopped = false;
+  private over = false;
+
+  constructor(
+    private policy: PiecePolicy,
+    private send: Send,
+    private o: SenderEvents,
+  ) {
+    this.cur = this.piece();
+    this.segmenter = new Segmenter(
+      policy,
+      (audio) => {
+        this.cur.audio = audio;
+        this.cut.push(this.cur);
+        this.cur = this.piece();
+      },
+      () => {
+        this.cur = this.piece();
+        this.show();
+      },
+    );
+  }
+
+  setPolicy(p: PiecePolicy) {
+    this.policy = p;
+    this.segmenter.setPolicy(p);
+  }
+
+  push(samples: Float32Array) {
+    if (this.stopped) return;
+    this.segmenter.push(samples);
+    this.pump();
+  }
+
+  /** No more audio: the rest is the last piece. */
+  stop() {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.segmenter.flush();
+    this.show();
+    this.pump();
+  }
+
+  /** Stops at once, without another word. */
+  abort() {
+    this.stopped = this.over = true;
+  }
+
+  private piece(): Piece {
+    return { id: `${this.session}-${this.count++}`, sent: 0, drafted: 0, draft: "" };
+  }
+
+  private show(done = false) {
+    let t = [...this.cut, this.cur].reduce((t, p) => (p.draft ? join(t, p.draft) : t), this.text);
+    if (!done && this.cut.length) t = t ? `${t} …` : "…";
+    this.o.onText(t, this.text.length);
+  }
+
+  private pump() {
+    if (this.busy || this.over) return;
+    const job = this.next();
+    if (!job) {
+      if (this.stopped && !this.cut.length) {
+        this.over = true;
+        this.o.onDone();
+      }
+      return;
+    }
+    this.busy = true;
+    void job.then(() => {
+      this.busy = false;
+      this.pump();
+    });
+  }
+
+  private next(): Promise<void> | null {
+    if (this.cut.length) return this.finish(this.cut[0]);
+    if (this.stopped || this.resting || !this.segmenter.speaking()) return null;
+    const p = this.cur;
+    const have = this.segmenter.length();
+    const draft = !!this.policy.drafts && have - p.drafted >= DRAFT_EVERY;
+    if (!draft && have - p.sent < SEND_EVERY) return null;
+    return this.upload(p, draft);
+  }
+
+  private async upload(p: Piece, draft: boolean) {
+    const at = p.sent;
+    const audio = this.segmenter.audio(at);
+    try {
+      const t = await this.send(p.id, at, pcm16(audio), draft ? "draft" : null);
+      p.sent = at + audio.length;
+      if (draft) p.drafted = p.sent;
+      if (t && !this.over) {
+        this.o.onStatus(t.status);
+        p.draft = t.text;
+        this.show();
+      }
+    } catch (e) {
+      // The next upload, or the piece's final one, carries this audio again.
+      if ((e as Error)?.name === "SttGap") p.sent = 0;
+      this.resting = true;
+      setTimeout(() => {
+        this.resting = false;
+        this.pump();
+      }, REST_MS);
+    }
+  }
+
+  private async finish(p: Piece) {
+    const audio = p.audio!;
+    const at = Math.min(p.sent, audio.length);
+    let t: Transcription | null;
+    try {
+      t = await this.send(p.id, at, pcm16(audio.subarray(at)), "end").catch((e) => {
+        if ((e as Error)?.name !== "SttGap") throw e;
+        return this.send(p.id, 0, pcm16(audio), "end");
+      });
+    } catch (e) {
+      if (this.over) return;
+      this.show(true);
+      this.over = true;
+      this.o.onError(e);
+      this.o.onDone();
+      return;
+    }
+    if (this.over) return;
+    this.cut.shift();
+    if (t) {
+      this.o.onStatus(t.status);
+      this.text = join(this.text, t.text);
+    }
+    this.show();
+  }
 }
