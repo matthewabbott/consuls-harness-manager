@@ -14,7 +14,7 @@ const TOOLS: { id: "claude" | "codex" | "omp" | "pi"; label: string; what: strin
   { id: "claude", label: "Claude Code", what: "Adds hook entries to ~/.claude/settings.json (backed up first)." },
   { id: "codex", label: "Codex", what: "Sets notify in ~/.codex/config.toml, unless you already use one." },
   { id: "omp", label: "omp", what: "Adds ~/.omp/agent/hooks/post/consuls.ts, which omp loads automatically." },
-  { id: "pi", label: "pi", what: "Adds ~/.pi/agent/extensions/consuls.ts, which pi loads automatically." },
+  { id: "pi", label: "pi", what: "Adds ~/.pi/agent/extensions/consuls.ts, which pi loads automatically, and sets pi to its regular display (tuiMode), so its transcript scrolls and searches like Claude Code's." },
 ];
 
 function StatusPill({ status }: { status: ToolStatus }) {

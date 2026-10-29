@@ -272,8 +272,8 @@ async fn resume(core: &Arc<Core>, rec: &Arc<Recorder>, folder: &str, sh: &Link, 
     let file = format!("{folder}/my sessions/s.jsonl");
     let key = core.create_pane(spec(Harness::Pi, folder.into(), &file)).await.map_err(anyhow::Error::msg)?;
     let pane_id = rec.panes.lock().unwrap().iter().find(|p| p.key == key).and_then(|p| p.tmux.clone()).map(|t| t.pane_id).unwrap_or_default();
-    // After the extension that reports pi's turns (`pi -e …`).
-    let typed = format!("--session '{file}'");
+    // After the extension that reports pi's turns (`pi -e …`), in its regular display.
+    let typed = format!("--tui-mode regular --session '{file}'");
     let start = Instant::now();
     loop {
         let screen = sh.exec(&format!("{tmux} capture-pane -p -J -t {pane_id}"), Duration::from_secs(10)).await?.stdout_str();

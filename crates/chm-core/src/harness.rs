@@ -19,6 +19,11 @@ pub enum Harness {
     Shell,
 }
 
+/// pi in its regular mode: the transcript goes into the terminal's own scrollback, as Claude Code's
+/// does (fullscreen, pi's default since 1.0, keeps it to itself: no scrollback, search or quick
+/// scrolling for the terminal).
+const PI_REGULAR: &str = "--tui-mode regular";
+
 impl Harness {
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
@@ -84,7 +89,8 @@ impl Harness {
                 format!("codex -c {}", q(&notify))
             }
             (Harness::Omp, Some(a)) => format!("omp --hook {}", q(&a.omp_extension)),
-            (Harness::Pi, Some(a)) => format!("pi -e {}", q(&a.pi_extension)),
+            (Harness::Pi, Some(a)) => format!("pi -e {} {PI_REGULAR}", q(&a.pi_extension)),
+            (Harness::Pi, None) => format!("pi {PI_REGULAR}"),
             (h, _) => h.name().to_string(),
         };
         let extra = extra_args.trim();
@@ -285,7 +291,7 @@ mod tests {
         assert_eq!(Harness::Omp.launch_command(None, "").unwrap(), "omp");
         assert_eq!(
             Harness::Pi.launch_command(Some(&a), "--continue").unwrap(),
-            "pi -e '/home/u/.local/share/consuls/pi-extension.ts' --continue"
+            "pi -e '/home/u/.local/share/consuls/pi-extension.ts' --tui-mode regular --continue"
         );
         assert_eq!(Harness::Pi.quit_command(), Some("/quit"));
         assert_eq!(Harness::Shell.launch_command(Some(&a), ""), None);

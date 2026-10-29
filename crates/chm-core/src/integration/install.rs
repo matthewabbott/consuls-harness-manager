@@ -4,7 +4,9 @@
 //! - Codex: sets `notify` in `~/.codex/config.toml` — only if the user has no notify of
 //!   their own (Codex allows just one; we never overwrite theirs).
 //! - omp: drops `~/.omp/agent/hooks/post/consuls.ts`, which omp auto-discovers.
-//! - pi: drops `~/.pi/agent/extensions/consuls.ts`, which pi auto-discovers.
+//! - pi: drops `~/.pi/agent/extensions/consuls.ts`, which pi auto-discovers, and sets its regular
+//!   display (`"tuiMode": "regular"` in `settings.json`), so its transcript goes into the terminal's
+//!   scrollback like Claude Code's (uninstalling leaves that setting).
 //!
 //! Everything we add references `~/.local/share/consuls/chm-hook.sh`, which is how we find
 //! (and remove) our entries again. The hook is a no-op outside tmux.
@@ -148,6 +150,7 @@ struct Paths {
     omp_hook: String,
     pi_dir: String,
     pi_extension: String,
+    pi_settings: String,
 }
 
 fn paths(home: &str) -> Paths {
@@ -161,6 +164,7 @@ fn paths(home: &str) -> Paths {
         omp_hook: format!("{h}/.omp/agent/hooks/post/consuls.ts"),
         pi_dir: format!("{h}/.pi/agent"),
         pi_extension: format!("{h}/.pi/agent/extensions/consuls.ts"),
+        pi_settings: format!("{h}/.pi/agent/settings.json"),
     }
 }
 
@@ -296,10 +300,27 @@ async fn install_in(f: &impl ConfigFiles, home: &str, assets: &Assets) -> Result
         notes.push("omp: extension installed (new omp sessions load it automatically).".into());
     }
 
-    if f.exists(&p.pi_dir).await && !f.exists(&p.pi_extension).await {
-        f.mkdir(&format!("{}/extensions", p.pi_dir)).await;
-        f.write_text(&p.pi_extension, &super::assets::pi_extension(assets)).await?;
-        notes.push("pi: extension installed (new pi sessions load it automatically; /reload for running ones).".into());
+    if f.exists(&p.pi_dir).await {
+        if !f.exists(&p.pi_extension).await {
+            f.mkdir(&format!("{}/extensions", p.pi_dir)).await;
+            f.write_text(&p.pi_extension, &super::assets::pi_extension(assets)).await?;
+            notes.push("pi: extension installed (new pi sessions load it automatically; /reload for running ones).".into());
+        }
+        let original = f.read_text(&p.pi_settings).await;
+        let mut settings: Value = match &original {
+            Some(t) => serde_json::from_str(t).map_err(|e| format!("~/.pi/agent/settings.json isn't valid JSON ({e}); not touching it"))?,
+            None => Value::Object(Map::new()),
+        };
+        if let Some(obj) = settings.as_object_mut()
+            && obj.get("tuiMode").and_then(Value::as_str) != Some("regular")
+        {
+            obj.insert("tuiMode".into(), "regular".into());
+            if let Some(t) = &original {
+                notes.push(format!("Backed up pi settings to {}", backup(f, &p.pi_settings, t).await?));
+            }
+            f.write_text(&p.pi_settings, &(serde_json::to_string_pretty(&settings).unwrap() + "\n")).await?;
+            notes.push("pi: set to its regular display, so its transcript scrolls and searches like Claude Code's (new pi sessions).".into());
+        }
     }
     Ok(notes)
 }
@@ -424,6 +445,7 @@ mod tests {
         let codex = "model = \"gpt-5.6-sol\"\n";
         std::fs::write(home.join(".claude/settings.json"), settings).unwrap();
         std::fs::write(home.join(".codex/config.toml"), codex).unwrap();
+        std::fs::write(home.join(".pi/agent/settings.json"), "{\"defaultModel\": \"opus\", \"tuiMode\": \"fullscreen\"}").unwrap();
         let h = crate::local::to_slash(&home);
         let assets = Assets::with_sh(&h, "D:/Program Files/Git/usr/bin/sh.exe");
         let tools = |st: &IntegrationStatus| (st.claude, st.codex, st.omp, st.pi);
@@ -431,7 +453,9 @@ mod tests {
         assert_eq!(tools(&local_status(&h).await), (NotInstalled, NotInstalled, NotInstalled, NotInstalled));
         let st = local_install(&h, &assets).await.unwrap();
         assert_eq!(tools(&st), (Installed, Installed, Installed, Installed));
-        assert_eq!(st.notes.iter().filter(|n| n.starts_with("Backed up")).count(), 2, "{:?}", st.notes);
+        assert_eq!(st.notes.iter().filter(|n| n.starts_with("Backed up")).count(), 3, "{:?}", st.notes);
+        let pi_settings: Value = serde_json::from_str(&std::fs::read_to_string(home.join(".pi/agent/settings.json")).unwrap()).unwrap();
+        assert_eq!(pi_settings, serde_json::json!({ "defaultModel": "opus", "tuiMode": "regular" }), "regular display, other keys kept");
         let written = std::fs::read_to_string(home.join(".claude/settings.json")).unwrap();
         assert!(written.contains("\\\"D:/Program Files/Git/usr/bin/sh.exe\\\""), "hooks run through Git's sh: {written}");
         assert!(std::fs::read_to_string(home.join(".omp/agent/hooks/post/consuls.ts")).unwrap().contains("chm-hook.sh"));

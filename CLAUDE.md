@@ -66,8 +66,12 @@ shell built as an iPhone app. See README.md.
 
 - Detection: `@chm_harness` (set at launch), else the process name: Claude Code's is its
   version, pi's is `pi` on Linux but `node` on macOS, where its title (`π - <folder>`) tells.
-- pi (pi.dev, `@earendil-works/pi-coding-agent`) is launched as `pi -e pi-extension.ts`; the
-  global install drops `~/.pi/agent/extensions/consuls.ts`. Events: `agent_start` → working,
+- pi (pi.dev, `@earendil-works/pi-coding-agent`) is launched as `pi -e pi-extension.ts --tui-mode
+  regular`: its regular display draws in the normal screen, so the transcript reaches the
+  terminal's scrollback (scrolling, search, "Latest ↓") like Claude Code's; it clears and
+  reprints it on resize (`CSI 2J 3J`), as Ink does. The global install drops
+  `~/.pi/agent/extensions/consuls.ts` and sets `"tuiMode": "regular"` in pi's `settings.json`
+  (for pi started by hand). Events: `agent_start` → working,
   `agent_settled` → Stop (or `Interrupted` after Escape: idle, no alert), `ui_prompt_start`
   mid-run → needs input. pi < 0.80 has no `agent_settled`: `agent_end` + idle stands in.
 - Both copies (launch + global) may load: the core drops a repeated event within a second.

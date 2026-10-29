@@ -108,6 +108,17 @@ export default function PaneLeaf({ pane, leafId, split, focused, shared, onCompo
     termRef.current?.focus();
   };
 
+  // Scrolled back into the history: a button back to the latest output.
+  const [scrolledBack, setScrolledBack] = useState(false);
+  useEffect(() => {
+    const term = termRef.current?.term;
+    if (!term) return;
+    const check = () => setScrolledBack(term.buffer.active.viewportY < term.buffer.active.baseY);
+    const subs = [term.onScroll(check), term.onWriteParsed(check)];
+    check();
+    return () => subs.forEach((s) => s.dispose());
+  }, [pane.key]);
+
   // Focus moved here by a click elsewhere, a hotkey or a jump: into the terminal for shells
   // (agents get the composer, from the workspace).
   useEffect(() => {
@@ -349,6 +360,19 @@ export default function PaneLeaf({ pane, leafId, split, focused, shared, onCompo
           </div>
         )}
       </div>
+      {scrolledBack && (
+        <button
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => {
+            termRef.current?.term?.scrollToBottom();
+            termRef.current?.focus();
+          }}
+          title="Back to the latest output"
+          className="absolute right-4 bottom-4 z-10 rounded-full bg-ink-700/90 px-3 py-1.5 text-[12px] text-mist-100 shadow-lg ring-1 ring-ink-600 backdrop-blur hover:bg-ink-600"
+        >
+          Latest ↓
+        </button>
+      )}
     </section>
   );
 }
