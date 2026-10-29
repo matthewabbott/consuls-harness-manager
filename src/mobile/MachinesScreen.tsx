@@ -19,11 +19,10 @@ import LabelChips from "./LabelChips";
 const LABEL_FILTER = "consuls.machines.label";
 const GROUP_BY = "consuls.machines.groupBy";
 
-/** Waiting for you first, then needing input, working, the rest; by name within each. */
+/** Came back since you looked (needing input first), then working, the rest; by name within each. */
 function rank(att: PaneAttention | undefined): number {
   if (!att) return 4;
-  if (att.activity === "needsInput") return 0;
-  if (att.activity === "idle" && att.attention !== "none") return 1;
+  if (att.attention === "unacked") return att.activity === "needsInput" ? 0 : 1;
   if (att.activity === "working") return 2;
   return 3;
 }

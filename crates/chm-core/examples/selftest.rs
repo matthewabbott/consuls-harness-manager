@@ -459,8 +459,8 @@ kill -CONT "$pid""#
         let alert = rec.alerts.lock().unwrap().last().cloned().expect("alert");
         assert!(alert.sound && alert.toast, "unfocused app should get sound + toast");
         core.ack_pane(new_key);
-        wait_for("ack -> Acked", Duration::from_secs(5), || {
-            rec.attention.lock().unwrap().get(&new_key).is_some_and(|a| a.attention == AttentionLevel::Acked)
+        wait_for("ack -> resolved", Duration::from_secs(5), || {
+            rec.attention.lock().unwrap().get(&new_key).is_some_and(|a| a.attention == AttentionLevel::None)
         })
         .await;
     }

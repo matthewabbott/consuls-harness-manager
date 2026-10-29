@@ -41,7 +41,7 @@ function MiniTile({ pane, stale, home, compact = false, showHost = false }: Prop
     const t = setTimeout(() => setPulsing(false), 1100);
     return () => clearTimeout(t);
   }, [att?.pulse, att]);
-  const waiting = att && (att.activity === "idle" || att.activity === "needsInput") && att.attention !== "none";
+  const waiting = att && (att.activity === "idle" || att.activity === "needsInput") && att.attention === "unacked";
   const belled = att?.attention === "unacked" && att.reason === "Rang the bell";
   const glow =
     att?.attention === "unacked" ? (belled ? "glow-sky" : att.activity === "needsInput" ? "glow-iris" : "glow-ember") : pulsing ? "pulse" : "";

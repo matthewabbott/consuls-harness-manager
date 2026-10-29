@@ -69,9 +69,9 @@ describe("organize", () => {
   });
 
   it("attention-first sort puts unseen needs-input first, working after waiting", () => {
-    const attention = { 1: att(1, "none", "working"), 2: att(2, "unacked", "idle"), 3: att(3, "unacked", "needsInput"), 4: att(4, "acked", "idle") };
+    const attention = { 1: att(1, "none", "working"), 2: att(2, "unacked", "idle"), 3: att(3, "unacked", "needsInput"), 4: att(4, "none", "idle") };
     const sorted = sortPanes([pane(1), pane(2), pane(3), pane(4), pane(5)], "attention", (p) => p.tmux!.windowName, attention, {}, (p) => String(p.key));
-    expect(sorted.map((p) => p.key)).toEqual([3, 2, 4, 1, 5]);
+    expect(sorted.map((p) => p.key)).toEqual([3, 2, 1, 4, 5]);
   });
 
   it("project grouping uses the cwd's last component", () => {

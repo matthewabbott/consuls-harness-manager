@@ -1,8 +1,9 @@
 //! The attention state machine: turns harness hook events (and activity heuristics) into
 //! per-pane state and alerts, applying the focus rules.
 //!
-//! - A pane that finishes / needs input while not expanded: ping, glow (Unacked) until the
-//!   user interacts with it, then a "waiting on you" banner (Acked).
+//! - A pane that finishes / needs input while not expanded: ping, glow and "waiting on you"
+//!   (Unacked) until the user looks at it (opens it, or has it on screen); its activity (idle,
+//!   needs input) stays.
 //! - The expanded pane: counts as seen immediately; pings only if the app isn't focused.
 //! - Other panes on screen (splits, other windows): seen, so they don't glow, but they still ping
 //!   (nobody watches four panes at once).
@@ -181,7 +182,7 @@ impl AttentionBook {
                 entry.source = source.into();
                 entry.attention = match (activity, alert_kind) {
                     (Activity::Working | Activity::Unknown, _) => AttentionLevel::None,
-                    (_, Some(_)) if expanded => AttentionLevel::Acked,
+                    (_, Some(_)) if expanded => AttentionLevel::None,
                     (_, Some(_)) => AttentionLevel::Unacked,
                     // Idle without an alert (session start): nothing to flag.
                     (_, None) => entry.attention,
@@ -214,7 +215,7 @@ impl AttentionBook {
     pub fn ack(&mut self, key: u32) -> Option<PaneAttention> {
         let e = self.panes.get_mut(&key)?;
         if e.attention == AttentionLevel::Unacked {
-            e.attention = AttentionLevel::Acked;
+            e.attention = AttentionLevel::None;
             return Some(e.clone());
         }
         None
@@ -247,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsed_pane_glows_then_banner() {
+    fn collapsed_pane_glows_until_looked_at() {
         let mut b = AttentionBook::default();
         b.set_focus(FocusState { expanded: None, window_focused: true, ..Default::default() });
         b.apply(1, &sig("UserPromptSubmit"), &label(), 1.0, false);
@@ -256,7 +257,7 @@ mod tests {
         assert_eq!((st.activity, st.attention), (Activity::Idle, AttentionLevel::Unacked));
         let alert = out.alert.unwrap();
         assert!(alert.sound && !alert.toast && !alert.flash, "focused app: ping, no toast");
-        assert_eq!(b.ack(1).unwrap().attention, AttentionLevel::Acked);
+        assert_eq!(b.ack(1).unwrap().attention, AttentionLevel::None);
         // Next prompt clears it.
         let st = b.apply(1, &sig("UserPromptSubmit"), &label(), 3.0, false).changed.unwrap();
         assert_eq!(st.attention, AttentionLevel::None);
@@ -267,12 +268,12 @@ mod tests {
         let mut b = AttentionBook::default();
         b.set_focus(FocusState { expanded: Some(1), window_focused: true, ..Default::default() });
         let out = b.apply(1, &sig("Stop"), &label(), 1.0, false);
-        assert_eq!(out.changed.unwrap().attention, AttentionLevel::Acked);
+        assert_eq!(out.changed.unwrap().attention, AttentionLevel::None);
         assert!(out.alert.is_none(), "looking at it: silent");
 
         b.set_focus(FocusState { expanded: Some(1), window_focused: false, ..Default::default() });
         let out = b.apply(1, &sig("PermissionRequest"), &label(), 2.0, false);
-        assert_eq!(out.changed.unwrap().attention, AttentionLevel::Acked, "expanded counts as interacted");
+        assert_eq!(out.changed.unwrap().attention, AttentionLevel::None, "on screen counts as seen");
         let a = out.alert.unwrap();
         assert!(a.sound && a.toast && a.flash, "app unfocused: ping + toast + flash");
         assert_eq!(a.kind, AlertKind::NeedsInput);
@@ -293,7 +294,7 @@ mod tests {
         let mut b = AttentionBook::default();
         b.apply(4, &sig("Stop"), &label(), 1.0, false);
         let changed = b.set_focus(FocusState { expanded: Some(4), window_focused: true, ..Default::default() });
-        assert_eq!(changed[0].attention, AttentionLevel::Acked);
+        assert_eq!(changed[0].attention, AttentionLevel::None);
     }
 
     #[test]
@@ -304,7 +305,7 @@ mod tests {
         assert_eq!(changed.iter().map(|p| p.key).collect::<Vec<_>>(), vec![3], "showing a pane acks it");
         b.apply(2, &sig("UserPromptSubmit"), &label(), 2.0, false);
         let out = b.apply(2, &sig("Stop"), &label(), 3.0, false);
-        assert_eq!(out.changed.unwrap().attention, AttentionLevel::Acked, "on screen: no glow");
+        assert_eq!(out.changed.unwrap().attention, AttentionLevel::None, "on screen: no glow");
         let a = out.alert.unwrap();
         assert!(a.sound && !a.toast && !a.flash, "a split still pings, no toast while focused");
         assert!(b.apply(1, &sig("Stop"), &label(), 4.0, false).alert.is_none(), "the pane worked in stays silent");

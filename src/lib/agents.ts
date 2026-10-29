@@ -33,10 +33,11 @@ export function status(att: PaneAttention | undefined): { text: string; tone: st
   switch (att.activity) {
     case "working":
       return { text: "working", tone: "text-sky-400" };
+    // Once looked at, still blocked or idle, but no longer waiting on you.
     case "needsInput":
-      return { text: att.reason ?? "needs you", tone: "text-iris-300" };
+      return { text: att.reason ?? "needs you", tone: att.attention === "unacked" ? "text-iris-300" : "text-mist-400" };
     case "idle":
-      return att.attention === "none" ? { text: "idle", tone: "text-mist-400" } : { text: "waiting on you", tone: "text-ember-300" };
+      return att.attention === "unacked" ? { text: "waiting on you", tone: "text-ember-300" } : { text: "idle", tone: "text-mist-400" };
     default:
       return { text: "", tone: "text-mist-400" };
   }

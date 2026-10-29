@@ -647,10 +647,9 @@ pub enum Activity {
 pub enum AttentionLevel {
     #[default]
     None,
-    /// Something happened the user hasn't looked at yet (tile glows).
+    /// Something happened the user hasn't looked at yet: the tile glows and says "waiting on you".
+    /// Looking at the pane (opening it, or having it on screen) resolves it.
     Unacked,
-    /// Seen, but still waiting on the user (tile shows a banner).
-    Acked,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Default)]

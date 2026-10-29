@@ -14,13 +14,12 @@ export interface Group {
   panes: PaneInfo[];
 }
 
-/** Status rank for "attention first": unseen needs-input, unseen done, seen waiting, working, rest. */
+/** Status rank for "attention first": unseen needs-input, unseen done, working, the rest. */
 export function attentionRank(a: PaneAttention | undefined): number {
-  if (!a) return 5;
+  if (!a) return 4;
   if (a.attention === "unacked") return a.activity === "needsInput" ? 0 : 1;
-  if (a.attention === "acked") return 2;
-  if (a.activity === "working") return 3;
-  return 4;
+  if (a.activity === "working") return 2;
+  return 3;
 }
 
 export function sortPanes(
@@ -66,9 +65,9 @@ export function groupPanes(panes: PaneInfo[], by: Exclude<GroupBy, "machine">, l
   }
   const rank = (p: PaneInfo) => attentionRank(attention[p.key]);
   const buckets: [string, string, (p: PaneInfo) => boolean][] = [
-    ["needs", "Needs you", (p) => rank(p) <= 2],
-    ["working", "Working", (p) => rank(p) === 3],
-    ["other", "Everything else", (p) => rank(p) >= 4],
+    ["needs", "Needs you", (p) => rank(p) <= 1],
+    ["working", "Working", (p) => rank(p) === 2],
+    ["other", "Everything else", (p) => rank(p) >= 3],
   ];
   return buckets.map(([id, title, f]) => ({ id: `status:${id}`, title, panes: panes.filter(f) })).filter((g) => g.panes.length > 0);
 }

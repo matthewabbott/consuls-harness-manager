@@ -312,7 +312,7 @@ export function mockBackend(): Backend {
     setAttention({
       key,
       activity,
-      attention: waiting ? (mockFocus.expanded === key ? "acked" : "unacked") : "none",
+      attention: waiting && mockFocus.expanded !== key ? "unacked" : "none",
       reason,
       since: Date.now() / 1000,
       pulse: prev?.pulse ?? 0,
@@ -346,12 +346,12 @@ export function mockBackend(): Backend {
       mockFocus = focus;
       for (const key of [focus.expanded ?? -1, ...focus.visible]) {
         const st = attention.get(key);
-        if (st && st.attention === "unacked") setAttention({ ...st, attention: "acked" });
+        if (st && st.attention === "unacked") setAttention({ ...st, attention: "none" });
       }
     },
     ackPane: async (key) => {
       const st = attention.get(key);
-      if (st && st.attention === "unacked") setAttention({ ...st, attention: "acked" });
+      if (st && st.attention === "unacked") setAttention({ ...st, attention: "none" });
     },
     setPaneMuted: async () => {},
     setSoundPrefs: async (prefs) => {
