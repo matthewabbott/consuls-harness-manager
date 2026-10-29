@@ -464,7 +464,7 @@ shell built as an iPhone app. See README.md.
   focus; from the grid → alone (the split it replaces is kept as `previous`); else the focused
   leaf's place. `useApp.expanded` mirrors the composer's pane (the focused pane leaf). A pane leaf
   goes when its pane, seen this session, goes; a file leaf when its file is closed.
-  - Visible panes other than the focused one are acked and marked seen (pushes cancel) but still
+  - Visible panes other than the focused one are resolved and marked seen (pushes cancel) but still
     ping (`FocusState.visible`). Two views of one tmux window scale instead of resizing it.
   - Maximize is per leaf (`toggleZoom`): the others stay mounted, hidden, so nothing re-seeds.
 - **Hotkeys** (`lib/hotkeys.ts`, `store/hotkeys.ts`): ⌘digit jumps, ⌘⌥digit assigns the focused
