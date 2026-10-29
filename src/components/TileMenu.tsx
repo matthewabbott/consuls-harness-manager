@@ -117,10 +117,7 @@ export default function TileMenu({ menu, onClose }: { menu: TileMenuState; onClo
             <div className="my-1 h-px bg-ink-700" />
           </>
         )}
-        <MenuItem icon={<BellRing className="h-3.5 w-3.5" />} onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}>
-          <span className="flex-1">Ping on terminal bell</span>
-          {pane.bellPings && <Check className="h-3.5 w-3.5 text-sky-400" />}
-        </MenuItem>
+        <BellRow pane={pane} />
         <MenuItem icon={<EyeOff className="h-3.5 w-3.5" />} onClick={() => { backend().then((b) => b.setPaneHidden(pane.key, true)); onClose(); }}>
           Hide (keeps running)
         </MenuItem>
@@ -159,6 +156,36 @@ function HotkeyRow({ target }: { target: string }) {
           className={`h-5 w-5 rounded font-mono text-[10.5px] ${mine === d ? "bg-sky-400/90 text-ink-950" : keys[d] ? "text-mist-400 hover:bg-ink-700" : "text-mist-500 hover:bg-ink-700 hover:text-mist-200"}`}
         >
           {d}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Whether the pane's terminal bell pings: by default (on for chat clients like irssi), on, or off. */
+function BellRow({ pane }: { pane: PaneInfo }) {
+  const set = (bell: boolean | null) => backend().then((b) => b.setPaneBell(pane.key, bell));
+  const chat = /^(irssi|weechat)$/.test(pane.currentCommand);
+  const options: [string, boolean | null, string][] = [
+    ["Auto", null, chat ? "On, as for chat clients" : "Off, as for most programs"],
+    ["On", true, "Ping when this pane rings the terminal bell"],
+    ["Off", false, "Never ping for this pane's bell"],
+  ];
+  return (
+    <div
+      className="flex items-center gap-1 px-2.5 py-1"
+      title={chat ? "irssi rings for what its beep_msg_level says (normally highlights and private messages); /set beep_msg_level HILIGHT MSGS keeps it to those" : undefined}
+    >
+      <BellRing className={`mr-1.5 h-3.5 w-3.5 shrink-0 ${pane.bellPings ? "text-sky-400" : "text-mist-500"}`} />
+      <span className="flex-1 text-[12.5px] text-mist-200">Bell</span>
+      {options.map(([label, value, hint]) => (
+        <button
+          key={label}
+          onClick={() => set(value)}
+          title={hint}
+          className={`rounded px-1.5 py-0.5 text-[11px] ${pane.bell === value ? "bg-sky-400/90 text-ink-950" : "text-mist-400 hover:bg-ink-700 hover:text-mist-100"}`}
+        >
+          {label}
         </button>
       ))}
     </div>

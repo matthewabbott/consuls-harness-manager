@@ -569,14 +569,20 @@ shell built as an iPhone app. See README.md.
 
 - tmux passes BEL through in `%output`; the tile terminal's `Collector` reports `Event::Bell`
   (alacritty doesn't count a BEL that terminates an OSC string). Whether it pings is
-  `harness::bell_pings(@chm_bell, current_command)`; attention rate-limits to one per 15 s and
-  never marks the pane as hooked.
+  `harness::bell_pings(@chm_bell, current_command)`, set per pane in ⋯ → Bell (Auto: on for chat
+  clients; On; Off); attention rate-limits to one per 15 s and never marks the pane as hooked.
+- Bells within a second of a seed landing don't count (`SEED_SETTLE`): a seed drops output, and
+  a title cut there (`ESC ] 0 ; … BEL`; pi sets one constantly) ends in a stray BEL.
+  `examples/localtmux` reproduces it (a title loop while the pane is resized).
+- "Finished" for an agent that's already idle doesn't alert again (`attention.rs`): a second
+  report of the same turn (pi's extension sends its `agent_end` fallback only when no
+  `agent_settled` follows within 3 s).
 
 ## Chimes
 
 - Chimes never queue up (`alerts.rs` `Schedule`): at most two of each kind per pane are waiting
   or playing, and more are dropped. A pane's chimes play back to back; different panes' overlap,
-  with starts at least 150 ms apart. Alerts without a pane (summaries, Settings' tests) are a
+  with starts at least 450 ms apart (a burst is chimes you can count, not one blended sound). Alerts without a pane (summaries, Settings' tests) are a
   pane of their own.
 - The audio thread opens the default device for a burst and mixes each chime in with a leading
   delay, rendered at the device's rate (rodio resamples in pieces of ≤ 32768 samples, and a seam

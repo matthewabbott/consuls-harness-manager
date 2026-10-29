@@ -92,6 +92,11 @@ impl<L: EventListener> TileTerm<L> {
         self.parser.advance(&mut self.term, bytes);
     }
 
+    /// Forgets a sequence the parser was in the middle of (the rest of it was dropped).
+    pub fn restart_parser(&mut self) {
+        self.parser = Processor::new();
+    }
+
     /// Plain text of the visible screen (used for screen-regex attention fallbacks and tests).
     pub fn text(&self) -> String {
         let grid = self.term.grid();

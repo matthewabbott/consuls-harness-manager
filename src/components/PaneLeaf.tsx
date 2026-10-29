@@ -103,6 +103,10 @@ export default function PaneLeaf({ pane, leafId, split, focused, shared, onCompo
     closeLeaf();
   };
   const keys = usePrefixKeys(pane, toGrid, () => toggleZoom(leafId));
+  const openMenu = () => {
+    const box = frameRef.current?.getBoundingClientRect();
+    useApp.getState().setTileMenu({ pane, x: box ? box.right - 230 : 0, y: box ? box.top : 0 });
+  };
   const endTmuxRename = () => {
     keys.setRenaming(null);
     termRef.current?.focus();
@@ -191,13 +195,7 @@ export default function PaneLeaf({ pane, leafId, split, focused, shared, onCompo
           </HeaderIcon>
           {splitButtons}
           {zoomButton}
-          <HeaderIcon
-            onClick={() => {
-              const box = frameRef.current?.getBoundingClientRect();
-              useApp.getState().setTileMenu({ pane, x: box ? box.right - 220 : 0, y: box ? box.top : 0 });
-            }}
-            title="More"
-          >
+          <HeaderIcon onClick={() => openMenu()} title="More">
             <MoreHorizontal className="h-3.5 w-3.5" />
           </HeaderIcon>
           <HeaderIcon onClick={closeLeaf} title="Close this split (the pane keeps running)">
@@ -239,17 +237,11 @@ export default function PaneLeaf({ pane, leafId, split, focused, shared, onCompo
             {splitButtons}
             {zoomButton}
             {canTrack(pane) && <NotifyToggle pane={pane} />}
-            <button
-              onClick={() => backend().then((b) => b.setPaneBell(pane.key, !pane.bellPings))}
-              title={
-                pane.bellPings
-                  ? "Pinging when this pane rings the terminal bell (click to stop)"
-                  : "Ping when this pane rings the terminal bell — e.g. IRC highlights (on by default for irssi and weechat)"
-              }
-              className={`rounded-lg p-1.5 transition-colors hover:bg-ink-700 ${pane.bellPings ? "text-sky-400" : "text-mist-500 hover:text-mist-100"}`}
-            >
-              <BellRing className="h-3.5 w-3.5" />
-            </button>
+            {pane.bellPings && (
+              <span title="Pings when this pane rings the terminal bell (change it in ⋯)" className="p-1.5 text-sky-400">
+                <BellRing className="h-3.5 w-3.5" />
+              </span>
+            )}
             <button
               onClick={toggleMute}
               title={muted ? "Unmute pings for this pane" : "Mute pings for this pane (it will still glow)"}
@@ -257,6 +249,9 @@ export default function PaneLeaf({ pane, leafId, split, focused, shared, onCompo
             >
               {muted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
             </button>
+            <HeaderIcon onClick={() => openMenu()} title="More: bell, labels, hotkey, notifications…">
+              <MoreHorizontal className="h-3.5 w-3.5" />
+            </HeaderIcon>
             <button
               onClick={() => setSearching(true)}
               title={`Search (${keyLabel("Mod+F")})`}

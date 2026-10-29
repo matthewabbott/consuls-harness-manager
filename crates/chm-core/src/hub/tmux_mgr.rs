@@ -85,6 +85,8 @@ const SUB_FORMAT: &str = "#{pane_current_command}|~|#{alternate_on}|~|#{@chm_hid
 
 /// `@chm_seen` is written at most this often per pane.
 const SEEN_EVERY: Duration = Duration::from_secs(5);
+/// Bells this soon after a seed lands don't count (see `Pane::seeded`).
+const SEED_SETTLE: Duration = Duration::from_secs(1);
 
 struct Client {
     client: Arc<ControlClient>,
@@ -100,6 +102,9 @@ struct Pane {
     events: Collector,
     /// Tag of an in-flight seed; output is dropped until it lands (it's in the capture).
     seeding: Option<u64>,
+    /// When the last seed landed: output just after it may start mid-sequence (its head was
+    /// dropped), and the tail of a title (`ESC ] 0 ; … BEL`) would read as a bell.
+    seeded: Option<Instant>,
     dirty: bool,
     /// Expanded in the UI: raw output is forwarded as frames.
     streaming: bool,
@@ -366,6 +371,7 @@ impl TmuxManager {
                         term,
                         events,
                         seeding: None,
+                        seeded: None,
                         dirty: true,
                         streaming,
                         last_output: None,
@@ -523,7 +529,8 @@ impl TmuxManager {
                             self.ctx.clipboard(p.key, text.clone());
                         }
                     }
-                    let rang = events.iter().any(|e| matches!(e, alacritty_terminal::event::Event::Bell));
+                    let rang = events.iter().any(|e| matches!(e, alacritty_terminal::event::Event::Bell))
+                        && p.seeded.is_none_or(|t| t.elapsed() > SEED_SETTLE);
                     if rang && crate::harness::bell_pings(p.row.bell, &p.row.current_command) {
                         let sig = Signal { event: "Bell".into(), detail: String::new(), ts: 0, heuristic: false };
                         let (key, label) = (p.key, self.label(&self.panes[&pane]));
@@ -562,7 +569,9 @@ impl TmuxManager {
                     Some(seed) => {
                         let (w, h) = (seed.modes.width, seed.modes.height);
                         p.term.resize(w, h);
+                        p.term.restart_parser();
                         p.term.feed(&seed.screen_only().to_terminal_bytes());
+                        p.seeded = Some(Instant::now());
                         p.dirty = true;
                         if p.streaming {
                             let mut payload = Vec::new();

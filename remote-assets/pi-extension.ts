@@ -39,18 +39,23 @@ function idle(ctx: Ctx): boolean {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export default function consuls(pi: any) {
   // pi ≥ 0.80 reports when a run has fully settled (no retry, compaction or queued message
-  // left); older ones only end each run, so the first settle switches that fallback off.
+  // left); older ones only end each run. So a run's end counts as finished only if no settle
+  // follows within a few seconds (and the first settle switches that fallback off for good).
   let settles = false;
+  let fallback: ReturnType<typeof setTimeout> | undefined;
   pi.on("session_start", (_e: unknown, ctx: Ctx) => record("SessionStart", "", session(ctx)));
   pi.on("agent_start", (_e: unknown, ctx: Ctx) => record("UserPromptSubmit", "", session(ctx)));
   pi.on("agent_settled", (e: { aborted?: boolean }, ctx: Ctx) => {
     settles = true;
+    clearTimeout(fallback);
     record(e?.aborted ? "Interrupted" : "Stop", "", session(ctx));
   });
   pi.on("agent_end", (_e: unknown, ctx: Ctx) => {
-    setTimeout(() => {
+    if (settles) return;
+    clearTimeout(fallback);
+    fallback = setTimeout(() => {
       if (!settles && idle(ctx)) record("Stop", "", session(ctx));
-    }, 500);
+    }, 3000);
   });
   // An extension waiting on you mid-run (a confirmation, a choice).
   pi.on("ui_prompt_start", (_e: unknown, ctx: Ctx) => {

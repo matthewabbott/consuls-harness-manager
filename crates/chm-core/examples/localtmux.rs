@@ -187,6 +187,23 @@ async fn run(core: &Arc<Core>, rec: &Arc<Recorder>, spec: NewPaneSpec, folder: &
     core.resize_pane(key, 100, 30).await.map_err(anyhow::Error::msg)?;
     wait_for("resized to 100x30", Duration::from_secs(10), || pane(key).is_some_and(|p| (p.width, p.height) == (100, 30))).await?;
 
+    // A program that keeps setting its title (pi does) while the pane re-seeds (each resize): a
+    // title's closing BEL whose start a seed dropped mustn't ring.
+    core.set_pane_bell(key, Some(true));
+    core.send_text(key, "while :; do printf '\\033]0;title %s\\007' \"$RANDOM\"; done".into());
+    core.send_keys(key, vec!["Enter".into()]);
+    for (w, h) in [(90, 28), (100, 30), (94, 26), (100, 30), (88, 30), (100, 30)] {
+        core.resize_pane(key, w, h).await.map_err(anyhow::Error::msg)?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let rang = rec.attention.lock().unwrap().get(&key).is_some_and(|a| a.reason.as_deref() == Some("Rang the bell"));
+    core.send_keys(key, vec!["C-c".into()]);
+    core.set_pane_bell(key, None);
+    anyhow::ensure!(!rang, "a title cut by a re-seed rang the bell");
+    println!("ok   no stray bells from titles cut by re-seeds");
+    wait_for("back to 100x30", Duration::from_secs(10), || pane(key).is_some_and(|p| (p.width, p.height) == (100, 30))).await?;
+
     // Names live in @chm_name; the tmux window keeps its own.
     let window = |k: u32| pane(k).and_then(|p| p.tmux).map(|t| t.window_name).unwrap_or_default();
     let original = window(key);

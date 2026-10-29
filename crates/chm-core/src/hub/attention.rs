@@ -171,6 +171,9 @@ impl AttentionBook {
                 });
                 Outcome { changed: Some(entry.clone()), alert }
             }
+            // "Finished" again for an agent that's already idle (a second report of the same turn,
+            // or a stop without a prompt): nothing new.
+            Effect::State(Activity::Idle, Some(AlertKind::Finished), _) if entry.activity == Activity::Idle => Outcome { changed: None, alert: None },
             Effect::State(activity, alert_kind, reason) => {
                 entry.activity = activity;
                 entry.reason = Some(reason.clone());
@@ -306,6 +309,20 @@ mod tests {
         assert!(a.sound && !a.toast && !a.flash, "a split still pings, no toast while focused");
         assert!(b.apply(1, &sig("Stop"), &label(), 4.0, false).alert.is_none(), "the pane worked in stays silent");
         assert!(b.focus.seen(2) && !b.focus.looking(2) && !b.focus.seen(9));
+    }
+
+    #[test]
+    fn finishing_twice_alerts_once() {
+        let mut b = AttentionBook::default();
+        b.apply(1, &sig("UserPromptSubmit"), &label(), 1.0, false);
+        assert!(b.apply(1, &sig("Stop"), &label(), 2.0, false).alert.is_some());
+        let again = b.apply(1, &sig("Stop"), &label(), 5.0, false);
+        assert!(again.alert.is_none() && again.changed.is_none(), "already idle: no second ping");
+        assert!(b.apply(1, &sig("StopFailure"), &label(), 6.0, false).alert.is_none());
+        // Needs-input → finished is news; so is a first event after a restart (activity unknown).
+        b.apply(1, &sig("PermissionRequest"), &label(), 7.0, false);
+        assert!(b.apply(1, &sig("Stop"), &label(), 8.0, false).alert.is_some());
+        assert!(b.apply(2, &sig("Stop"), &label(), 9.0, false).alert.is_some());
     }
 
     #[test]

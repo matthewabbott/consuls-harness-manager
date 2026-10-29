@@ -73,9 +73,9 @@ const KINDS: [AlertKind; 5] = [AlertKind::Finished, AlertKind::NeedsInput, Alert
 const PER_KIND: usize = 2;
 
 #[cfg(desktop)]
-/// The least time between the starts of any two chimes: a burst from many panes ripples instead
-/// of landing as one blob.
-const STAGGER: Duration = Duration::from_millis(150);
+/// The least time between the starts of any two chimes: a burst from many panes is a run of
+/// chimes you can count, overlapping only at their tails, instead of one blended sound.
+const STAGGER: Duration = Duration::from_millis(450);
 
 #[cfg(desktop)]
 /// Decides when each chime starts, if at all. A pane's chimes play one after another; different
@@ -401,10 +401,15 @@ mod tests {
             all.extend(played);
         }
         assert_staggered(&all);
-        // Each pane's first chime starts while the one before is still playing.
-        let firsts: Vec<Instant> = got.chunks(5).map(|c| c[0].unwrap()).collect();
+        assert_eq!(got[0], Some(t0));
+
+        // The usual burst: one chime from each of three panes, a run of three you can count,
+        // each starting while the one before still rings.
+        let mut s = Schedule::default();
+        let one_each: Vec<_> = (1..=3).map(|pane| (Some(pane), AlertKind::Finished)).collect();
+        let firsts: Vec<Instant> = burst(&mut s, t0, &one_each).into_iter().flatten().collect();
         assert_eq!(firsts, [t0, t0 + STAGGER, t0 + STAGGER * 2]);
-        assert!(firsts[2] < firsts[0] + finished);
+        assert!(firsts[1] < firsts[0] + finished && firsts[2] < firsts[1] + finished);
     }
 
     #[test]
