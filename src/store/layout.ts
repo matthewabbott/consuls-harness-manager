@@ -35,6 +35,7 @@ import { paneIdentity } from "../lib/panes";
 import { uiStorage } from "../lib/uiState";
 import { onIdentityChange, setPaneShower, useApp } from "./app";
 import { setFileShower, useEditor } from "./editor";
+import { useHotkeys } from "./hotkeys";
 import { useUi } from "./ui";
 
 interface LayoutState {
@@ -259,9 +260,17 @@ export async function startLayout(windowLabel: string) {
     const pane = origin === null ? undefined : allPanes().find((p) => p.key === origin);
     useLayout.getState().openFileBeside(pane ? paneTarget(paneIdentity(pane)) : null, fileTarget(id));
   });
+  // A pane gained a stable identity: its split, hotkey and "last opened" go with it.
   onIdentityChange((from, to) => {
     const root = useLayout.getState().root;
     if (root) useLayout.setState({ root: renameTarget(root, paneTarget(from), paneTarget(to)) });
+    useHotkeys.getState().rename(paneTarget(from), paneTarget(to));
+    useUi.setState((s) => {
+      if (s.lastOpened[from] === undefined) return s;
+      const lastOpened = { ...s.lastOpened, [to]: Math.max(s.lastOpened[from], s.lastOpened[to] ?? 0) };
+      delete lastOpened[from];
+      return { lastOpened };
+    });
   });
 
   // Files the layout shows, open again (open files aren't kept across restarts).

@@ -578,6 +578,16 @@ shell built as an iPhone app. See README.md.
   report of the same turn (pi's extension sends its `agent_end` fallback only when no
   `agent_settled` follows within 3 s).
 
+## Notifications list
+
+- The core keeps the last 200 alerts in memory (`Ctx::alert`, which every alert goes through
+  before the sink: `AlertEntry`, `CoreEvent::Alerted`, `CoreSnapshot.alerts`). The desktop's
+  Notifications tab (`NotificationsPanel`) lists them newest first; a click opens the pane, and
+  opening resolves its "waiting on you" (`ack` sets attention to `None`: there's no in-between
+  state). Read and cleared are times, not ids (`store/alerts.ts`): ids start over with the core.
+- A pane's identity changing (`onIdentityChange`) carries its layout leaf, hotkey and
+  `lastOpened` over; the filmstrip is ordered by `lastOpened`.
+
 ## Chimes
 
 - Chimes never queue up (`alerts.rs` `Schedule`): at most two of each kind per pane are waiting

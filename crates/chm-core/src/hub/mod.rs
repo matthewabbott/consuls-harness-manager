@@ -316,6 +316,7 @@ impl Core {
             hosts: self.ctx.host_states.lock().unwrap().values().cloned().collect(),
             panes: self.ctx.panes.lock().unwrap().values().flatten().cloned().collect(),
             attention: self.ctx.attention.lock().unwrap().all(),
+            alerts: self.ctx.alerts.lock().unwrap().1.iter().cloned().collect(),
         }
     }
 
@@ -1030,6 +1031,7 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{Alert, AlertKind};
 
     struct Collect(Mutex<Vec<CoreEvent>>);
     impl Sink for Collect {
@@ -1050,6 +1052,31 @@ mod tests {
         core.flush_ui_state();
         let again = Core::new(dir.clone(), sink);
         assert_eq!(again.ui_state().into_iter().collect::<Vec<_>>(), [("consuls.ui.v1".to_string(), "{\"a\":1}".to_string())]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn alerts_are_listed() {
+        let dir = std::env::temp_dir().join(format!("chm-alerts-test-{}", std::process::id()));
+        let sink = Arc::new(Collect(Mutex::new(Vec::new())));
+        let core = Core::new(dir.clone(), sink.clone());
+        let alert = |n: usize| Alert {
+            key: Some(n as u32),
+            kind: AlertKind::Finished,
+            title: format!("agent {n} is done"),
+            body: String::new(),
+            sound: true,
+            toast: false,
+            flash: false,
+        };
+        for n in 0..crate::model::ALERT_LOG + 5 {
+            core.ctx.alert(alert(n), Some("box".into()));
+        }
+        let list = core.snapshot().alerts;
+        assert_eq!(list.len(), crate::model::ALERT_LOG, "the oldest go");
+        assert_eq!((list[0].title.as_str(), list.last().unwrap().id), ("agent 5 is done", crate::model::ALERT_LOG as u32 + 5));
+        let sent = sink.0.lock().unwrap().iter().filter(|e| matches!(e, CoreEvent::Alerted { .. })).count();
+        assert_eq!(sent, crate::model::ALERT_LOG + 5);
         let _ = std::fs::remove_dir_all(dir);
     }
 

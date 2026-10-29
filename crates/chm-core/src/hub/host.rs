@@ -546,7 +546,7 @@ async fn connected_phase(
                 if tmux_ok { mgr.tick().await }
                 if missed > 0 && last_missed_at.is_some_and(|t| t.elapsed() > Duration::from_secs(1)) {
                     let unfocused = !ctx.attention.lock().unwrap().focus.window_focused;
-                    ctx.sink.alert(Alert {
+                    ctx.alert(Alert {
                         key: None,
                         kind: AlertKind::Summary,
                         title: format!("{missed} agent{} on {id} need{} you", if missed == 1 { "" } else { "s" }, if missed == 1 { "s" } else { "" }),
@@ -554,7 +554,7 @@ async fn connected_phase(
                         sound: true,
                         toast: unfocused,
                         flash: unfocused,
-                    });
+                    }, Some(id.clone()));
                     missed = 0;
                 }
             },

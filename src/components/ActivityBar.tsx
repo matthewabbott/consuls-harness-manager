@@ -1,6 +1,7 @@
-import { Files, History, Server, Settings, Video } from "lucide-react";
+import { Bell, Files, History, Server, Settings, Video } from "lucide-react";
 
 import { keyLabel } from "../lib/platform";
+import { useAlertsSeen } from "../store/alerts";
 import { useApp } from "../store/app";
 import { updateUiPrefs } from "../store/prefs";
 import { useUi, type SidebarTab } from "../store/ui";
@@ -19,11 +20,14 @@ export default function ActivityBar() {
   const show = useUi((s) => s.showSidebarTab);
   const recording = useApp((s) => s.config.ui.recording);
   const waiting = useApp((s) => Object.values(s.attention).filter((a) => a.attention === "unacked").length);
+  const readTo = useAlertsSeen((s) => Math.max(s.seenAt, s.clearedAt));
+  const unread = useApp((s) => s.alerts.filter((a) => a.at > readTo).length);
 
   const tabs: Tab[] = [
     { id: "machines", label: "Machines & panes", icon: <Server className="h-[18px] w-[18px]" />, badge: waiting },
     { id: "files", label: "Files", icon: <Files className="h-[18px] w-[18px]" /> },
     { id: "history", label: "Recent agent sessions", icon: <History className="h-[18px] w-[18px]" /> },
+    { id: "alerts", label: "Notifications: what pinged, newest first", icon: <Bell className="h-[18px] w-[18px]" />, badge: tab === "alerts" && !collapsed ? 0 : unread },
   ];
 
   return (

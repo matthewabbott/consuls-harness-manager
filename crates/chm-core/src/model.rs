@@ -615,7 +615,28 @@ pub enum CoreEvent {
     /// A program in pane `key` copied `text` to the clipboard (OSC 52); only sent while the
     /// app is focused.
     Clipboard { key: u32, text: String },
+    /// An alert went out (it's in the notifications list too).
+    Alerted { entry: AlertEntry },
 }
+
+/// An alert as the notifications list keeps it (the last [`ALERT_LOG`], in memory).
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct AlertEntry {
+    pub id: u32,
+    /// When it went out (unix seconds).
+    pub at: f64,
+    /// The pane (none: a summary of several).
+    pub key: Option<u32>,
+    pub host: Option<HostId>,
+    pub kind: AlertKind,
+    pub title: String,
+    pub body: String,
+}
+
+/// How many alerts the notifications list keeps.
+pub const ALERT_LOG: usize = 200;
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -626,6 +647,8 @@ pub struct CoreSnapshot {
     pub hosts: Vec<HostState>,
     pub panes: Vec<PaneInfo>,
     pub attention: Vec<PaneAttention>,
+    /// The notifications list, oldest first.
+    pub alerts: Vec<AlertEntry>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, TS, PartialEq, Eq, Default)]

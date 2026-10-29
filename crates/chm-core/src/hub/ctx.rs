@@ -1,11 +1,11 @@
 //! State shared by the core and every host actor.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::attention::{AttentionBook, PaneLabel, Signal};
 use crate::labels::{self, LabelSet};
-use crate::model::{Alert, CoreEvent, FocusState, HostFacts, HostId, HostPhase, HostState, NoticeLevel, PaneInfo, TailnetStatus};
+use crate::model::{ALERT_LOG, Alert, AlertEntry, CoreEvent, FocusState, HostFacts, HostId, HostPhase, HostState, NoticeLevel, PaneInfo, TailnetStatus};
 use crate::ssh::hostkeys::KnownHosts;
 
 /// Where the core pushes everything the UI needs.
@@ -49,6 +49,8 @@ pub(crate) struct Ctx {
     pub labels: Mutex<SharedLabels>,
     /// A machine brought label changes: the core saves them to its config.
     pub labels_changed: tokio::sync::Notify,
+    /// The notifications list (the last id given, and the entries, oldest first).
+    pub alerts: Mutex<(u32, VecDeque<AlertEntry>)>,
 }
 
 impl Ctx {
@@ -68,6 +70,7 @@ impl Ctx {
             streaming: Mutex::new(HashSet::new()),
             labels: Mutex::new(SharedLabels { encoded: labels.encode(), set: labels, rev: 0 }),
             labels_changed: tokio::sync::Notify::new(),
+            alerts: Mutex::new((0, VecDeque::new())),
         }
     }
 
@@ -212,9 +215,27 @@ impl Ctx {
             self.emit(CoreEvent::Attention { state });
         }
         if let Some(alert) = outcome.alert {
-            self.sink.alert(alert);
+            let host = self.panes.lock().unwrap().iter().find(|(_, list)| list.iter().any(|p| p.key == key)).map(|(h, _)| h.clone());
+            self.alert(alert, host);
         }
         alerted
+    }
+
+    /// Sends an alert out (chime, toast…), and keeps it in the notifications list.
+    pub fn alert(&self, alert: Alert, host: Option<HostId>) {
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        let entry = {
+            let mut log = self.alerts.lock().unwrap();
+            log.0 += 1;
+            let entry = AlertEntry { id: log.0, at, key: alert.key, host, kind: alert.kind, title: alert.title.clone(), body: alert.body.clone() };
+            log.1.push_back(entry.clone());
+            if log.1.len() > ALERT_LOG {
+                log.1.pop_front();
+            }
+            entry
+        };
+        self.emit(CoreEvent::Alerted { entry });
+        self.sink.alert(alert);
     }
 
     pub fn ack(&self, key: u32) {

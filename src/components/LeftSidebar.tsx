@@ -3,6 +3,7 @@ import ActivityBar from "./ActivityBar";
 import ResizeHandle from "./ResizeHandle";
 import FilesPanel from "./FilesPanel";
 import HistoryPanel from "./HistoryPanel";
+import NotificationsPanel from "./NotificationsPanel";
 import MachinesPanel from "./Sidebar";
 
 export default function LeftSidebar() {
@@ -21,6 +22,7 @@ export default function LeftSidebar() {
             {tab === "machines" && <MachinesPanel />}
             {tab === "files" && <FilesPanel />}
             {tab === "history" && <HistoryPanel />}
+            {tab === "alerts" && <NotificationsPanel />}
           </aside>
           <ResizeHandle axis="x" size={width} direction={1} onResize={setWidth} resetTo={SIDEBAR.default} className="-ml-1.5" />
         </>

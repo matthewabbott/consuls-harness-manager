@@ -5,6 +5,7 @@ import type { Backend, TransferEvent } from "./backend";
 import type { SttStatus } from "./bindings/SttStatus";
 import type { CoreEvent } from "./bindings/CoreEvent";
 import type { CoreSnapshot } from "./bindings/CoreSnapshot";
+import type { AlertEntry } from "./bindings/AlertEntry";
 import type { FocusState } from "./bindings/FocusState";
 import type { PaneAttention } from "./bindings/PaneAttention";
 import type { SoundPrefs } from "./bindings/SoundPrefs";
@@ -284,6 +285,23 @@ export function mockBackend(): Backend {
     if (frameCb) frameCb(encodeFrame(FRAME_TILE, p.info.key, encodeTile(screen(p.info.width, p.info.height, p.lines, p.cursor))));
   }, 1000);
 
+  // Pretend notifications: a few from earlier, and one more every 25 s from a pane that's there.
+  const nowSecs = () => Date.now() / 1000;
+  const alertsLog: AlertEntry[] = [
+    { id: 1, at: nowSecs() - 3600, key: null, host: "spark2", kind: "summary", title: "2 agents on spark2 need you", body: "They finished or asked for input while you were away." },
+    { id: 2, at: nowSecs() - 900, key: panes[0]?.info.key ?? 1, host: panes[0]?.info.host ?? null, kind: "finished", title: "agent is done", body: "Finished — your turn · Claude Code on spark-d683" },
+    { id: 3, at: nowSecs() - 300, key: 999, host: "spark-d683", kind: "needsInput", title: "old agent needs you", body: "Needs permission: Bash · Claude Code on spark-d683" },
+  ];
+  window.setInterval(() => {
+    const p = panes[Math.floor(Math.random() * panes.length)];
+    if (!p) return;
+    const kinds = ["finished", "needsInput", "bell", "subtask"] as const;
+    const kind = kinds[alertsLog.length % kinds.length];
+    const entry: AlertEntry = { id: alertsLog.length + 1, at: nowSecs(), key: p.info.key, host: p.info.host, kind, title: `${p.info.title} pinged`, body: `${kind} · ${p.info.host}` };
+    alertsLog.push(entry);
+    emit({ type: "alerted", entry });
+  }, 25_000);
+
   let mockNotify: NotifyPrefs = { pausedUntil: null, needsInputSecs: 60, finishedSecs: 60 };
   const fullConfig = () => ({ hosts: [...config.hosts], labels: [...config.labels], sound: mockSound, ui: mockUi, notify: mockNotify });
   const snapshot = (): CoreSnapshot => ({
@@ -292,6 +310,7 @@ export function mockBackend(): Backend {
     hosts: [...hosts],
     panes: panes.filter((p) => hosts.find((h) => h.id === p.info.host)?.phase.phase === "connected").map((p) => p.info),
     attention: [...attention.values()],
+    alerts: [...alertsLog],
   });
 
   const emitConfig = () => emit({ type: "config", config: fullConfig() });

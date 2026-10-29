@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import type { AlertEntry } from "../ipc/bindings/AlertEntry";
 import type { AppConfig } from "../ipc/bindings/AppConfig";
 import type { CoreEvent } from "../ipc/bindings/CoreEvent";
 import type { CoreSnapshot } from "../ipc/bindings/CoreSnapshot";
@@ -57,6 +58,8 @@ interface AppStore {
   hosts: Record<string, HostState>;
   panes: Record<string, PaneInfo[]>;
   attention: Record<number, PaneAttention>;
+  /** The core's notifications list, oldest first. */
+  alerts: AlertEntry[];
   notices: Notice[];
   filter: PaneFilter;
   query: string;
@@ -113,6 +116,7 @@ export const useApp = create<AppStore>((set) => ({
   hosts: {},
   panes: {},
   attention: {},
+  alerts: [],
   notices: [],
   filter: "all",
   query: "",
@@ -139,6 +143,7 @@ export const useApp = create<AppStore>((set) => ({
         hosts: Object.fromEntries(s.hosts.map((h) => [h.id, h])),
         panes,
         attention: Object.fromEntries(s.attention.map((a) => [a.key, a])),
+        alerts: s.alerts,
       };
     }),
 
@@ -163,6 +168,8 @@ export const useApp = create<AppStore>((set) => ({
           return { panes: { ...st.panes, [ev.host]: ev.panes } };
         case "attention":
           return { attention: { ...st.attention, [ev.state.key]: ev.state } };
+        case "alerted":
+          return { alerts: [...st.alerts, ev.entry].slice(-200) };
         case "notice":
           return { notices: [...st.notices, { id: noticeId++, host: ev.host, level: ev.level, message: ev.message }].slice(-6) };
         case "clipboard": {

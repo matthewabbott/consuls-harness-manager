@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { backend } from "../ipc/backend";
 import { fileTarget, leaves, paneTarget } from "../lib/layoutTree";
 import { displayTitle, paneIdentity } from "../lib/panes";
+import { sortPanes } from "../lib/organize";
 import { keyLabel } from "../lib/platform";
 import { useApp } from "../store/app";
 import { useAttachmentsOf } from "../store/attachments";
@@ -45,8 +46,18 @@ export default function Workspace() {
   const shown = new Set(all.map((l) => l.target));
   const ended = target?.ended != null;
 
-  const others = list.filter((p) => !p.hidden && !shown.has(paneTarget(paneIdentity(p))));
-  const otherFiles = order.filter((id) => files[id] && !shown.has(fileTarget(id)));
+  const lastOpened = useUi((s) => s.lastOpened);
+  const attention = useApp((s) => s.attention);
+  // The ones you looked at last first (never opened: by name), then open files, latest first.
+  const others = sortPanes(
+    list.filter((p) => !p.hidden && !shown.has(paneTarget(paneIdentity(p)))),
+    "recent",
+    displayTitle,
+    attention,
+    lastOpened,
+    paneIdentity,
+  );
+  const otherFiles = order.filter((id) => files[id] && !shown.has(fileTarget(id))).reverse();
   const count = others.length + otherFiles.length;
   const waitingElsewhere = useApp((s) => others.filter((p) => s.attention[p.key]?.attention === "unacked").length);
   const showFilmstrip = count > 0 && !filmstripCollapsed && !maximized;
