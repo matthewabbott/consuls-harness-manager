@@ -44,7 +44,7 @@ impl Harness {
     /// its process after its version (`2.1.284`), which counts as Claude. pi renames its process
     /// `pi`, but macOS still reports `node`: there its window title (`π - <folder>`) tells.
     pub fn detect(current_command: &str, tagged: Option<&str>, title: &str) -> Option<Self> {
-        let name = current_command.trim_start_matches('-');
+        let name = program_name(current_command);
         let running = Self::from_name(name)
             .or_else(|| is_version_title(name).then_some(Harness::Claude))
             .or_else(|| (name == "node" && is_pi_title(title)).then_some(Harness::Pi));
@@ -56,7 +56,7 @@ impl Harness {
     }
 
     fn is_shell(cmd: &str) -> bool {
-        matches!(Self::from_name(cmd.trim_start_matches('-')), Some(Harness::Shell))
+        matches!(Self::from_name(program_name(cmd)), Some(Harness::Shell))
     }
 
     pub fn name(self) -> &'static str {
@@ -210,6 +210,16 @@ pub(crate) fn prompt_steps(text: &str, images: &[String], harness: Option<Harnes
     steps
 }
 
+/// A pane's program as its name: without a login shell's `-`, and without `.exe` (Windows
+/// programs in Cygwin's tmux can be reported as `node.exe`, `claude.exe`).
+fn program_name(cmd: &str) -> &str {
+    let name = cmd.trim_start_matches('-');
+    match name.len().checked_sub(4) {
+        Some(i) if name.is_char_boundary(i) && name[i..].eq_ignore_ascii_case(".exe") => &name[..i],
+        _ => name,
+    }
+}
+
 /// pi's window title: `π - <folder>` or `π - <session> - <folder>` (`_` where tmux's output
 /// isn't UTF-8).
 fn is_pi_title(title: &str) -> bool {
@@ -275,6 +285,12 @@ mod tests {
         assert_eq!(Harness::detect("node", Some("shell"), "_ - fix the build - consuls"), Some(Harness::Pi));
         assert_eq!(Harness::detect("node", None, "π > omp's title"), None);
         assert_eq!(Harness::detect("vim", None, "π - consuls"), None);
+        // Windows programs in Cygwin's tmux.
+        assert_eq!(detect("claude.exe", None), Some(Harness::Claude));
+        assert_eq!(detect("codex.EXE", None), Some(Harness::Codex));
+        assert_eq!(Harness::detect("node.exe", None, "π - consuls"), Some(Harness::Pi));
+        assert_eq!(detect("bash.exe", Some("claude")), Some(Harness::Shell));
+        assert_eq!(detect(".exe", None), None);
     }
 
     #[test]

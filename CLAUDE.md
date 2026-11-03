@@ -66,6 +66,7 @@ shell built as an iPhone app. See README.md.
 
 - Detection: `@chm_harness` (set at launch), else the process name: Claude Code's is its
   version, pi's is `pi` on Linux but `node` on macOS, where its title (`π - <folder>`) tells.
+  Names are compared without `.exe` (Windows programs in Cygwin's tmux).
 - pi (pi.dev, `@earendil-works/pi-coding-agent`) is launched as `pi -e pi-extension.ts --tui-mode
   regular`: its regular display draws in the normal screen, so the transcript reaches the
   terminal's scrollback (scrolling, search, "Latest ↓") like Claude Code's; it clears and
@@ -350,7 +351,8 @@ shell built as an iPhone app. See README.md.
 - Desktop transfers (`src-tauri/src/transfers.rs`, other machines only): `upload_paths` (paths
   dropped on the explorer, or picked with `tauri-plugin-dialog` called from Rust — no JS
   permission) and `download_to` (save dialog; written to `.name.consuls-part`, then renamed over
-  the destination the dialog already confirmed). Folders go whole under a free name; links to
+  the destination the dialog already confirmed). A remote file's name is made valid on Windows
+  (`transfers::local_name`) for the dialog and drag-outs. Folders go whole under a free name; links to
   folders aren't followed. Per-file progress over a `Channel<TransferEvent>`; `cancel_transfer`.
   The UI: `store/transfers.ts`, `TransfersList`, `MoveDialog` (Move to… / Copy to…, on
   `lib/useFolder.ts`). Drops come from `getCurrentWebview().onDragDropEvent`: **Windows reports
@@ -610,8 +612,13 @@ shell built as an iPhone app. See README.md.
   macOS/Linux; private socket, scratch state dir; hooks, `@chm_session`, reopening a session).
   For the real app, start it with
   `CHM_TMUX_SOCKET=<private>` (and, on Windows, run `scripts/e2e/local-tmux.mjs`).
-- Label sharing: `cargo run -p chm-core --example labelsync` (macOS/Linux: two cores with
-  scratch configs on one private tmux server; edits both ways, a third device, a server restart).
+- Label sharing: `cargo run -p chm-core --example labelsync` (two cores with scratch configs on
+  one private tmux server — Cygwin's on Windows, the native one elsewhere; edits both ways, a
+  third device, a server restart).
+- The Windows build type-checks from Linux/macOS: `rustup target add x86_64-pc-windows-gnu`, a
+  mingw-w64 toolchain, an existing `dist/` (any `index.html`), then
+  `cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu`. Do it after touching
+  `cfg(windows)` code from another OS.
 - Real UI end-to-end (Windows only: WebView2's DevTools protocol): start the app with
   `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`, then
   `HOST=<host> node scripts/e2e/cdp.mjs scripts/e2e/direct-shell.mjs` (or `local-shell.mjs`,

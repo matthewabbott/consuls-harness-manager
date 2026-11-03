@@ -72,6 +72,27 @@ fn file_name(p: &Path) -> String {
     p.file_name().map_or_else(|| p.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())
 }
 
+/// The name a file from another machine gets on this computer: its own on macOS, and on Windows
+/// one that Windows can create (`a:b?.txt` is fine on Linux and macOS).
+pub(crate) fn local_name(remote_path: &str) -> String {
+    let name = remote_path.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("download");
+    if cfg!(windows) { windows_name(name) } else { name.to_string() }
+}
+
+/// `name` made valid on Windows: the characters it refuses become `_`, trailing dots and spaces
+/// go, and device names (`con`, `nul.txt`, `COM1`) get a `_` in front.
+fn windows_name(name: &str) -> String {
+    let mut out: String = name.chars().map(|c| if c < ' ' || r#"<>:"/\|?*"#.contains(c) { '_' } else { c }).collect();
+    out.truncate(out.trim_end_matches(['.', ' ']).len());
+    let stem = out.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit() && stem.as_bytes()[3] != b'0');
+    if device {
+        out.insert(0, '_');
+    }
+    if out.is_empty() { "download".into() } else { out }
+}
+
 /// One step of an upload: a folder to make on the machine, or a file to send into one.
 enum Step {
     Mkdir(String),
@@ -297,7 +318,7 @@ pub async fn download_to(app: AppHandle, state: State<'_, AppState>, host: Strin
         return Err("that file is on this computer already".into());
     }
     let name = path.rsplit('/').next().unwrap_or("download").to_string();
-    let Some(dest) = pick_save(&app, &name).await? else { return Ok(()) };
+    let Some(dest) = pick_save(&app, &local_name(&path)).await? else { return Ok(()) };
     let (size, mut rx) = state.core.download(&host, &path).await?;
     let transfers = state.transfers.clone();
     let (id, stop) = transfers.begin();
@@ -347,6 +368,18 @@ pub fn cancel_transfer(state: State<'_, AppState>, id: u64) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn names_windows_can_create() {
+        use super::windows_name as w;
+        assert_eq!(w("notes 2026-11-03.md"), "notes 2026-11-03.md");
+        assert_eq!(w("a:b?<c>|*\"d\\e.txt"), "a_b__c____d_e.txt");
+        assert_eq!(w("tab\there"), "tab_here");
+        assert_eq!(w("trailing. . "), "trailing");
+        assert_eq!((w("con"), w("NUL.txt"), w("com1.log"), w("lpt9")), ("_con".into(), "_NUL.txt".into(), "_com1.log".into(), "_lpt9".into()));
+        assert_eq!((w("console"), w("com0"), w("COM10")), ("console".into(), "com0".into(), "COM10".into()));
+        assert_eq!((w("..."), w("")), ("download".into(), "download".into()));
+    }
+
     use super::*;
 
     #[test]
@@ -372,8 +405,9 @@ mod tests {
             })
             .collect();
         let mut want = vec!["mkdir /srv/up/photos/2026", "send /srv/up/photos/2026/b.jpg 3", "send /srv/up/photos/a.jpg 2"];
-        #[cfg(unix)]
-        want.push("send /srv/up/photos/link.jpg 2");
+        if cfg!(unix) {
+            want.push("send /srv/up/photos/link.jpg 2");
+        }
         assert_eq!(got, want);
         std::fs::remove_dir_all(&base).unwrap();
     }

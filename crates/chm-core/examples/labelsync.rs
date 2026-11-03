@@ -1,4 +1,5 @@
-//! Label definitions shared through a machine's tmux, on a private tmux server (macOS/Linux):
+//! Label definitions shared through a machine's tmux, on a private tmux server (Cygwin's tmux on
+//! Windows, the native one on macOS/Linux):
 //!
 //!   cargo run -p chm-core --example labelsync
 //!
@@ -50,8 +51,9 @@ fn names(core: &Core) -> Vec<String> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    if cfg!(windows) {
-        println!("this check runs on macOS/Linux (a native tmux)");
+    let cygwin = chm_core::cygwin::Cygwin::find();
+    if cfg!(windows) && cygwin.is_none() {
+        println!("no Cygwin with tmux here; nothing to check");
         return Ok(());
     }
     let socket = format!("chm-labelsync-{}", std::process::id());
@@ -62,7 +64,10 @@ async fn main() -> anyhow::Result<()> {
         std::env::set_var("CHM_TMUX_SOCKET", &socket);
         std::env::set_var("XDG_STATE_HOME", dir.join("state"));
     }
-    let sh = Link::Local(chm_core::link::LocalSh::posix(Vec::new()));
+    let sh = match &cygwin {
+        Some(c) => Link::Local(c.shell(&chm_core::local::to_slash(&dir.join("state")))),
+        None => posix_shell(),
+    };
     let tmux = format!("tmux -L {socket} -f /dev/null");
     let run = |script: String| {
         let sh = sh.clone();
@@ -105,6 +110,16 @@ async fn main() -> anyhow::Result<()> {
     result?;
     println!("all label sync checks passed");
     Ok(())
+}
+
+#[cfg(unix)]
+fn posix_shell() -> Link {
+    Link::Local(chm_core::link::LocalSh::posix(Vec::new()))
+}
+
+#[cfg(not(unix))]
+fn posix_shell() -> Link {
+    unreachable!("Windows uses Cygwin's shell")
 }
 
 async fn checks<F, Fut>(a: &Arc<Core>, b: &Arc<Core>, run: &F, tmux: &str, dir: &std::path::Path) -> anyhow::Result<()>

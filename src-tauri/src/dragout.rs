@@ -48,7 +48,7 @@ pub async fn prepare_drag(state: State<'_, AppState>, host: String, path: String
     let id = uuid::Uuid::new_v4().simple().to_string();
     let dir = drag_dir().join(&id[..8]);
     tokio::fs::create_dir_all(&dir).await.map_err(|e| e.to_string())?;
-    let dest = dir.join(path.rsplit('/').next().unwrap_or("download"));
+    let dest = dir.join(crate::transfers::local_name(&path));
     let mut file = tokio::fs::File::create(&dest).await.map_err(|e| e.to_string())?;
     let mut got = 0u64;
     while let Some(chunk) = rx.recv().await {
