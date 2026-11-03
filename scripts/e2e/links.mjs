@@ -1,6 +1,6 @@
-// End-to-end: Ctrl+clicking `src/App.tsx:42` printed in a terminal opens that file at line 42
-// on the pane's machine (a Git Bash pane on This PC, in this repository); a plain click
-// doesn't. A URL hard-wrapped across rows is clicked whole.
+// End-to-end: clicking `src/App.tsx:42` printed in a terminal opens that file at line 42 on the
+// pane's machine (a Git Bash pane on This PC, in this repository), beside the pane, which keeps
+// the composer; Ctrl+click does too. A URL hard-wrapped across rows is Ctrl+clicked whole.
 //
 //   node scripts/e2e/cdp.mjs scripts/e2e/links.mjs   (from the repository root)
 
@@ -21,7 +21,11 @@ export default async function ({ js, text, key, click, sleep, log }) {
   };
   const invoke = (cmd, args) => js(`return await window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
   const mod = (path) => `(await import(performance.getEntriesByType("resource").map((e) => e.name).filter((u) => u.includes(${JSON.stringify(path)})).pop() ?? ${JSON.stringify(path)}))`;
-  const activeFile = () => js(`return ${mod("/src/store/editor.ts")}.useEditor.getState().active`);
+  // The file the reference opens: src/App.tsx under the pane's folder (this repository).
+  const appFile = `Object.values(${mod("/src/store/editor.ts")}.useEditor.getState().files).find((f) => f.host === "@local" && f.path.endsWith("/src/App.tsx"))`;
+  const opened = () => js(`return !!${appFile}`);
+  const closeFile = () => js(`const f = ${appFile}; if (f) ${mod("/src/store/editor.ts")}.useEditor.getState().close(f.id); return true`);
+  const atLine42 = () => js(`return [...document.querySelectorAll("main footer")].some((f) => f.textContent.startsWith("Ln 42,"))`);
 
   const paneKey = await invoke("create_pane", {
     spec: { host: "@local", cwd: REPO, harness: "shell", name: null, session: null, args: null, direct: true, shell: "git-bash" },
@@ -53,16 +57,21 @@ export default async function ({ js, text, key, click, sleep, log }) {
       return null;`);
   const pos = await until("reference printed", where);
 
+  if (await opened()) await closeFile();
   await click(pos.x, pos.y);
-  await sleep(800);
-  if (await activeFile()) throw new Error("a plain click opened the file");
-  log("ok   plain click does nothing");
+  await until("a click opens src/App.tsx", opened);
+  await until("cursor on line 42", atLine42);
+  if ((await js(`return ${mod("/src/store/app.ts")}.useApp.getState().expanded`)) !== paneKey) throw new Error("the composer left the pane");
+  log("ok   the pane keeps the composer");
+  await closeFile();
 
+  await sleep(500);
   await click(pos.x, pos.y, { ctrl: true });
-  await until("Ctrl+click opens src/App.tsx", async () => ((await activeFile()) ?? "").endsWith("/src/App.tsx"));
-  await until("cursor on line 42", () => js(`return (document.querySelector("main footer")?.textContent ?? "").startsWith("Ln 42,")`));
-
-  await js(`const s = ${mod("/src/store/editor.ts")}.useEditor.getState(); s.close(s.active); return true`);
+  await until("Ctrl+click opens it too", opened);
+  await until("cursor on line 42 again", atLine42);
+  await closeFile();
+  await until("file closed", async () => !(await opened()));
+  await js(`document.querySelector(".xterm-helper-textarea").focus(); return true`);
 
   // A URL hard-wrapped the way Claude Code prints its sign-in link: Ctrl+clicking its second
   // row still gets the whole URL. (http, so it's copied rather than opened in a browser.)

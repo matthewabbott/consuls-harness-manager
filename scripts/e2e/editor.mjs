@@ -30,7 +30,7 @@ export default async function ({ js, text, key, sleep, log }) {
   await invoke("write_file", { host: HOST, path: file, text: "one\r\ntwo\r\n", bom: true, expect: null });
 
   // Open it from the explorer.
-  await js(`if (!document.querySelector("aside select")) document.querySelector('nav button[title="Files"]').click(); return true`);
+  await js(`if (!document.querySelector("aside [data-drop-root]")) document.querySelector('nav button[title="Files"]').click(); return true`);
   await js(`${mod("files")}.useFiles.getState().setRoot({ host: ${JSON.stringify(HOST)}, path: ${JSON.stringify(dir)} }, { follow: false }); return true`);
   await until("file listed", () => js(`return !!document.querySelector('aside [data-path$="notes.txt"]')`));
   await js(`document.querySelector('aside [data-path$="notes.txt"]').click(); return true`);
@@ -59,12 +59,25 @@ export default async function ({ js, text, key, sleep, log }) {
   if (!after.text.endsWith("three and four")) throw new Error("overwrite content: " + JSON.stringify(after.text));
   log("ok   overwrite after a conflict");
 
-  // Hot exit: an unsaved change survives reloading the UI.
+  // Hot exit: an unsaved change survives reloading the UI, first with the file still on screen
+  // (the layout opens it again before the drafts come back), then from the grid.
   await js(`document.querySelector(".cm-content").focus(); return true`);
   await key("End", { ctrl: true });
   await text(" (draft)");
   await until("dirty", async () => (await footer()).includes("Unsaved"));
-  await sleep(800); // drafts are written after a short pause
+  await sleep(800); // drafts and the layout are written after a short pause
+  await js(`setTimeout(() => location.reload(), 50); return true`);
+  await sleep(2500);
+  await until("on screen again with the draft", () => js(`return [...document.querySelectorAll(".cm-line")].some((l) => l.textContent.includes("(draft)"))`));
+  await until("and unsaved", async () => (await footer()).includes("Unsaved"));
+
+  // Its split goes (the file stays open): after a reload it's a dirty tile on the grid.
+  await js(`
+    const L = ${mod("layout")}.useLayout;
+    const leaf = (await import(${JSON.stringify("/src/lib/layoutTree.ts")})).leaves(L.getState().root).find((l) => l.target?.startsWith("file:") && l.target.endsWith("notes.txt"));
+    L.getState().close(leaf.id);
+    return true`);
+  await sleep(800);
   await js(`setTimeout(() => location.reload(), 50); return true`);
   await sleep(2500);
   await until("unsaved copy restored as a dirty tile", () =>
@@ -77,7 +90,7 @@ export default async function ({ js, text, key, sleep, log }) {
   // Image preview on This PC.
   await js(`await ${mod("editor")}.useEditor.getState().open("@local", ${JSON.stringify(`${REPO}/src-tauri/icons/128x128.png`)}); return true`);
   await until("image preview renders", () => js(`const i = document.querySelector("main img"); return !!i && i.complete && i.naturalWidth > 0`));
-  await js(`const s = ${mod("editor")}.useEditor.getState(); s.close(s.active); return true`);
+  await js(`const s = ${mod("editor")}.useEditor.getState(); s.close(Object.keys(s.files).find((k) => k.endsWith("/128x128.png"))); return true`);
 
   await invoke("fs_op", { host: HOST, op: { kind: "remove", path: dir } });
   log("all editor e2e checks passed");

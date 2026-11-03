@@ -44,7 +44,7 @@ export default async function ({ js, text, key, sleep, log }) {
   const saved = [];
 
   await until("This PC section", () => js(`return [...document.querySelectorAll("main section h2")].some(h => h.textContent === "This PC")`), 15000);
-  await js(`${app}.getState().setExpanded(null); return true`);
+  await js(`${mod("layout")}.useLayout.getState().toGrid(); return true`);
   await js(`[...document.querySelectorAll("main section")].find(s => s.querySelector("h2")?.textContent === "This PC").querySelector('button[title^="New pane"]').click(); return true`);
   await until("dialog", () => js(`return !!document.querySelector("select")`));
   await js(noTmux);

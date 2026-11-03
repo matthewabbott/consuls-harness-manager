@@ -410,7 +410,9 @@ shell built as an iPhone app. See README.md.
     (300 ms) and flushed on exit (`RunEvent::Exit`). Persisted zustand stores use
     `uiStorage` with `skipHydration`; `main.tsx` loads the state, rehydrates, then renders.
     Debug builds use `ui-state-dev.json`, so E2E runs don't touch the release app's state.
-  - Unsaved editor buffers are still in IndexedDB (`lib/drafts.ts`).
+  - Unsaved editor buffers are still in IndexedDB (`lib/drafts.ts`). The layout reopens files
+    it shows from disk before `restoreDrafts` runs, so a draft goes into such a file (unless it
+    was edited meanwhile), and a load that finishes after it leaves it alone.
 
 ## Editor
 
@@ -625,6 +627,9 @@ shell built as an iPhone app. See README.md.
   `SHELL_NAME="Git Bash"` to pick a shell; `bell.mjs`; `files.mjs`; `places.mjs`; `recording.mjs`; `cwd.mjs`; `paste.mjs` (names, image paste); `editor.mjs`; `gutter.mjs`; `links.mjs`). Tiles carry `data-pane=<key>`. The
   driver evaluates JS in
   the WebView and sends real key events; keep tests on direct shells or private sockets.
+  It drives the window labelled `$WINDOW` (`main` by default; every window has the same URL and
+  title, so it asks each for its Tauri label) and puts it on the grid first: the layout is
+  restored at launch, so the app may start in a split.
 
 ## Remote shell gotchas
 

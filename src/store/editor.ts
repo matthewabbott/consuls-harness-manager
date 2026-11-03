@@ -131,9 +131,11 @@ export const useEditor = create<EditorStore>((set, get) => {
     }
     try {
       const content = await b.readFile(f.host, f.path);
+      const { Text } = await import("@codemirror/state");
+      // An unsaved buffer from last time took this file over while it loaded (`restoreDrafts`).
+      if (get().files[id]?.restored) return;
       if (content.kind === "text") {
         const text = content.text;
-        const { Text } = await import("@codemirror/state");
         const normalized = text.replace(/\r\n?/g, "\n");
         buffers.set(id, { saved: Text.of(normalized.split("\n")), state: null, initial: normalized });
         patch(id, {
@@ -259,7 +261,10 @@ export const useEditor = create<EditorStore>((set, get) => {
       const list = await drafts.all();
       const { Text } = await import("@codemirror/state");
       for (const d of list) {
-        if (get().files[d.id]) continue;
+        // The layout may have opened the file again already (it was on screen at quit): the
+        // draft goes into it, unless it's been edited since or isn't text any more.
+        const open = get().files[d.id];
+        if (open && (open.dirty || open.restored || (open.kind !== "loading" && open.kind !== "text"))) continue;
         const normalized = d.text.replace(/\r\n?/g, "\n");
         buffers.set(d.id, { saved: null, state: null, initial: normalized });
         const f: OpenFile = {
@@ -267,7 +272,7 @@ export const useEditor = create<EditorStore>((set, get) => {
           host: d.host,
           path: d.path,
           name: d.path.split("/").pop() ?? d.path,
-          origin: null,
+          origin: open?.origin ?? null,
           kind: "text",
           eol: d.eol,
           bom: d.bom,
@@ -276,9 +281,10 @@ export const useEditor = create<EditorStore>((set, get) => {
           saving: false,
           preview: previewOf(d.text),
           restored: true,
-          gen: 1,
+          // A new generation starts the editor afresh, on the draft.
+          gen: (open?.gen ?? 0) + 1,
         };
-        set((s) => ({ files: { ...s.files, [d.id]: f }, order: [...s.order, d.id] }));
+        set((s) => ({ files: { ...s.files, [d.id]: f }, order: s.order.includes(d.id) ? s.order : [...s.order, d.id] }));
         // Learn what's on disk now, so saving checks against the right version.
         void backend()
           .then((b) => b.readFile(d.host, d.path))

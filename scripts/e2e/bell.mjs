@@ -1,6 +1,6 @@
 // End-to-end: terminal bells. A local Git Bash pane doesn't ping on bell by default; after
 // turning it on in the expanded view, a bell rung while the grid is showing makes the tile
-// glow with a "Rang the bell" banner.
+// glow with a "Rang the bell" banner. The setting is in the pane's ⋯ menu.
 //
 //   node scripts/e2e/cdp.mjs scripts/e2e/bell.mjs
 
@@ -38,8 +38,13 @@ export default async function ({ js, sleep, log }) {
 
   await js(`${tile(key)}.click(); return true`);
   await until("expanded", () => js(`return !!document.querySelector(".xterm")`));
-  await js(`[...document.querySelectorAll("main header button")].find(b => b.title.startsWith("Ping when this pane rings")).click(); return true`);
+  // The bell setting is in the pane's ⋯ menu (Auto / On / Off).
+  await js(`document.querySelector('main header button[title^="More"]').click(); return true`);
+  await until("pane menu open", () => js(`return [...document.querySelectorAll(".fixed.inset-0 button")].some((b) => b.title.startsWith("Ping when this pane rings"))`));
+  await js(`[...document.querySelectorAll(".fixed.inset-0 button")].find((b) => b.title.startsWith("Ping when this pane rings")).click(); return true`);
   await until("bell pings on", async () => (await pane(key)).bellPings);
+  await js(`document.querySelector(".fixed.inset-0").dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); return true`);
+  await until("pane menu closed", () => js(`return !document.querySelector(".fixed.inset-0")`));
   await js(`[...document.querySelectorAll("main header button")].find(b => b.title.startsWith("Back to grid")).click(); return true`);
   await until("back to grid", () => js(`return !document.querySelector(".xterm")`));
 

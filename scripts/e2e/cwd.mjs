@@ -31,7 +31,7 @@ export default async function ({ js, text, key, sleep, log }) {
   const k = await invoke("create_pane", { spec: { host: "@local", cwd: home, harness: "shell", name: null, session: null, args: null, direct: true, shell: "pwsh" } });
   await js(`${app}.getState().setExpanded(${k}); return true`);
   try {
-    await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside select")) b.click(); ${files}.getState().setFollow(true); return true`);
+    await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside [data-drop-root]")) b.click(); ${files}.getState().setFollow(true); return true`);
     await until("prompt", async () => ((await js(bufferOf(3)))?.lines ?? []).length > 0, 15000);
     await until("explorer follows the new shell (home)", () => js(`return ${files}.getState().root?.path?.toLowerCase() === ${JSON.stringify(home.toLowerCase())}`));
 
@@ -49,7 +49,7 @@ export default async function ({ js, text, key, sleep, log }) {
     await until("a copy notice", () => js(`return document.body.innerText.includes("from ") && document.body.innerText.includes("Copied 8 characters")`));
   } finally {
     await invoke("terminate_pane", { key: k, force: true }).catch(() => {});
-    await js(`${app}.getState().setExpanded(null); return true`);
+    await js(`${mod("layout")}.useLayout.getState().toGrid(); return true`);
     log("     closed the test shell");
   }
   log("all cwd e2e checks passed");

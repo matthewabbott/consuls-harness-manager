@@ -34,9 +34,9 @@ export default async function ({ js, sleep, log }) {
   if (!drives.some((d) => d.label === drive)) throw new Error(`${drive} isn't a drive here`);
 
   const before = await defaultOf("@local");
-  await js(`${app}.getState().setExpanded(null); return true`);
-  await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside select")) b.click(); return true`);
-  await until("Files panel", () => js(`return !!document.querySelector("aside select")`));
+  await js(`${mod("layout")}.useLayout.getState().toGrid(); return true`);
+  await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside [data-drop-root]")) b.click(); return true`);
+  await until("Files panel", () => js(`return !!document.querySelector("aside [data-drop-root]")`));
   const home = await js(`return ${app}.getState().hosts["@local"].facts.home`);
   await js(`${files}.getState().setRoot({ host: "@local", path: ${JSON.stringify(home)} }, { follow: false }); return true`);
   await until("home chip lit", () => js(`return document.querySelector('aside button[title^="Home:"]')?.className.includes("bg-sky-400/15")`));

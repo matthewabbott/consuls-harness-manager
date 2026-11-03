@@ -26,8 +26,8 @@ export default async function ({ js, text, key, sleep, log }) {
   const names = () => js(`return [...document.querySelectorAll("aside [data-path]")].map((e) => e.dataset.path.split("/").pop())`);
   const row = (name) => `[...document.querySelectorAll("aside [data-path]")].find((e) => e.dataset.path.split("/").pop() === ${JSON.stringify(name)})`;
 
-  await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside select")) b.click(); return true`);
-  await until("Files panel", () => js(`return !!document.querySelector("aside select")`));
+  await js(`const b = document.querySelector('nav button[title="Files"]'); if (!document.querySelector("aside [data-drop-root]")) b.click(); return true`);
+  await until("Files panel", () => js(`return !!document.querySelector("aside [data-drop-root]")`));
 
   // --- remote: scratch folder
   const dir = `/tmp/chm-e2e-files-${Date.now()}`;

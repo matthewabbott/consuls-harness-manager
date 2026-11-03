@@ -62,7 +62,7 @@ export default async function ({ js, text, key, sleep, log }) {
   } finally {
     await setRecording(before);
     await invoke("terminate_pane", { key: key_, force: true }).catch(() => {});
-    await js(`${app}.getState().setExpanded(null); return true`);
+    await js(`${mod("layout")}.useLayout.getState().toGrid(); return true`);
     log(`     restored recording mode (${before ? "on" : "off"}) and closed the test shell`);
   }
   log("all recording e2e checks passed");
